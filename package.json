@@ -1,0 +1,52 @@
+{
+  "name": "uniapp-packaging-tool",
+  "version": "0.1.0",
+  "description": "A Tauri desktop tool for automating uni-app offline packaging across Android, iOS, and HarmonyOS.",
+  "license": "MIT",
+  "author": "EarlySummer2018",
+  "keywords": [
+    "uni-app",
+    "tauri",
+    "vue",
+    "android",
+    "ios",
+    "harmonyos",
+    "offline-packaging"
+  ],
+  "homepage": "https://github.com/EarlySummer2018/uniapp-packaging-tool#readme",
+  "bugs": {
+    "url": "https://github.com/EarlySummer2018/uniapp-packaging-tool/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EarlySummer2018/uniapp-packaging-tool.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tauri-apps/plugin-store": "^2.4.3",
+    "@vicons/ionicons5": "^0.13.0",
+    "naive-ui": "^2.44.1",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.13",
+    "vue-router": "^5.0.7"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.2",
+    "@vitejs/plugin-vue": "^5.2.4",
+    "typescript": "~5.6.2",
+    "vite": "^5.4.21",
+    "vue-tsc": "^2.2.12"
+  }
+}

@@ -1,0 +1,61 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.*
+!.env.example
+
+# Build outputs
+build
+release
+out
+*.apk
+*.aab
+*.ipa
+*.hap
+*.app
+*.dmg
+*.msi
+*.deb
+*.rpm
+*.AppImage
+
+# Signing material and provisioning profiles
+*.keystore
+*.jks
+*.p12
+*.p8
+*.pem
+*.cer
+*.crt
+*.mobileprovision
+*.provisionprofile
+
+# Local app data / generated packaging workspaces
+certificates
+artifacts
+cache
+tmp
+temp
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.trae/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

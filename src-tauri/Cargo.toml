@@ -1,0 +1,38 @@
+[package]
+name = "unipack-tool"
+version = "0.1.0"
+description = "A Tauri desktop tool for automating uni-app offline packaging across Android, iOS, and HarmonyOS."
+authors = ["EarlySummer2018"]
+license = "MIT"
+repository = "https://github.com/EarlySummer2018/uniapp-packaging-tool"
+edition = "2021"
+
+[lib]
+name = "unipack_tool_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+json5 = "0.4"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+quick-xml = { version = "0.37", features = ["serialize"] }
+plist = "1"
+image = { version = "0.25", features = ["png"] }
+thiserror = "2"
+anyhow = "1"
+uuid = { version = "1", features = ["v4"] }
+dirs = "6"
+zip = "2"
+chrono = { version = "0.4", features = ["serde"] }
+libc = "0.2"
