@@ -44,6 +44,7 @@ pub const ANDROID_REQUIRED_AARS: &[AndroidRequiredAar] = &[
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AndroidSdkLayout {
     pub root: PathBuf,
+    pub integrate_project_dir: PathBuf,
     pub libs_dir: PathBuf,
     pub assets_dir: PathBuf,
 }
@@ -250,16 +251,26 @@ pub fn resolve_android_sdk_layout(path: &Path) -> Result<AndroidSdkLayout, Strin
     }
 
     let candidates = android_sdk_root_candidates(path);
+    let mut checked_integrate_projects = Vec::new();
     let mut checked_libs = Vec::new();
     let mut missing_reports = Vec::new();
 
     for root in candidates {
+        push_unique_path(
+            &mut checked_integrate_projects,
+            root.join("HBuilder-Integrate-AS"),
+        );
         if let Some(layout) = android_layout_from_root(&root) {
+            push_unique_path(
+                &mut checked_integrate_projects,
+                layout.integrate_project_dir.clone(),
+            );
             push_unique_path(&mut checked_libs, layout.libs_dir.clone());
             let missing = missing_android_required_aars(&layout.libs_dir);
             if missing.is_empty() {
                 return Ok(AndroidSdkLayout {
                     root: canonicalize_or_self(&layout.root),
+                    integrate_project_dir: canonicalize_or_self(&layout.integrate_project_dir),
                     libs_dir: canonicalize_or_self(&layout.libs_dir),
                     assets_dir: canonicalize_or_self(&layout.assets_dir),
                 });
@@ -277,12 +288,14 @@ pub fn resolve_android_sdk_layout(path: &Path) -> Result<AndroidSdkLayout, Strin
 
     if missing_reports.is_empty() {
         Err(format!(
-            "未找到 DCloud Android 离线 SDK 的 libs 目录。已检查: {}",
+            "未找到完整的 DCloud Android 离线 SDK。需要同时包含 HBuilder-Integrate-AS/simpleDemo 和 SDK/libs。已检查工程: {}。已检查 libs: {}",
+            format_path_list(&checked_integrate_projects),
             format_path_list(&checked_libs)
         ))
     } else {
         Err(format!(
-            "DCloud Android 离线 SDK 缺少核心 AAR。已检查: {}。缺少: {}",
+            "DCloud Android 离线 SDK 缺少核心 AAR。已检查工程: {}。已检查 libs: {}。缺少: {}",
+            format_path_list(&checked_integrate_projects),
             format_path_list(&checked_libs),
             missing_reports.join("; ")
         ))
@@ -390,25 +403,44 @@ fn ios_sdk_root_candidates(path: &Path) -> Vec<PathBuf> {
 }
 
 fn android_layout_from_root(root: &Path) -> Option<AndroidSdkLayout> {
-    let sdk_libs = root.join("SDK").join("libs");
-    if sdk_libs.is_dir() {
-        return Some(AndroidSdkLayout {
-            root: root.to_path_buf(),
-            libs_dir: sdk_libs,
-            assets_dir: root.join("SDK").join("assets"),
-        });
+    let package_root = android_package_root_from_candidate(root);
+    let integrate_project_dir = package_root.join("HBuilder-Integrate-AS");
+    if !integrate_project_dir.join("simpleDemo").is_dir() {
+        return None;
     }
 
-    let libs = root.join("libs");
-    if libs.is_dir() {
-        return Some(AndroidSdkLayout {
-            root: root.to_path_buf(),
-            libs_dir: libs,
-            assets_dir: root.join("assets"),
-        });
+    let sdk_dir = package_root.join("SDK");
+    let libs_dir = sdk_dir.join("libs");
+    if !libs_dir.is_dir() {
+        return None;
     }
 
-    None
+    Some(AndroidSdkLayout {
+        root: package_root,
+        integrate_project_dir,
+        libs_dir,
+        assets_dir: sdk_dir.join("assets"),
+    })
+}
+
+fn android_package_root_from_candidate(candidate: &Path) -> PathBuf {
+    if candidate.file_name().and_then(|name| name.to_str()) == Some("libs") {
+        if let Some(sdk_dir) = candidate.parent() {
+            if sdk_dir.file_name().and_then(|name| name.to_str()) == Some("SDK") {
+                if let Some(package_root) = sdk_dir.parent() {
+                    return package_root.to_path_buf();
+                }
+            }
+        }
+    }
+
+    if candidate.file_name().and_then(|name| name.to_str()) == Some("SDK") {
+        if let Some(package_root) = candidate.parent() {
+            return package_root.to_path_buf();
+        }
+    }
+
+    candidate.to_path_buf()
 }
 
 pub fn resolve_android_required_aar(
@@ -768,6 +800,13 @@ mod tests {
         }
     }
 
+    fn write_integrate_project(root: &Path) {
+        let integrate = root.join("HBuilder-Integrate-AS");
+        std::fs::create_dir_all(integrate.join("simpleDemo")).unwrap();
+        std::fs::write(integrate.join("settings.gradle"), "include ':simpleDemo'\n").unwrap();
+        std::fs::write(integrate.join("simpleDemo/build.gradle"), "").unwrap();
+    }
+
     fn test_required_aar_name(
         requirement: &AndroidRequiredAar,
         legacy_names: bool,
@@ -792,12 +831,17 @@ mod tests {
     fn android_package_root_with_sdk_libs_is_supported() {
         let root = unique_temp_dir("unipack-android-sdk-root");
         let libs = root.join("SDK/libs");
+        write_integrate_project(&root);
         write_required_aars(&libs, false);
         std::fs::create_dir_all(root.join("SDK/assets/data")).unwrap();
 
         let layout = resolve_android_sdk_layout(&root).unwrap();
 
         assert_eq!(layout.root, root.canonicalize().unwrap());
+        assert_eq!(
+            layout.integrate_project_dir,
+            root.join("HBuilder-Integrate-AS").canonicalize().unwrap()
+        );
         assert_eq!(layout.libs_dir, libs.canonicalize().unwrap());
         assert_eq!(
             layout.assets_dir,
@@ -809,6 +853,7 @@ mod tests {
     #[test]
     fn android_legacy_aar_names_are_supported() {
         let root = unique_temp_dir("unipack-android-sdk-legacy");
+        write_integrate_project(&root);
         write_required_aars(&root.join("SDK/libs"), true);
         std::fs::create_dir_all(root.join("SDK/assets")).unwrap();
 
@@ -822,6 +867,7 @@ mod tests {
     fn android_versioned_aar_names_are_supported() {
         let root = unique_temp_dir("unipack-android-sdk-versioned");
         let libs = root.join("SDK/libs");
+        write_integrate_project(&root);
         write_required_aars(&libs, false);
         std::fs::create_dir_all(root.join("SDK/assets")).unwrap();
 
@@ -871,12 +917,13 @@ mod tests {
     fn android_sdk_child_selection_is_supported() {
         let root = unique_temp_dir("unipack-android-sdk-child");
         let sdk = root.join("SDK");
+        write_integrate_project(&root);
         write_required_aars(&sdk.join("libs"), false);
         std::fs::create_dir_all(sdk.join("assets")).unwrap();
 
         let layout = resolve_android_sdk_layout(&sdk).unwrap();
 
-        assert_eq!(layout.root, sdk.canonicalize().unwrap());
+        assert_eq!(layout.root, root.canonicalize().unwrap());
         assert_eq!(layout.libs_dir, sdk.join("libs").canonicalize().unwrap());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -886,12 +933,13 @@ mod tests {
         let root = unique_temp_dir("unipack-android-sdk-libs");
         let sdk = root.join("SDK");
         let libs = sdk.join("libs");
+        write_integrate_project(&root);
         write_required_aars(&libs, false);
         std::fs::create_dir_all(sdk.join("assets")).unwrap();
 
         let layout = resolve_android_sdk_layout(&libs).unwrap();
 
-        assert_eq!(layout.root, sdk.canonicalize().unwrap());
+        assert_eq!(layout.root, root.canonicalize().unwrap());
         assert_eq!(layout.libs_dir, libs.canonicalize().unwrap());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -900,6 +948,7 @@ mod tests {
     fn android_parent_selection_searches_children() {
         let parent = unique_temp_dir("unipack-android-sdk-parent");
         let root = parent.join("Android-SDK@20260414");
+        write_integrate_project(&root);
         write_required_aars(&root.join("SDK/libs"), false);
         std::fs::create_dir_all(root.join("SDK/assets")).unwrap();
 
@@ -912,6 +961,7 @@ mod tests {
     #[test]
     fn android_missing_aar_error_lists_checked_dir_and_candidates() {
         let root = unique_temp_dir("unipack-android-sdk-missing");
+        write_integrate_project(&root);
         std::fs::create_dir_all(root.join("SDK/libs")).unwrap();
 
         let err = resolve_android_sdk_layout(&root).unwrap_err();
@@ -919,6 +969,18 @@ mod tests {
         assert!(err.contains(&root.join("SDK/libs").display().to_string()));
         assert!(err.contains("android-gif-drawable"));
         assert!(err.contains("文件名前缀"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn android_missing_integrate_project_error_lists_checked_paths() {
+        let root = unique_temp_dir("unipack-android-sdk-no-integrate");
+        write_required_aars(&root.join("SDK/libs"), false);
+
+        let err = resolve_android_sdk_layout(&root).unwrap_err();
+
+        assert!(err.contains("HBuilder-Integrate-AS"));
+        assert!(err.contains("SDK/libs"));
         let _ = std::fs::remove_dir_all(root);
     }
 

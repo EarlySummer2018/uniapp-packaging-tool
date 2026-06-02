@@ -1,17 +1,12 @@
-//! Android APK 构建模块（V2 - 基于方式二：导入工程）
+//! Android APK 构建模块（基于 DCloud 方式二：导入工程）
 //!
 //! ## 架构说明
-//! 使用 DCloud 官方 **HBuilder-Integrate-AS** 工程作为模板基础（`android-template-v2`），
-//! 通过 [`AndroidProjectModifier`](crate::utils::android_project_mod::AndroidProjectModifier) 在运行时动态修改配置，
-//! 替代了 V1 的模板渲染机制（`.tmpl` 文件渲染）。
+//! 每次构建都从用户配置的 DCloud Android 离线 SDK 中复制
+//! **HBuilder-Integrate-AS** 工程到临时工作区，再通过
+//! [`AndroidProjectModifier`](crate::utils::android_project_mod::AndroidProjectModifier)
+//! 对工作区副本动态修改配置。
 //!
-//! ## 主要改进
-//! - ✅ 与官方 SDK 保持一致，减少兼容性问题
-//! - ✅ 支持 Android Studio 直接打开工作区进行调试
-//! - ✅ 模板升级简单，只需替换 `android-template-v2/` 目录
-//! - ✅ 修改逻辑集中，易于维护和扩展
-//!
-//! ## 文件结构（V2）
+//! ## 文件结构
 //! ```text
 //! workspace/                         # 构建工作区
 //! ├── simpleDemo/                   # 主应用模块（来自 HBuilder-Integrate-AS）
@@ -81,6 +76,8 @@ const UTS_RUNTIME_DEPS: &[&str] = &[
     "com.github.getActivity:XXPermissions:18.63",
 ];
 
+const UTS_KOTLIN_PLUGIN_VERSION: &str = "1.9.22";
+
 #[derive(Debug, Clone)]
 struct AndroidBuildEnvironment {
     gradle_bin: PathBuf,
@@ -109,17 +106,6 @@ fn emit_log(window: &tauri::Window, level: &str, message: &str, progress: Option
         progress,
     };
     let _ = window.emit("build-log", event);
-}
-
-fn bundled_android_template() -> PathBuf {
-    let mut path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
-    while path.pop() {
-        let template = path.join("bundled").join("android-template-v2");
-        if template.exists() {
-            return template;
-        }
-    }
-    PathBuf::from("bundled").join("android-template-v2")
 }
 
 #[tauri::command]
@@ -222,20 +208,18 @@ pub async fn build_android_apk(
     crate::utils::fs::ensure_directory(&workspace_base)
         .map_err(|e| format!("创建工作区基础目录失败: {}", e))?;
     let workspace = workspace_base.join(safe_file_name(&build_id));
-    let template_dir = bundled_android_template();
-    if !template_dir.exists() {
-        return Err(format!(
-            "Android 模板目录不存在: {}",
-            template_dir.display()
-        ));
-    }
-    crate::utils::fs::copy_recursive(&template_dir, &workspace)
-        .map_err(|e| format!("复制 Android 模板失败: {}", e))?;
-    emit_log(&window, "success", "模板已复制到工作区", Some(10));
-
     let sdk_layout = crate::commands::sdk::resolve_android_sdk_layout(&PathBuf::from(
         &sdk_config.dcloud_android_sdk_path,
     ))?;
+    crate::utils::fs::copy_recursive(&sdk_layout.integrate_project_dir, &workspace)
+        .map_err(|e| format!("复制 HBuilder-Integrate-AS 到工作区失败: {}", e))?;
+    emit_log(
+        &window,
+        "success",
+        "已从 SDK 复制 HBuilder-Integrate-AS 到工作区",
+        Some(10),
+    );
+
     let sdk_libs = sdk_layout.libs_dir.clone();
     let libs_dst = workspace
         .join(crate::utils::android_project_mod::MODULE_NAME)
@@ -395,17 +379,10 @@ pub async fn build_android_apk(
         ),
     };
 
-    let modifier = crate::utils::android_project_mod::AndroidProjectModifier::new(
-        template_dir,
-        workspace.clone(),
-    )?;
+    let modifier =
+        crate::utils::android_project_mod::AndroidProjectModifier::new(workspace.clone())?;
     modifier.apply_all_modifications(&modification_ctx)?;
-    emit_log(
-        &window,
-        "success",
-        "Android 工程配置已通过 V2 修改器应用",
-        Some(38),
-    );
+    emit_log(&window, "success", "已应用 Android 工程补丁", Some(38));
 
     import_uniapp_assets(&app_resource_dir, &workspace, &scan.app_id)?;
     emit_log(
@@ -1059,6 +1036,11 @@ fn generate_uts_plugin_build_gradle(
     if path.exists() {
         let content = std::fs::read_to_string(&path).unwrap_or_default();
         if content.contains("io.dcloud.uts.kotlin") {
+            let patched = patch_uts_kotlin_plugin_versions(&content);
+            if patched != content {
+                std::fs::write(&path, patched)
+                    .map_err(|e| format!("修补 {} build.gradle 失败: {}", plugin.id, e))?;
+            }
             return Ok(());
         }
     }
@@ -1099,7 +1081,7 @@ fn generate_uts_plugin_build_gradle(
     let extra_plugins: String = plugin
         .gradle_plugins
         .iter()
-        .map(|p| format!("    id '{}'", p))
+        .map(|p| render_uts_gradle_plugin_line(p))
         .collect::<Vec<_>>()
         .join("\n");
     let extra_plugins = if extra_plugins.is_empty() {
@@ -1111,7 +1093,7 @@ fn generate_uts_plugin_build_gradle(
     let content = format!(
         r#"plugins {{
     id 'com.android.library'
-    id 'kotlin-android'
+    id 'org.jetbrains.kotlin.android' version '{UTS_KOTLIN_PLUGIN_VERSION}'
     id 'io.dcloud.uts.kotlin'{extra_plugins}
 }}
 
@@ -1138,6 +1120,63 @@ dependencies {{
 
     std::fs::write(&path, content)
         .map_err(|e| format!("写入 {} build.gradle 失败: {}", plugin.id, e))
+}
+
+fn render_uts_gradle_plugin_line(plugin: &str) -> String {
+    let plugin = plugin.trim();
+    if plugin.is_empty() {
+        return String::new();
+    }
+    if plugin.starts_with("id ") {
+        return format!("    {}", patch_uts_kotlin_plugin_versions(plugin));
+    }
+    if is_kotlin_android_plugin_id(plugin) {
+        return format!(
+            "    id '{}' version '{}'",
+            plugin, UTS_KOTLIN_PLUGIN_VERSION
+        );
+    }
+    format!("    id '{}'", plugin)
+}
+
+fn patch_uts_kotlin_plugin_versions(content: &str) -> String {
+    let mut result = content.to_string();
+
+    // 1. 首先修正插件 ID：将短名称替换为完整命名空间
+    result = result.replace(
+        "id 'kotlin-android'",
+        "id 'org.jetbrains.kotlin.android'",
+    );
+    result = result.replace(
+        r#"id "kotlin-android""#,
+        r#"id "org.jetbrains.kotlin.android""#,
+    );
+
+    // 2. 然后添加版本号（如果缺失）
+    for plugin_id in ["org.jetbrains.kotlin.android"] {
+        let re = regex::Regex::new(&format!(
+            r#"(?m)^([ \t]*id\s+['"]{}['"])([ \t]*(?://.*)?$)"#,
+            regex::escape(plugin_id)
+        ))
+        .expect("valid kotlin plugin regex");
+        result = re
+            .replace_all(&result, |caps: &regex::Captures| {
+                if caps[2].contains("version") {
+                    format!("{}{}", &caps[1], &caps[2])
+                } else {
+                    format!(
+                        "{} version '{}'{}",
+                        &caps[1], UTS_KOTLIN_PLUGIN_VERSION, &caps[2]
+                    )
+                }
+            })
+            .to_string();
+    }
+    result
+}
+
+fn is_kotlin_android_plugin_id(plugin: &str) -> bool {
+    matches!(plugin, "kotlin-android" | "org.jetbrains.kotlin.android")
 }
 
 fn extract_namespace_from_manifest(module_dir: &Path) -> Option<String> {
@@ -2338,6 +2377,23 @@ fn safe_file_name(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn test_uts_plugin(id: &str) -> crate::commands::resource::UtsCustomPlugin {
+        crate::commands::resource::UtsCustomPlugin {
+            id: id.to_string(),
+            android_dir: None,
+            ios_dir: None,
+            android_deps: vec![],
+            ios_frameworks: vec![],
+            abis: None,
+            min_sdk_version: Some(21),
+            dependencies: vec![],
+            components: vec![],
+            hooks_class: None,
+            gradle_plugins: vec![],
+            project_dependencies: vec![],
+        }
+    }
+
     #[test]
     fn android_gradle_dependencies_strip_human_notes() {
         let deps = android_gradle_dependencies(
@@ -2518,6 +2574,59 @@ mod tests {
             Some("open_sdk_3.5.0.0_dawfrwafr_lite.jar")
         );
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn generated_uts_plugin_gradle_adds_kotlin_android_plugin_version() {
+        let root = std::env::temp_dir().join(format!(
+            "unipack-uts-gradle-version-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let plugin = test_uts_plugin("Dingtalk-DingRTC");
+
+        generate_uts_plugin_build_gradle(&plugin, &root).unwrap();
+
+        let content = std::fs::read_to_string(root.join("build.gradle")).unwrap();
+        // 使用完整的插件 ID 命名空间
+        assert!(content.contains(&format!(
+            "id 'org.jetbrains.kotlin.android' version '{}'",
+            UTS_KOTLIN_PLUGIN_VERSION
+        )));
+        assert!(!content.contains("id 'kotlin-android'")); // 不应再使用短名称
+        assert!(content.contains("id 'io.dcloud.uts.kotlin'"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn existing_uts_plugin_gradle_gets_kotlin_android_plugin_version_patch() {
+        let root = std::env::temp_dir().join(format!(
+            "unipack-existing-uts-gradle-version-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("build.gradle"),
+            r#"plugins {
+    id 'com.android.library'
+    id 'kotlin-android'
+    id 'io.dcloud.uts.kotlin'
+}
+"#,
+        )
+        .unwrap();
+        let plugin = test_uts_plugin("ExistingPlugin");
+
+        generate_uts_plugin_build_gradle(&plugin, &root).unwrap();
+
+        let content = std::fs::read_to_string(root.join("build.gradle")).unwrap();
+        // 补丁函数应将短名称修正为完整 ID 并添加版本号
+        assert!(content.contains(&format!(
+            "id 'org.jetbrains.kotlin.android' version '{}'",
+            UTS_KOTLIN_PLUGIN_VERSION
+        )));
+        assert_eq!(content.matches("id 'kotlin-android'").count(), 0); // 短名称应被完全替换
         let _ = std::fs::remove_dir_all(root);
     }
 }

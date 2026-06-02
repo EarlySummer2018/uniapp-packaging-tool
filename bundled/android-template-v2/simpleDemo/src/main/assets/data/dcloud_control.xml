@@ -1,6 +1,0 @@
-<hbuilder>
-  <apps>
-    <app appid="{{appid}}" appver="{{version_name}}">
-    </app>
-  </apps>
-</hbuilder>

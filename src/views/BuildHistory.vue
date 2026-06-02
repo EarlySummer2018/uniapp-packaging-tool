@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   NCard, NDataTable, NTag, NButton, NSpace, NText, NIcon, NSelect,
@@ -7,7 +7,8 @@ import {
   NGrid, NGi, NAlert
 } from 'naive-ui'
 import { RefreshOutline, TrashOutline,
-  LogoAndroid, LogoApple, PhonePortraitOutline } from '@vicons/ionicons5'
+  LogoAndroid, LogoApple, PhonePortraitOutline,
+  CopyOutline, CheckmarkOutline } from '@vicons/ionicons5'
 import { invoke } from '@tauri-apps/api/core'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { useProjectsStore } from '../stores/projects'
@@ -49,6 +50,8 @@ const currentPage = ref(1)
 const showLogModal = ref(false)
 const currentLogContent = ref('')
 const currentLogRecord = ref<BuildRecord | null>(null)
+const historyCopied = ref(false)
+let historyCopyTimer: ReturnType<typeof setTimeout> | null = null
 
 onMounted(async () => {
   await projectsStore.initStore()
@@ -352,6 +355,66 @@ async function clearAllHistory() {
     message.error(String(e))
   }
 }
+
+async function copyHistoryLog() {
+  if (!currentLogContent.value) {
+    message.warning('暂无日志可复制')
+    return
+  }
+
+  if (currentLogContent.value.includes('无法读取') || currentLogContent.value.includes('没有关联')) {
+    message.warning('当前无可复制的有效日志')
+    return
+  }
+
+  try {
+    await navigator.clipboard.writeText(currentLogContent.value)
+
+    historyCopied.value = true
+    const lineCount = currentLogContent.value.split('\n').length
+    message.success(`已复制 ${lineCount} 行日志到剪贴板`)
+
+    if (historyCopyTimer) clearTimeout(historyCopyTimer)
+    historyCopyTimer = setTimeout(() => {
+      historyCopied.value = false
+    }, 2000)
+  } catch (err) {
+    console.error('复制历史日志失败:', err)
+    fallbackCopyHistoryLog(currentLogContent.value)
+  }
+}
+
+function fallbackCopyHistoryLog(text: string) {
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
+
+  try {
+    document.execCommand('copy')
+    historyCopied.value = true
+    message.success('已复制到剪贴板')
+
+    if (historyCopyTimer) clearTimeout(historyCopyTimer)
+    historyCopyTimer = setTimeout(() => { historyCopied.value = false }, 2000)
+  } catch (e) {
+    message.error('复制失败，请手动选择文本复制（Ctrl/Cmd + A, Ctrl/Cmd + C）')
+  }
+
+  document.body.removeChild(textarea)
+}
+
+function formatLogSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+onUnmounted(() => {
+  if (historyCopyTimer) clearTimeout(historyCopyTimer)
+})
 </script>
 
 <template>
@@ -493,6 +556,28 @@ async function clearAllHistory() {
       style="width: 720px;"
       :segmented="{ content: true }"
     >
+      <template #action>
+        <n-space align="center" justify="space-between" style="width: 100%;">
+          <n-text depth="3" style="font-size: 12px;">
+            <template v-if="currentLogContent && !currentLogContent.includes('无法读取') && !currentLogContent.includes('没有关联')">
+              共 {{ currentLogContent.split('\n').length }} 行 · {{ formatLogSize(currentLogContent.length) }}
+            </template>
+          </n-text>
+          <n-button
+            size="small"
+            :type="historyCopied ? 'success' : 'primary'"
+            :disabled="!currentLogContent || currentLogContent.includes('无法读取') || currentLogContent.includes('没有关联')"
+            @click="copyHistoryLog"
+            aria-label="复制完整构建日志到剪贴板"
+          >
+            <template #icon>
+              <n-icon :component="historyCopied ? CheckmarkOutline : CopyOutline" />
+            </template>
+            {{ historyCopied ? '已复制' : '复制完整日志' }}
+          </n-button>
+        </n-space>
+      </template>
+
       <n-alert v-if="!currentLogContent" type="info">日志加载中...</n-alert>
       <pre v-else class="log-content">{{ currentLogContent }}</pre>
     </n-modal>
