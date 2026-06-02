@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Base permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -15,10 +16,11 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-{{module_manifest_permissions}}
+    
+    <!-- UNIPACK_INJECT_PERMISSIONS: Module-specific permissions will be injected here -->
 
     <application
-        android:allowBackup="{{android_allow_backup}}"
+        android:allowBackup="true"  <!-- UNIPACK_REPLACE:allowBackup -->
         android:allowClearUserData="true"
         android:extractNativeLibs="true"
         android:icon="@drawable/icon"
@@ -32,12 +34,13 @@
 
         <meta-data
             android:name="dcloud_appkey"
-            android:value="{{dcloud_appkey}}" />
-{{module_manifest_application_entries}}
+            android:value="" />  <!-- UNIPACK_REPLACE:dcloud_appkey -->
+
+        <!-- UNIPACK_INJECT_APPLICATION_ENTRIES: Module activities/services/receivers/providers will be injected here -->
 
         <activity
             android:name="io.dcloud.PandoraEntry"
-            android:configChanges="orientation|keyboardHidden|keyboard|navigation"
+            android:configChanges="orientation|keyboardHidden|keyboard|navigation|smallestScreenSize|screenLayout|screenSize|uiMode"
             android:exported="true"
             android:hardwareAccelerated="true"
             android:label="@string/app_name"
@@ -49,7 +52,8 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-{{module_pandora_entry_intent_filters}}
+            
+            <!-- UNIPACK_INJECT_PANDORA_ENTRY_INTENT_FILTERS: Additional intent filters will be injected here -->
         </activity>
 
         <activity
@@ -69,5 +73,7 @@
                 <data android:scheme=" " />
             </intent-filter>
         </activity>
+
+        <!-- UNIPACK_PROVIDER: DCloud FileProvider (if needed) -->
     </application>
 </manifest>

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +80,8 @@ pub struct ProjectConfig {
     pub android: AndroidConfig,
     pub ios: IosConfig,
     pub harmony: HarmonyConfig,
+    #[serde(default)]
+    pub android_module_config: HashMap<String, String>,
     pub output_dir: String,
     pub created_at: String,
     pub updated_at: String,
@@ -136,6 +139,7 @@ impl Default for ProjectConfig {
                     has_key_password: false,
                 },
             },
+            android_module_config: HashMap::new(),
             output_dir: dirs::desktop_dir()
                 .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
                 .join("unipack-output")

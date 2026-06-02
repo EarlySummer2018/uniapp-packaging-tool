@@ -66,6 +66,12 @@ interface PlatformPackages {
   harmonyBundle?: string | null
 }
 
+interface SplashscreenConfig {
+  androidStyle?: string | null
+  android: Record<string, string>
+  useOriginalMsgbox?: boolean | null
+}
+
 interface UniappManifestInfo {
   appName?: string | null
   appId?: string | null
@@ -73,6 +79,7 @@ interface UniappManifestInfo {
   versionCode?: number | null
   hbuilderxVersion?: string | null
   icon1024?: string | null
+  splashscreen?: SplashscreenConfig | null
   manifestPath: string
   projectRoot: string
   android: AndroidManifestConfig
@@ -123,6 +130,7 @@ interface ResourceScanResult {
   appResourcePath: string
   isZip: boolean
   manifestPath?: string | null
+  splashscreen?: SplashscreenConfig | null
   detectedModules: DetectedModule[]
   uts: {
     hasUtsPlugins: boolean
@@ -178,6 +186,7 @@ const androidModuleConfigLoading = ref(false)
 const artifacts = ref<BuildArtifact[]>([])
 
 let unlistenBuildLog: UnlistenFn | null = null
+let androidModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 const platforms = [
   { key: 'android' as const, label: 'Android', icon: LogoAndroid, description: '生成 APK 安装包', color: '#2f9e44', bgColor: '#e8f5e9' },
@@ -281,6 +290,11 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (androidModuleConfigSaveTimer) {
+    clearTimeout(androidModuleConfigSaveTimer)
+    androidModuleConfigSaveTimer = null
+  }
+  void persistAndroidModuleConfigCache()
   unlistenBuildLog?.()
 })
 
@@ -336,6 +350,7 @@ async function startBuild() {
   const manifestInfo = latestManifestInfo.value
   const importedResourcePath = scanResult.value.importedPath
   const androidModuleConfig = buildAndroidModuleConfigPayload()
+  await persistAndroidModuleConfigCache()
   artifacts.value = []
   isBuilding.value = true
   let lastBuildId: string | null = null
@@ -385,6 +400,27 @@ async function startBuild() {
   }
   isBuilding.value = false
   scanResult.value = null
+}
+
+async function persistAndroidModuleConfigCache() {
+  if (androidModuleConfigSaveTimer) {
+    clearTimeout(androidModuleConfigSaveTimer)
+    androidModuleConfigSaveTimer = null
+  }
+  const project = currentProject.value
+  if (!project) return
+  if (!syncAndroidModuleConfigCache()) return
+  await projectsStore.saveProject(project)
+}
+
+function scheduleAndroidModuleConfigCacheSave() {
+  if (androidModuleConfigSaveTimer) {
+    clearTimeout(androidModuleConfigSaveTimer)
+  }
+  androidModuleConfigSaveTimer = setTimeout(() => {
+    androidModuleConfigSaveTimer = null
+    void persistAndroidModuleConfigCache()
+  }, 300)
 }
 
 function getProjectName() {
@@ -441,6 +477,7 @@ function applyManifestInfoToProject(info: UniappManifestInfo) {
   if (typeof info.android.minSdkVersion === 'number') project.android.minSdkVersion = info.android.minSdkVersion
   if (typeof info.android.targetSdkVersion === 'number') project.android.targetSdkVersion = info.android.targetSdkVersion
   if (typeof info.android.compileSdkVersion === 'number') project.android.compileSdkVersion = info.android.compileSdkVersion
+  if (!project.androidModuleConfig) project.androidModuleConfig = {}
 }
 
 function applyManifestInfoToScanResult(info: UniappManifestInfo) {
@@ -465,7 +502,7 @@ async function refreshAndroidModuleConfig() {
   try {
     const report = await invoke<AndroidModuleConfigReport>('analyze_android_module_config', {
       manifestInfo: latestManifestInfo.value,
-      userConfig: buildAndroidModuleConfigPayload()
+      userConfig: cachedAndroidModuleConfig()
     })
     androidModuleConfigReport.value = report
     mergeAndroidModuleConfigDefaults(report)
@@ -478,15 +515,15 @@ async function refreshAndroidModuleConfig() {
 }
 
 function mergeAndroidModuleConfigDefaults(report: AndroidModuleConfigReport) {
-  const next = { ...androidModuleConfigValues.value }
+  const next: Record<string, string> = {}
   for (const mod of report.modules) {
     for (const field of mod.fields) {
-      if (!next[field.key]?.trim() && field.value) {
-        next[field.key] = field.value
-      }
+      next[field.key] = field.value || ''
     }
   }
   androidModuleConfigValues.value = next
+  syncAndroidModuleConfigCache()
+  scheduleAndroidModuleConfigCacheSave()
 }
 
 function androidFieldValue(field: AndroidModuleConfigField) {
@@ -498,6 +535,8 @@ function updateAndroidField(field: AndroidModuleConfigField, value: string) {
     ...androidModuleConfigValues.value,
     [field.key]: value
   }
+  syncAndroidModuleConfigCache()
+  scheduleAndroidModuleConfigCacheSave()
 }
 
 function buildAndroidModuleConfigPayload() {
@@ -506,6 +545,27 @@ function buildAndroidModuleConfigPayload() {
     if (value.trim()) payload[key] = value.trim()
   }
   return payload
+}
+
+function cachedAndroidModuleConfig() {
+  return currentProject.value?.androidModuleConfig || {}
+}
+
+function syncAndroidModuleConfigCache() {
+  const project = currentProject.value
+  const report = androidModuleConfigReport.value
+  if (!project || !report) return false
+  const next: Record<string, string> = {}
+  for (const mod of report.modules) {
+    for (const field of mod.fields) {
+      const value = androidModuleConfigValues.value[field.key]?.trim()
+      if (value && field.valueSource !== 'manifest') {
+        next[field.key] = value
+      }
+    }
+  }
+  project.androidModuleConfig = next
+  return true
 }
 
 function fieldStatusType(field: AndroidModuleConfigField) {
@@ -692,16 +752,6 @@ function goBack() {
                 <n-text>资源包根目录: <n-text code>{{ scanResult.importedPath }}</n-text></n-text>
                 <n-text>应用资源目录: <n-text code>{{ scanResult.appResourcePath }}</n-text></n-text>
                 <n-text>manifest 路径: <n-text code>{{ insightManifestPath }}</n-text></n-text>
-                <n-space v-if="scanResult.uts.hasUtsPlugins" wrap>
-                  <n-tag type="success">UTS 基础运行时</n-tag>
-                  <n-tag v-for="mod in scanResult.uts.builtinModules" :key="mod.name" type="info">
-                    {{ mod.name }}
-                  </n-tag>
-                  <n-tag v-for="plugin in scanResult.uts.customPlugins" :key="plugin.id" type="warning">
-                    {{ plugin.id }}
-                  </n-tag>
-                </n-space>
-                <n-text v-else depth="3">未检测到 UTS 插件</n-text>
               </n-space>
             </n-alert>
             <n-alert v-for="warning in scanResult.warnings" :key="warning" type="warning" style="margin-top: 8px;">

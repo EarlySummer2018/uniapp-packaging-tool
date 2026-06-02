@@ -1,3 +1,4 @@
+pub mod android_project_mod;
 pub mod fs;
 pub mod icon;
 pub mod keychain;

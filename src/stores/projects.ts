@@ -61,6 +61,7 @@ export interface Project {
   android: AndroidConfig
   ios: IosConfig
   harmony: HarmonyConfig
+  androidModuleConfig: Record<string, string>
   outputDir: string
   createdAt: string
   updatedAt: string

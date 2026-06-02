@@ -325,16 +325,19 @@ pub fn android_module_config_report_from_value(
 
         let mut fields = Vec::new();
         for spec in android_config_field_specs(template_key) {
+            if !android_field_visible_for_manifest(template_key, spec, manifest) {
+                continue;
+            }
             let required = android_field_required_for_manifest(template_key, spec, manifest);
             let user_value = user_config
                 .and_then(|config| config.get(spec.key))
                 .map(|value| value.trim())
                 .filter(|value| !value.is_empty());
             let manifest_value = manifest.and_then(|value| find_manifest_config_value(value, spec));
-            let (value, value_source) = if let Some(value) = user_value {
-                (Some(value.to_string()), Some("user".to_string()))
-            } else if let Some(value) = manifest_value {
+            let (value, value_source) = if let Some(value) = manifest_value {
                 (Some(value), Some("manifest".to_string()))
+            } else if let Some(value) = user_value {
+                (Some(value.to_string()), Some("user".to_string()))
             } else {
                 (None, None)
             };
@@ -379,6 +382,545 @@ pub fn android_module_config_report_from_value(
 
     report.all_configured = report.missing_required.is_empty();
     report
+}
+
+fn android_field_visible_for_manifest(
+    template_key: &str,
+    spec: &AndroidConfigFieldSpec,
+    manifest: Option<&serde_json::Value>,
+) -> bool {
+    let Some(manifest) = manifest else {
+        return true;
+    };
+
+    match template_key {
+        "push" => match spec.key {
+            "XIAOMI_APP_ID" | "XIAOMI_APP_KEY" => manifest_has_enabled_provider(
+                manifest,
+                &["push", "unipush", "unipushV2", "uniPush"],
+                &["xiaomi", "mi"],
+            ),
+            "MEIZU_APP_ID" | "MEIZU_APP_KEY" => manifest_has_enabled_provider(
+                manifest,
+                &["push", "unipush", "unipushV2", "uniPush"],
+                &["meizu", "mz"],
+            ),
+            "HUAWEI_APP_ID" => manifest_has_enabled_provider(
+                manifest,
+                &["push", "unipush", "unipushV2", "uniPush"],
+                &["huawei", "hms", "hw"],
+            ),
+            "OPPO_APP_KEY" | "OPPO_APP_SECRET" => manifest_has_enabled_provider(
+                manifest,
+                &["push", "unipush", "unipushV2", "uniPush"],
+                &["oppo"],
+            ),
+            "VIVO_APP_ID" | "VIVO_APP_KEY" => manifest_has_enabled_provider(
+                manifest,
+                &["push", "unipush", "unipushV2", "uniPush"],
+                &["vivo"],
+            ),
+            "HONOR_APP_ID" => manifest_has_enabled_provider(
+                manifest,
+                &["push", "unipush", "unipushV2", "uniPush"],
+                &["honor"],
+            ),
+            _ => true,
+        },
+        "geolocation" => match spec.key {
+            "BAIDU_MAP_AK" => manifest_has_enabled_provider(
+                manifest,
+                &["geolocation", "location", "position"],
+                &["baidu", "bd"],
+            ),
+            "AMAP_KEY" => manifest_has_enabled_provider(
+                manifest,
+                &["geolocation", "location", "position"],
+                &["amap", "gaode"],
+            ),
+            "TENCENT_MAP_KEY" => manifest_has_enabled_provider(
+                manifest,
+                &["geolocation", "location", "position"],
+                &["tencent", "qqmap"],
+            ),
+            _ => true,
+        },
+        "share" => match spec.key {
+            "WX_APPID" | "WX_SECRET" => manifest_has_enabled_provider(
+                manifest,
+                &["share", "shares"],
+                &["weixin", "wechat", "wx"],
+            ),
+            "QQ_APPID" => manifest_has_enabled_provider(manifest, &["share", "shares"], &["qq"]),
+            "SINA_APPKEY" | "SINA_SECRET" | "SINA_REDIRECT_URI" => manifest_has_enabled_provider(
+                manifest,
+                &["share", "shares"],
+                &["sina", "weibo", "sinaweibo"],
+            ),
+            _ => true,
+        },
+        "login" => match spec.key {
+            "WX_APPID" | "WX_SECRET" => manifest_has_enabled_provider(
+                manifest,
+                &["oauth", "login", "oauths"],
+                &["weixin", "wechat", "wx"],
+            ),
+            "QQ_APPID" => {
+                manifest_has_enabled_provider(manifest, &["oauth", "login", "oauths"], &["qq"])
+            }
+            "GY_APP_ID" => manifest_has_enabled_provider(
+                manifest,
+                &["oauth", "login", "oauths"],
+                &["univerify", "igetui", "getui"],
+            ),
+            "SINA_APPKEY" | "SINA_REDIRECT_URI" => manifest_has_enabled_provider(
+                manifest,
+                &["oauth", "login", "oauths"],
+                &["sina", "weibo", "sinaweibo"],
+            ),
+            "MIUI_APPID" | "MIUI_APPSECRET" | "MIUI_REDIRECT_URI" => manifest_has_enabled_provider(
+                manifest,
+                &["oauth", "login", "oauths"],
+                &["miui", "xiaomi", "mi"],
+            ),
+            "FACEBOOK_APP_ID" | "FACEBOOK_CLIENT_TOKEN" => manifest_has_enabled_provider(
+                manifest,
+                &["oauth", "login", "oauths"],
+                &["facebook", "fb"],
+            ),
+            _ => true,
+        },
+        "map" => match spec.key {
+            "BAIDU_MAP_AK" => {
+                manifest_has_enabled_provider(manifest, &["maps", "map"], &["baidu", "bd"])
+            }
+            "AMAP_KEY" => {
+                manifest_has_enabled_provider(manifest, &["maps", "map"], &["amap", "gaode"])
+            }
+            "GOOGLE_MAPS_API_KEY" => {
+                manifest_has_enabled_provider(manifest, &["maps", "map"], &["google"])
+            }
+            "TENCENT_MAP_KEY" => {
+                manifest_has_enabled_provider(manifest, &["maps", "map"], &["tencent", "qqmap"])
+            }
+            _ => true,
+        },
+        "payment" => match spec.key {
+            "WX_APPID" => manifest_has_enabled_provider(
+                manifest,
+                &["payment", "pay", "payments"],
+                &["weixin", "wechat", "wx"],
+            ),
+            "PAYPAL_RETURN_SCHEME" => manifest_has_enabled_provider(
+                manifest,
+                &["payment", "pay", "payments"],
+                &["paypal"],
+            ),
+            _ => true,
+        },
+        "speech" => match spec.key {
+            "BAIDU_SPEECH_APP_ID" | "BD_SPEECH_APIKEY" | "BD_SPEECH_SECRETKEY" => {
+                manifest_has_enabled_provider(
+                    manifest,
+                    &["speech", "speechRecognition"],
+                    &["baidu"],
+                )
+            }
+            "IFLY_APPID" => manifest_has_enabled_provider(
+                manifest,
+                &["speech", "speechRecognition"],
+                &["ifly", "xfyun", "xunfei"],
+            ),
+            _ => true,
+        },
+        "statistic" => match spec.key {
+            "UMENG_APPKEY" | "UMENG_CHANNEL" => manifest_has_enabled_provider(
+                manifest,
+                &["statistic", "statistics", "statics"],
+                &["umeng"],
+            ),
+            _ => true,
+        },
+        "face_recognition" => match spec.key {
+            "DCLOUD_LICENSE" => manifest_has_enabled_provider(
+                manifest,
+                &[
+                    "facialRecognitionVerify",
+                    "faceRecognition",
+                    "face_recognition",
+                    "facial",
+                    "face",
+                    "realname",
+                ],
+                &["dcloud"],
+            ),
+            "BDFACE_APIKEY" | "BDFACE_SECRETKEY" => manifest_has_enabled_provider(
+                manifest,
+                &[
+                    "facialRecognitionVerify",
+                    "faceRecognition",
+                    "face_recognition",
+                    "facial",
+                    "face",
+                    "realname",
+                ],
+                &["baidu", "bd"],
+            ),
+            "ALIFACE_ACCESSKEY_ID" | "ALIFACE_ACCESSKEY_SECRET" => manifest_has_enabled_provider(
+                manifest,
+                &[
+                    "facialRecognitionVerify",
+                    "faceRecognition",
+                    "face_recognition",
+                    "facial",
+                    "face",
+                    "realname",
+                ],
+                &["aliyun", "ali"],
+            ),
+            _ => true,
+        },
+        _ => true,
+    }
+}
+
+pub fn android_module_artifact_enabled_for_manifest(
+    template_key: &str,
+    artifact: &str,
+    manifest: Option<&serde_json::Value>,
+) -> bool {
+    android_module_entry_enabled_for_manifest(template_key, artifact, manifest)
+}
+
+pub fn android_module_gradle_dependency_enabled_for_manifest(
+    template_key: &str,
+    dependency: &str,
+    manifest: Option<&serde_json::Value>,
+) -> bool {
+    android_module_entry_enabled_for_manifest(template_key, dependency, manifest)
+}
+
+pub fn android_module_gradle_repositories_for_manifest(
+    template_key: &str,
+    manifest: Option<&serde_json::Value>,
+) -> Vec<&'static str> {
+    let Some(manifest) = manifest else {
+        return match template_key {
+            "push" => vec![
+                "maven { url 'https://mvn.getui.com/nexus/content/repositories/releases' }",
+                "maven { url 'https://developer.huawei.com/repo/' }",
+                "maven { url 'https://developer.hihonor.com/repo/' }",
+            ],
+            _ => Vec::new(),
+        };
+    };
+
+    match template_key {
+        "push" => {
+            let mut repos =
+                vec!["maven { url 'https://mvn.getui.com/nexus/content/repositories/releases' }"];
+            if push_provider_enabled(manifest, &["huawei", "hms", "hw"]) {
+                repos.push("maven { url 'https://developer.huawei.com/repo/' }");
+            }
+            if push_provider_enabled(manifest, &["honor"]) {
+                repos.push("maven { url 'https://developer.hihonor.com/repo/' }");
+            }
+            repos
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn android_module_entry_enabled_for_manifest(
+    template_key: &str,
+    entry: &str,
+    manifest: Option<&serde_json::Value>,
+) -> bool {
+    let Some(manifest) = manifest else {
+        return true;
+    };
+    let note = android_entry_provider_note(entry);
+
+    match template_key {
+        "push" => provider_entry_enabled(
+            &note,
+            &[
+                (
+                    &["xiaomi", "mi", "小米"][..],
+                    &["push", "unipush", "unipushV2", "uniPush"][..],
+                    &["xiaomi", "mi"][..],
+                ),
+                (
+                    &["meizu", "mz", "魅族"][..],
+                    &["push", "unipush", "unipushV2", "uniPush"][..],
+                    &["meizu", "mz"][..],
+                ),
+                (
+                    &["huawei", "hms", "华为"][..],
+                    &["push", "unipush", "unipushV2", "uniPush"][..],
+                    &["huawei", "hms", "hw"][..],
+                ),
+                (
+                    &["oppo"][..],
+                    &["push", "unipush", "unipushV2", "uniPush"][..],
+                    &["oppo"][..],
+                ),
+                (
+                    &["vivo"][..],
+                    &["push", "unipush", "unipushV2", "uniPush"][..],
+                    &["vivo"][..],
+                ),
+                (
+                    &["honor", "荣耀"][..],
+                    &["push", "unipush", "unipushV2", "uniPush"][..],
+                    &["honor"][..],
+                ),
+            ],
+            manifest,
+        ),
+        "share" => provider_entry_enabled(
+            &note,
+            &[
+                (
+                    &["weixin", "wechat", "wx", "微信"][..],
+                    &["share", "shares"][..],
+                    &["weixin", "wechat", "wx"][..],
+                ),
+                (&["qq"][..], &["share", "shares"][..], &["qq"][..]),
+                (
+                    &["sina", "weibo", "微博"][..],
+                    &["share", "shares"][..],
+                    &["sina", "weibo", "sinaweibo"][..],
+                ),
+            ],
+            manifest,
+        ),
+        "login" => provider_entry_enabled(
+            &note,
+            &[
+                (
+                    &["univerify", "igetui", "getui", "一键登录"][..],
+                    &["oauth", "login", "oauths"][..],
+                    &["univerify", "igetui", "getui"][..],
+                ),
+                (
+                    &["weixin", "wechat", "wx", "微信"][..],
+                    &["oauth", "login", "oauths"][..],
+                    &["weixin", "wechat", "wx"][..],
+                ),
+                (&["qq"][..], &["oauth", "login", "oauths"][..], &["qq"][..]),
+                (
+                    &["sina", "weibo", "微博"][..],
+                    &["oauth", "login", "oauths"][..],
+                    &["sina", "weibo", "sinaweibo"][..],
+                ),
+                (
+                    &["miui", "xiaomi", "mi", "小米"][..],
+                    &["oauth", "login", "oauths"][..],
+                    &["miui", "xiaomi", "mi"][..],
+                ),
+                (
+                    &["google"][..],
+                    &["oauth", "login", "oauths"][..],
+                    &["google"][..],
+                ),
+                (
+                    &["facebook", "fb"][..],
+                    &["oauth", "login", "oauths"][..],
+                    &["facebook", "fb"][..],
+                ),
+            ],
+            manifest,
+        ),
+        "geolocation" => provider_entry_enabled(
+            &note,
+            &[
+                (
+                    &["baidu", "bd", "百度"][..],
+                    &["geolocation", "location", "position"][..],
+                    &["baidu", "bd"][..],
+                ),
+                (
+                    &["amap", "gaode", "高德"][..],
+                    &["geolocation", "location", "position"][..],
+                    &["amap", "gaode"][..],
+                ),
+                (
+                    &["tencent", "qqmap", "腾讯"][..],
+                    &["geolocation", "location", "position"][..],
+                    &["tencent", "qqmap"][..],
+                ),
+            ],
+            manifest,
+        ),
+        "payment" => provider_entry_enabled(
+            &note,
+            &[
+                (
+                    &["alipay", "支付宝"][..],
+                    &["payment", "pay", "payments"][..],
+                    &["alipay"][..],
+                ),
+                (
+                    &["weixin", "wechat", "wx", "微信"][..],
+                    &["payment", "pay", "payments"][..],
+                    &["weixin", "wechat", "wx"][..],
+                ),
+                (
+                    &["paypal"][..],
+                    &["payment", "pay", "payments"][..],
+                    &["paypal"][..],
+                ),
+                (
+                    &["stripe"][..],
+                    &["payment", "pay", "payments"][..],
+                    &["stripe"][..],
+                ),
+                (
+                    &["google"][..],
+                    &["payment", "pay", "payments"][..],
+                    &["google", "googlepay", "google_pay"][..],
+                ),
+            ],
+            manifest,
+        ),
+        "map" => provider_entry_enabled(
+            &note,
+            &[
+                (
+                    &["baidu", "bd", "百度"][..],
+                    &["maps", "map"][..],
+                    &["baidu", "bd"][..],
+                ),
+                (
+                    &["amap", "gaode", "高德"][..],
+                    &["maps", "map"][..],
+                    &["amap", "gaode"][..],
+                ),
+                (&["google"][..], &["maps", "map"][..], &["google"][..]),
+                (
+                    &["tencent", "qqmap", "腾讯"][..],
+                    &["maps", "map"][..],
+                    &["tencent", "qqmap"][..],
+                ),
+            ],
+            manifest,
+        ),
+        "statistic" => provider_entry_enabled(
+            &note,
+            &[
+                (
+                    &["umeng", "友盟"][..],
+                    &["statistic", "statistics", "statics"][..],
+                    &["umeng"][..],
+                ),
+                (
+                    &["google", "谷歌"][..],
+                    &["statistic", "statistics", "statics"][..],
+                    &["google"][..],
+                ),
+            ],
+            manifest,
+        ),
+        "speech" => provider_entry_enabled(
+            &note,
+            &[
+                (
+                    &["baidu", "bd", "百度"][..],
+                    &["speech", "speechRecognition"][..],
+                    &["baidu"][..],
+                ),
+                (
+                    &["ifly", "xfyun", "xunfei", "讯飞"][..],
+                    &["speech", "speechRecognition"][..],
+                    &["ifly", "xfyun", "xunfei"][..],
+                ),
+            ],
+            manifest,
+        ),
+        "uni_ad" => provider_entry_enabled(
+            &note,
+            &[
+                (
+                    &["csj", "chuanshanjia", "穿山甲"][..],
+                    &["ad", "ads", "uni-ad", "uniAD", "uniad"][..],
+                    &["csj", "chuanshanjia"][..],
+                ),
+                (
+                    &["gdt", "youlianghui", "优量汇"][..],
+                    &["ad", "ads", "uni-ad", "uniAD", "uniad"][..],
+                    &["gdt", "youlianghui"][..],
+                ),
+                (
+                    &["gromore"][..],
+                    &["ad", "ads", "uni-ad", "uniAD", "uniad"][..],
+                    &["gromore"][..],
+                ),
+                (
+                    &["admob"][..],
+                    &["ad", "ads", "uni-ad", "uniAD", "uniad"][..],
+                    &["admob"][..],
+                ),
+                (
+                    &["huawei", "hms", "华为"][..],
+                    &["ad", "ads", "uni-ad", "uniAD", "uniad"][..],
+                    &["huawei", "hms", "hw"][..],
+                ),
+            ],
+            manifest,
+        ),
+        _ => true,
+    }
+}
+
+fn provider_entry_enabled(
+    note: &str,
+    providers: &[(&[&str], &[&str], &[&str])],
+    manifest: &serde_json::Value,
+) -> bool {
+    for (markers, module_keys, provider_keys) in providers {
+        if android_entry_mentions_any(note, markers) {
+            return manifest_has_enabled_provider(manifest, module_keys, provider_keys);
+        }
+    }
+    true
+}
+
+fn android_entry_provider_note(entry: &str) -> String {
+    let mut notes = Vec::new();
+    let mut rest = entry;
+    while let Some(start) = rest.find('(') {
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find(')') else {
+            break;
+        };
+        notes.push(after_start[..end].trim());
+        rest = &after_start[end + 1..];
+    }
+    if notes.is_empty() {
+        entry.to_string()
+    } else {
+        notes.join(" ")
+    }
+}
+
+fn android_entry_mentions_any(text: &str, markers: &[&str]) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let normalized = normalize_config_key(text);
+    markers.iter().any(|marker| {
+        let marker_lower = marker.to_ascii_lowercase();
+        let marker_normalized = normalize_config_key(marker);
+        lower.contains(&marker_lower)
+            || (!marker_normalized.is_empty() && normalized.contains(&marker_normalized))
+    })
+}
+
+fn push_provider_enabled(manifest: &serde_json::Value, provider_keys: &[&str]) -> bool {
+    manifest_has_enabled_provider(
+        manifest,
+        &["push", "unipush", "unipushV2", "uniPush"],
+        provider_keys,
+    )
 }
 
 fn apply_module_name_to_tree(tree: &mut ModuleConfigTree, name: &str) {
@@ -539,7 +1081,7 @@ fn android_config_field_specs(template_key: &str) -> &'static [AndroidConfigFiel
                 secret: false,
                 placeholder: "启用华为通道时填写",
                 aliases: &["HUAWEI_APP_ID", "huawei_app_id", "appid", "appId"],
-                path_hints: &["huawei", "hw"],
+                path_hints: &["huawei", "hms", "hw"],
             },
             AndroidConfigFieldSpec {
                 key: "OPPO_APP_KEY",
@@ -628,6 +1170,8 @@ fn android_config_field_specs(template_key: &str) -> &'static [AndroidConfigFiel
                     "TENCENT_MAP_KEY",
                     "TencentMapSDK",
                     "tencent_map_key",
+                    "apikey_android",
+                    "apikey_ios",
                     "appKey",
                     "key",
                 ],
@@ -816,6 +1360,7 @@ fn android_config_field_specs(template_key: &str) -> &'static [AndroidConfigFiel
                     "FACEBOOK_CLIENT_TOKEN",
                     "facebook_client_token",
                     "clientToken",
+                    "client_token",
                 ],
                 path_hints: &["oauth", "login", "facebook", "fb"],
             },
@@ -871,6 +1416,8 @@ fn android_config_field_specs(template_key: &str) -> &'static [AndroidConfigFiel
                     "TENCENT_MAP_KEY",
                     "TencentMapSDK",
                     "tencent_map_key",
+                    "apikey_android",
+                    "apikey_ios",
                     "appKey",
                     "key",
                 ],
@@ -893,7 +1440,14 @@ fn android_config_field_specs(template_key: &str) -> &'static [AndroidConfigFiel
                 required: false,
                 secret: false,
                 placeholder: "启用 PayPal 时填写",
-                aliases: &["PAYPAL_RETURN_SCHEME", "returnUrl", "scheme"],
+                aliases: &[
+                    "PAYPAL_RETURN_SCHEME",
+                    "returnUrl",
+                    "returnURL",
+                    "returnURL_android",
+                    "return_url_android",
+                    "scheme",
+                ],
                 path_hints: &["payment", "pay", "paypal"],
             },
         ],
@@ -958,7 +1512,7 @@ fn android_config_field_specs(template_key: &str) -> &'static [AndroidConfigFiel
                 secret: true,
                 placeholder: "友盟统计 AppKey",
                 aliases: &["UMENG_APPKEY", "appkey_android", "appkey", "appKey"],
-                path_hints: &["statistic", "statistics", "umeng"],
+                path_hints: &["statistic", "statistics", "statics", "umeng"],
             },
             AndroidConfigFieldSpec {
                 key: "UMENG_CHANNEL",
@@ -967,7 +1521,7 @@ fn android_config_field_specs(template_key: &str) -> &'static [AndroidConfigFiel
                 secret: false,
                 placeholder: "渠道号，可选",
                 aliases: &["UMENG_CHANNEL", "channelid_android", "channel", "channelId"],
-                path_hints: &["statistic", "statistics", "umeng"],
+                path_hints: &["statistic", "statistics", "statics", "umeng"],
             },
         ],
         "face_recognition" => &[
@@ -1102,7 +1656,7 @@ fn android_field_required_for_manifest(
     manifest: Option<&serde_json::Value>,
 ) -> bool {
     if !spec.required {
-        return false;
+        return android_optional_field_required_for_manifest(template_key, spec, manifest);
     }
     let Some(manifest) = manifest else {
         return spec.required;
@@ -1138,9 +1692,11 @@ fn android_field_required_for_manifest(
             _ => spec.required,
         },
         "statistic" => match spec.key {
-            "UMENG_APPKEY" => {
-                manifest_has_enabled_provider(manifest, &["statistic", "statistics"], &["umeng"])
-            }
+            "UMENG_APPKEY" => manifest_has_enabled_provider(
+                manifest,
+                &["statistic", "statistics", "statics"],
+                &["umeng"],
+            ),
             _ => spec.required,
         },
         "uni_ad" => match spec.key {
@@ -1151,6 +1707,35 @@ fn android_field_required_for_manifest(
             _ => spec.required,
         },
         _ => spec.required,
+    }
+}
+
+fn android_optional_field_required_for_manifest(
+    template_key: &str,
+    spec: &AndroidConfigFieldSpec,
+    manifest: Option<&serde_json::Value>,
+) -> bool {
+    let Some(manifest) = manifest else {
+        return false;
+    };
+
+    match template_key {
+        "push" => {
+            matches!(
+                spec.key,
+                "XIAOMI_APP_ID"
+                    | "XIAOMI_APP_KEY"
+                    | "MEIZU_APP_ID"
+                    | "MEIZU_APP_KEY"
+                    | "HUAWEI_APP_ID"
+                    | "OPPO_APP_KEY"
+                    | "OPPO_APP_SECRET"
+                    | "VIVO_APP_ID"
+                    | "VIVO_APP_KEY"
+                    | "HONOR_APP_ID"
+            ) && android_field_visible_for_manifest(template_key, spec, Some(manifest))
+        }
+        _ => false,
     }
 }
 
@@ -1213,9 +1798,11 @@ fn manifest_provider_enabled(value: &serde_json::Value, provider_key: &str) -> b
     let Some(map) = value.as_object() else {
         return false;
     };
-    get_object_value_normalized(map, provider_key)
-        .map(config_value_enabled)
-        .unwrap_or(false)
+    map.iter().any(|(key, item)| {
+        (normalize_config_key(key) == normalize_config_key(provider_key)
+            && config_value_enabled(item))
+            || manifest_provider_enabled(item, provider_key)
+    })
 }
 
 fn get_object_value_normalized<'a>(
@@ -1232,12 +1819,36 @@ fn config_value_enabled(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Bool(flag) => *flag,
         serde_json::Value::Null => false,
-        serde_json::Value::Object(map) => map
-            .get("enabled")
-            .or_else(|| map.get("enable"))
-            .or_else(|| map.get("open"))
-            .and_then(|value| value.as_bool())
-            .unwrap_or(true),
+        serde_json::Value::Object(map) => {
+            let enabled = map
+                .get("enabled")
+                .or_else(|| map.get("enable"))
+                .or_else(|| map.get("open"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true);
+            enabled && config_value_applies_to_android(map)
+        }
+        _ => true,
+    }
+}
+
+fn config_value_applies_to_android(map: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let Some(platforms) = map.get("__platform__") else {
+        return true;
+    };
+    match platforms {
+        serde_json::Value::Array(items) => items.iter().any(|item| {
+            item.as_str()
+                .map(|platform| {
+                    let platform = platform.to_ascii_lowercase();
+                    platform == "android" || platform == "app" || platform == "all"
+                })
+                .unwrap_or(false)
+        }),
+        serde_json::Value::String(platform) => {
+            let platform = platform.to_ascii_lowercase();
+            platform == "android" || platform == "app" || platform == "all"
+        }
         _ => true,
     }
 }
@@ -1827,8 +2438,8 @@ fn get_share_template() -> ModuleTemplate {
                 "share-weixin-release.aar (微信)".to_string(),
                 "share-qq-release.aar (QQ)".to_string(),
                 "share-sina-release.aar (微博)".to_string(),
-                "open_sdk_3.5.12.r2_j97423a8_lite.jar (QQ SDK)".to_string(),
-                "openDefault-12.5.0.aar (微博 SDK)".to_string(),
+                "open_sdk_XXX_lite.jar (QQ SDK)".to_string(),
+                "openDefault-XXX.aar (微博 SDK)".to_string(),
             ],
             gradle_dependencies: vec![
                 "com.tencent.mm.opensdk:wechat-sdk-android-without-mta:6.8.0 (微信 HX>=3.7.6)".to_string(),
@@ -1977,8 +2588,8 @@ fn get_login_template() -> ModuleTemplate {
                 "oauth-univerify-release.aar (一键登录)".to_string(),
                 "oauth-weixin-release.aar (微信登录)".to_string(),
                 "oauth-qq-release.aar (QQ登录)".to_string(),
-                "open_sdk_3.5.12.2_r97423a8_lite.jar (QQ SDK)".to_string(),
-                "openDefault-12.5.0.aar (微博 SDK)".to_string(),
+                "open_sdk_XXX_lite.jar (QQ SDK)".to_string(),
+                "openDefault-XXX.aar (微博 SDK)".to_string(),
                 "oauth-sina-release.aar (微博登录)".to_string(),
                 "oauth-miui-release.aar (小米登录)".to_string(),
                 "oauth-google-release.aar (Google登录)".to_string(),
@@ -2174,7 +2785,7 @@ fn get_face_recognition_template() -> ModuleTemplate {
                 "aliyun-facelanguage-XXX.aar".to_string(),
                 "aliyun-photoinus-XXX.aar".to_string(),
                 "aliyun-wishverify-XXX.aar".to_string(),
-                "Android-7.0.1.20230914.jiagu.aar".to_string(),
+                "Android-XXX.jiagu.aar".to_string(),
                 "10042.aar".to_string(),
                 "APSecuritySDK-DeepSec.aar".to_string(),
                 "facialRecognitionVerify-support-release.aar".to_string(),
@@ -2455,7 +3066,7 @@ mod tests {
     }
 
     #[test]
-    fn android_config_report_user_values_override_manifest() {
+    fn android_config_report_prefers_manifest_over_cached_values() {
         let modules = vec![crate::commands::resource::DetectedModule {
             name: "Statistic".to_string(),
             category: "statistic".to_string(),
@@ -2474,7 +3085,7 @@ mod tests {
             }
         });
         let mut user = HashMap::new();
-        user.insert("UMENG_APPKEY".to_string(), "user-key".to_string());
+        user.insert("UMENG_APPKEY".to_string(), "cached-key".to_string());
 
         let report =
             android_module_config_report_from_value(&modules, Some(&manifest), Some(&user));
@@ -2484,8 +3095,8 @@ mod tests {
             .find(|field| field.key == "UMENG_APPKEY")
             .unwrap();
 
-        assert_eq!(field.value.as_deref(), Some("user-key"));
-        assert_eq!(field.value_source.as_deref(), Some("user"));
+        assert_eq!(field.value.as_deref(), Some("manifest-key"));
+        assert_eq!(field.value_source.as_deref(), Some("manifest"));
         assert!(report.all_configured);
     }
 
@@ -2522,5 +3133,202 @@ mod tests {
             .missing_required
             .iter()
             .any(|missing| missing.key == "QQ_APPID"));
+        let field_keys = report.modules[0]
+            .fields
+            .iter()
+            .map(|field| field.key.as_str())
+            .collect::<Vec<_>>();
+        assert!(field_keys.contains(&"WX_APPID"));
+        assert!(field_keys.contains(&"WX_SECRET"));
+        assert!(!field_keys.contains(&"QQ_APPID"));
+        assert!(!field_keys.contains(&"SINA_APPKEY"));
+    }
+
+    #[test]
+    fn android_config_report_shows_only_enabled_oauth_provider_fields() {
+        let modules = vec![crate::commands::resource::DetectedModule {
+            name: "OAuth".to_string(),
+            category: "login".to_string(),
+            platforms: vec!["android".to_string()],
+            configured: false,
+            required_keys: vec![],
+            source: "manifest.json".to_string(),
+        }];
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "modules": {
+                    "OAuth": {}
+                },
+                "distribute": {
+                    "sdkConfigs": {
+                        "oauth": {
+                            "weixin": {
+                                "appid": "wx-login",
+                                "UniversalLinks": "https://example.com/app/"
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let report = android_module_config_report_from_value(&modules, Some(&manifest), None);
+
+        assert_eq!(report.modules.len(), 1);
+        let login = &report.modules[0];
+        let field_keys = login
+            .fields
+            .iter()
+            .map(|field| field.key.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(field_keys, vec!["WX_APPID", "WX_SECRET"]);
+        assert_eq!(
+            login
+                .fields
+                .iter()
+                .find(|field| field.key == "WX_APPID")
+                .and_then(|field| field.value.as_deref()),
+            Some("wx-login")
+        );
+        assert!(report
+            .missing_required
+            .iter()
+            .any(|missing| missing.key == "WX_SECRET"));
+        assert!(!report
+            .missing_required
+            .iter()
+            .any(|missing| missing.key == "QQ_APPID"));
+    }
+
+    #[test]
+    fn android_config_report_honors_nested_push_and_platform_providers() {
+        let modules = vec![
+            crate::commands::resource::DetectedModule {
+                name: "Push".to_string(),
+                category: "push".to_string(),
+                platforms: vec!["android".to_string()],
+                configured: false,
+                required_keys: vec![],
+                source: "manifest.json".to_string(),
+            },
+            crate::commands::resource::DetectedModule {
+                name: "Payment".to_string(),
+                category: "payment".to_string(),
+                platforms: vec!["android".to_string()],
+                configured: false,
+                required_keys: vec![],
+                source: "manifest.json".to_string(),
+            },
+        ];
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "modules": {
+                    "Push": {},
+                    "Payment": {}
+                },
+                "distribute": {
+                    "sdkConfigs": {
+                        "push": {
+                            "unipush": {
+                                "offline": true,
+                                "mi": { "appid": "mi-app", "appkey": "mi-key" },
+                                "hms": { "appid": "huawei-app" },
+                                "oppo": false,
+                                "vivo": { "__platform__": ["ios"] }
+                            }
+                        },
+                        "payment": {
+                            "weixin": {
+                                "__platform__": ["ios"],
+                                "appid": "wx-ios-only"
+                            },
+                            "paypal": {
+                                "__platform__": ["ios", "android"],
+                                "returnURL_android": "paypal-demo"
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let report = android_module_config_report_from_value(&modules, Some(&manifest), None);
+        let push = report
+            .modules
+            .iter()
+            .find(|module| module.template_key == "push")
+            .unwrap();
+        let push_keys = push
+            .fields
+            .iter()
+            .map(|field| field.key.as_str())
+            .collect::<Vec<_>>();
+        assert!(push_keys.contains(&"XIAOMI_APP_ID"));
+        assert!(push_keys.contains(&"XIAOMI_APP_KEY"));
+        assert!(push_keys.contains(&"HUAWEI_APP_ID"));
+        assert!(!push_keys.contains(&"OPPO_APP_KEY"));
+        assert!(!push_keys.contains(&"VIVO_APP_ID"));
+
+        let payment = report
+            .modules
+            .iter()
+            .find(|module| module.template_key == "payment")
+            .unwrap();
+        let payment_keys = payment
+            .fields
+            .iter()
+            .map(|field| field.key.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(payment_keys, vec!["PAYPAL_RETURN_SCHEME"]);
+        assert_eq!(payment.fields[0].value.as_deref(), Some("paypal-demo"));
+    }
+
+    #[test]
+    fn android_config_report_requires_enabled_push_vendor_fields() {
+        let modules = vec![crate::commands::resource::DetectedModule {
+            name: "Push".to_string(),
+            category: "push".to_string(),
+            platforms: vec!["android".to_string()],
+            configured: false,
+            required_keys: vec![],
+            source: "manifest.json".to_string(),
+        }];
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "modules": {
+                    "Push": {}
+                },
+                "distribute": {
+                    "sdkConfigs": {
+                        "push": {
+                            "unipush": {
+                                "hms": {},
+                                "oppo": {},
+                                "vivo": false
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let report = android_module_config_report_from_value(&modules, Some(&manifest), None);
+        let push = report
+            .modules
+            .iter()
+            .find(|module| module.template_key == "push")
+            .unwrap();
+
+        for key in ["HUAWEI_APP_ID", "OPPO_APP_KEY", "OPPO_APP_SECRET"] {
+            assert!(push
+                .fields
+                .iter()
+                .any(|field| field.key == key && field.required));
+            assert!(report
+                .missing_required
+                .iter()
+                .any(|missing| missing.key == key));
+        }
+        assert!(!push.fields.iter().any(|field| field.key == "VIVO_APP_ID"));
     }
 }

@@ -254,11 +254,8 @@ pub async fn build_ios_ipa(
         .ok_or_else(|| "导出成功后未找到 IPA 文件".to_string())?;
     let output_dir = expand_home(&config.output_dir);
     crate::utils::fs::ensure_directory(&output_dir).map_err(|e| e.to_string())?;
-    let dest = output_dir.join(format!(
-        "{}-{}.ipa",
-        safe_file_name(&config.app.name),
-        config.app.version
-    ));
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let dest = output_dir.join(format!("{}-v{}.ipa", ts, config.app.version));
     std::fs::copy(&ipa, &dest).map_err(|e| format!("复制 IPA 失败: {}", e))?;
     let size_bytes = std::fs::metadata(&dest)
         .map(|m| m.len())

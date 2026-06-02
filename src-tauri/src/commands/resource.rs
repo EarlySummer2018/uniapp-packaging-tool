@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,14 @@ pub struct AndroidManifestConfig {
     pub compile_sdk_version: Option<u32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SplashscreenConfig {
+    pub android_style: Option<String>,
+    pub android: BTreeMap<String, String>,
+    pub use_original_msgbox: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UniappManifestInfo {
@@ -42,6 +51,8 @@ pub struct UniappManifestInfo {
     pub version_code: Option<u32>,
     pub hbuilderx_version: Option<String>,
     pub icon1024: Option<String>,
+    #[serde(default)]
+    pub splashscreen: Option<SplashscreenConfig>,
     pub manifest_path: String,
     pub project_root: String,
     pub android: AndroidManifestConfig,
@@ -466,6 +477,7 @@ fn parse_uniapp_manifest(
     let version_code = number_field(manifest, &["versionCode", "version_code"]);
     let hbuilderx_version = extract_hbuilderx_version(manifest);
     let icon1024 = find_manifest_icon(manifest, project_root);
+    let splashscreen = find_manifest_splashscreen(manifest, project_root);
     let android_value = manifest
         .get("app-plus")
         .and_then(|v| v.get("distribute"))
@@ -481,27 +493,45 @@ fn parse_uniapp_manifest(
 
     let mut detected_modules = Vec::new();
     if let Some(app_plus) = manifest.get("app-plus") {
-        if let Some(modules) = app_plus.get("modules") {
+        let app_modules = app_plus.get("modules");
+        if let Some(modules) = app_modules {
             collect_modules_from_value(modules, "all", &mut detected_modules);
         }
         if let Some(distribute) = app_plus.get("distribute") {
             if let Some(sdk_configs) = distribute.get("sdkConfigs") {
-                collect_modules_from_sdk_configs(sdk_configs, "all", &mut detected_modules);
+                collect_modules_from_sdk_configs(
+                    sdk_configs,
+                    "all",
+                    &mut detected_modules,
+                    app_modules,
+                );
             }
             if let Some(android) = distribute.get("android") {
+                let android_modules = android.get("modules").or(app_modules);
                 if let Some(modules) = android.get("modules") {
                     collect_modules_from_value(modules, "android", &mut detected_modules);
                 }
                 if let Some(sdk_configs) = android.get("sdkConfigs") {
-                    collect_modules_from_sdk_configs(sdk_configs, "android", &mut detected_modules);
+                    collect_modules_from_sdk_configs(
+                        sdk_configs,
+                        "android",
+                        &mut detected_modules,
+                        android_modules,
+                    );
                 }
             }
             if let Some(ios) = distribute.get("ios") {
+                let ios_modules = ios.get("modules").or(app_modules);
                 if let Some(modules) = ios.get("modules") {
                     collect_modules_from_value(modules, "ios", &mut detected_modules);
                 }
                 if let Some(sdk_configs) = ios.get("sdkConfigs") {
-                    collect_modules_from_sdk_configs(sdk_configs, "ios", &mut detected_modules);
+                    collect_modules_from_sdk_configs(
+                        sdk_configs,
+                        "ios",
+                        &mut detected_modules,
+                        ios_modules,
+                    );
                 }
             }
             if let Some(harmony) = distribute.get("harmony") {
@@ -525,6 +555,7 @@ fn parse_uniapp_manifest(
         version_code,
         hbuilderx_version,
         icon1024,
+        splashscreen,
         manifest_path: manifest_path.to_string_lossy().to_string(),
         project_root: project_root.to_string_lossy().to_string(),
         android: AndroidManifestConfig {
@@ -567,6 +598,11 @@ fn string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
             .filter(|v| !v.is_empty())
             .map(String::from)
     })
+}
+
+fn bool_field(value: &serde_json::Value, keys: &[&str]) -> Option<bool> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(|v| v.as_bool()))
 }
 
 fn number_field(value: &serde_json::Value, keys: &[&str]) -> Option<u32> {
@@ -619,6 +655,7 @@ fn collect_modules_from_sdk_configs(
     sdk_configs: &serde_json::Value,
     platform: &str,
     detected: &mut Vec<DetectedModule>,
+    enabled_modules: Option<&serde_json::Value>,
 ) {
     let Some(map) = sdk_configs.as_object() else {
         return;
@@ -629,44 +666,119 @@ fn collect_modules_from_sdk_configs(
             continue;
         }
 
-        match key.as_str() {
-            "push" | "unipush" | "unipushV2" | "uniPush" => {
-                push_detected_module(detected, "Push", platform)
+        if let Some(module_name) = sdk_config_key_to_module_name(key) {
+            if enabled_modules
+                .map(|modules| module_declared_enabled(modules, module_name))
+                .unwrap_or(true)
+            {
+                push_detected_module(detected, module_name, platform);
             }
-            "share" | "shares" => push_detected_module(detected, "Share", platform),
-            "oauth" | "login" | "oauths" => push_detected_module(detected, "OAuth", platform),
-            "payment" | "pay" | "payments" => push_detected_module(detected, "Payment", platform),
-            "maps" | "map" => push_detected_module(detected, "Maps", platform),
-            "geolocation" | "location" | "position" => {
-                push_detected_module(detected, "Geolocation", platform)
-            }
-            "speech" | "speechRecognition" => push_detected_module(detected, "Speech", platform),
-            "statistic" | "statistics" => push_detected_module(detected, "Statistic", platform),
-            "ad" | "ads" | "uni-ad" | "uniAD" | "uniad" => {
-                push_detected_module(detected, "UniAD", platform)
-            }
-            "facialRecognitionVerify" | "faceRecognition" | "face_recognition" => {
-                push_detected_module(detected, "FacialRecognitionVerify", platform)
-            }
-            "x5" | "x5Webview" | "x5_webview" => {
-                push_detected_module(detected, "X5Webview", platform)
-            }
-            "livepusher" | "livePusher" => push_detected_module(detected, "LivePusher", platform),
-            _ => {}
         }
     }
+}
+
+fn sdk_config_key_to_module_name(key: &str) -> Option<&'static str> {
+    match key {
+        "push" | "unipush" | "unipushV2" | "uniPush" => Some("Push"),
+        "share" | "shares" => Some("Share"),
+        "oauth" | "login" | "oauths" => Some("OAuth"),
+        "payment" | "pay" | "payments" => Some("Payment"),
+        "maps" | "map" => Some("Maps"),
+        "geolocation" | "location" | "position" => Some("Geolocation"),
+        "speech" | "speechRecognition" => Some("Speech"),
+        "statistic" | "statistics" | "statics" => Some("Statistic"),
+        "ad" | "ads" | "uni-ad" | "uniAD" | "uniad" => Some("UniAD"),
+        "facialRecognitionVerify" | "faceRecognition" | "face_recognition" => {
+            Some("FacialRecognitionVerify")
+        }
+        "x5" | "x5Webview" | "x5_webview" => Some("X5Webview"),
+        "livepusher" | "livePusher" => Some("LivePusher"),
+        _ => None,
+    }
+}
+
+fn module_declared_enabled(modules: &serde_json::Value, module_name: &str) -> bool {
+    if let Some(items) = modules.as_array() {
+        return items.iter().any(|item| {
+            let Some(name) = item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .or_else(|| item.as_str())
+            else {
+                return false;
+            };
+            module_names_equivalent(name, module_name) && sdk_config_value_enabled(item)
+        });
+    }
+
+    if let Some(map) = modules.as_object() {
+        return map.iter().any(|(name, value)| {
+            module_names_equivalent(name, module_name) && sdk_config_value_enabled(value)
+        });
+    }
+
+    false
+}
+
+fn module_names_equivalent(left: &str, right: &str) -> bool {
+    let left_module = match_module_to_category(left);
+    let right_module = match_module_to_category(right);
+    if left_module.category != "manifest" || right_module.category != "manifest" {
+        left_module.category == right_module.category
+    } else {
+        normalize_manifest_key(left) == normalize_manifest_key(right)
+    }
+}
+
+fn normalize_manifest_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
 }
 
 fn sdk_config_value_enabled(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Bool(flag) => *flag,
         serde_json::Value::Null => false,
-        serde_json::Value::Object(map) => map
-            .get("enabled")
-            .or_else(|| map.get("enable"))
-            .or_else(|| map.get("open"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true),
+        serde_json::Value::Object(map) => {
+            let enabled = map
+                .get("enabled")
+                .or_else(|| map.get("enable"))
+                .or_else(|| map.get("open"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            enabled && config_value_applies_to_platform(map, None)
+        }
+        _ => true,
+    }
+}
+
+fn config_value_applies_to_platform(
+    map: &serde_json::Map<String, serde_json::Value>,
+    platform: Option<&str>,
+) -> bool {
+    let Some(platforms) = map.get("__platform__") else {
+        return true;
+    };
+    let Some(platform) = platform else {
+        return true;
+    };
+    let platform = platform.to_ascii_lowercase();
+    match platforms {
+        serde_json::Value::Array(items) => items.iter().any(|item| {
+            item.as_str()
+                .map(|candidate| {
+                    let candidate = candidate.to_ascii_lowercase();
+                    candidate == platform || candidate == "app" || candidate == "all"
+                })
+                .unwrap_or(false)
+        }),
+        serde_json::Value::String(candidate) => {
+            let candidate = candidate.to_ascii_lowercase();
+            candidate == platform || candidate == "app" || candidate == "all"
+        }
         _ => true,
     }
 }
@@ -704,6 +816,66 @@ fn find_manifest_icon(manifest: &serde_json::Value, project_root: &Path) -> Opti
         project_root.join(path)
     };
     Some(absolute.to_string_lossy().to_string())
+}
+
+fn find_manifest_splashscreen(
+    manifest: &serde_json::Value,
+    project_root: &Path,
+) -> Option<SplashscreenConfig> {
+    let value = manifest
+        .get("app-plus")
+        .and_then(|v| v.get("distribute"))
+        .and_then(|v| v.get("splashscreen"))
+        .or_else(|| manifest.get("app-plus").and_then(|v| v.get("splashscreen")))
+        .or_else(|| manifest.get("splashscreen"))?;
+
+    let android = value
+        .get("android")
+        .and_then(|v| v.as_object())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|(density, path)| {
+                    path.as_str()
+                        .map(str::trim)
+                        .filter(|path| !path.is_empty())
+                        .map(|path| {
+                            (
+                                density.to_string(),
+                                resolve_manifest_asset_path(path, project_root),
+                            )
+                        })
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let config = SplashscreenConfig {
+        android_style: string_field(value, &["androidStyle", "android_style"]),
+        android,
+        use_original_msgbox: bool_field(value, &["useOriginalMsgbox", "use_original_msgbox"]),
+    };
+
+    if config.android_style.is_none()
+        && config.android.is_empty()
+        && config.use_original_msgbox.is_none()
+    {
+        None
+    } else {
+        Some(config)
+    }
+}
+
+fn resolve_manifest_asset_path(path: &str, project_root: &Path) -> String {
+    if path.contains("://") || path.starts_with("data:") {
+        return path.to_string();
+    }
+    let path = PathBuf::from(path);
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        project_root.join(path)
+    };
+    absolute.to_string_lossy().to_string()
 }
 
 fn find_icon_candidate(value: &serde_json::Value) -> Option<String> {
@@ -771,6 +943,7 @@ pub struct ResourceScanResult {
     pub app_resource_path: String,
     pub is_zip: bool,
     pub manifest_path: Option<String>,
+    pub splashscreen: Option<SplashscreenConfig>,
     pub detected_modules: Vec<DetectedModule>,
     pub uts: UtsPluginScanResult,
     pub warnings: Vec<String>,
@@ -902,6 +1075,7 @@ pub fn scan_imported_resource(
         app_resource_path: layout.app_resource_path.to_string_lossy().to_string(),
         is_zip,
         manifest_path: manifest_path.map(|p| p.to_string_lossy().to_string()),
+        splashscreen: manifest_info.as_ref().and_then(|m| m.splashscreen.clone()),
         detected_modules: manifest_info
             .map(|m| m.detected_modules)
             .unwrap_or_default(),
@@ -1341,8 +1515,10 @@ mod tests {
     fn manifest_info_reads_basic_android_and_modules() {
         let root = unique_temp_dir("unipack-manifest-info");
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::create_dir_all(root.join("static")).unwrap();
+        std::fs::create_dir_all(root.join("static/storyboard")).unwrap();
         std::fs::write(root.join("static/icon.png"), "fake").unwrap();
+        std::fs::write(root.join("static/storyboard/480x762.9.png"), "fake").unwrap();
+        std::fs::write(root.join("static/storyboard/720x1242.9.png"), "fake").unwrap();
         std::fs::write(
             root.join("manifest.json"),
             r#"{
@@ -1364,6 +1540,14 @@ mod tests {
                             "bundleId": "com.example.care",
                             "modules": [{"name":"Share"}]
                         }
+                    },
+                    "splashscreen": {
+                        "androidStyle": "default",
+                        "android": {
+                            "hdpi": "static/storyboard/480x762.9.png",
+                            "xhdpi": "static/storyboard/720x1242.9.png"
+                        },
+                        "useOriginalMsgbox": true
                     }
                 }
             }"#,
@@ -1386,6 +1570,17 @@ mod tests {
         assert_eq!(
             info.icon1024.as_deref(),
             Some(root.join("static/icon.png").to_string_lossy().as_ref())
+        );
+        let splashscreen = info.splashscreen.as_ref().unwrap();
+        assert_eq!(splashscreen.android_style.as_deref(), Some("default"));
+        assert_eq!(splashscreen.use_original_msgbox, Some(true));
+        assert_eq!(
+            splashscreen.android.get("hdpi").map(String::as_str),
+            Some(
+                root.join("static/storyboard/480x762.9.png")
+                    .to_string_lossy()
+                    .as_ref()
+            )
         );
         assert!(info.detected_modules.iter().any(|m| m.name == "Push"));
         assert!(info.detected_modules.iter().any(|m| m.name == "Maps"));
@@ -1523,7 +1718,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_info_detects_modules_from_sdk_configs() {
+    fn manifest_info_detects_modules_from_sdk_configs_when_module_is_enabled() {
         let root = unique_temp_dir("unipack-manifest-sdk-configs");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
@@ -1531,6 +1726,12 @@ mod tests {
             r#"{
                 "appid": "__UNI__SDKCONFIGS",
                 "app-plus": {
+                    "modules": {
+                        "Share": {},
+                        "OAuth": {},
+                        "Maps": {},
+                        "Payment": false
+                    },
                     "distribute": {
                         "sdkConfigs": {
                             "share": { "weixin": { "appid": "wx" } },
@@ -1556,9 +1757,46 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(names.contains(&"Share"));
-        assert!(names.contains(&"Payment"));
         assert!(names.contains(&"OAuth"));
         assert!(names.contains(&"Maps"));
+        assert!(!names.contains(&"Payment"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manifest_info_ignores_sdk_configs_without_enabled_module_declaration() {
+        let root = unique_temp_dir("unipack-manifest-disabled-module-sdk-configs");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("manifest.json"),
+            r#"{
+                "appid": "__UNI__DISABLED",
+                "app-plus": {
+                    "modules": {
+                        "OAuth": false,
+                        "Share": {}
+                    },
+                    "distribute": {
+                        "sdkConfigs": {
+                            "oauth": { "weixin": { "appid": "wx" } },
+                            "share": { "weixin": { "appid": "wx" } }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let info = read_uniapp_manifest_sync(&root.to_string_lossy()).unwrap();
+        let names = info
+            .detected_modules
+            .iter()
+            .map(|module| module.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"Share"));
+        assert!(!names.contains(&"OAuth"));
 
         let _ = std::fs::remove_dir_all(root);
     }

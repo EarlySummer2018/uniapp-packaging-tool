@@ -16,10 +16,7 @@ pub const ANDROID_REQUIRED_AARS: &[AndroidRequiredAar] = &[
     },
     AndroidRequiredAar {
         display_name: "android-gif-drawable",
-        exact_names: &[
-            "android-gif-drawable-release@1.2.23.aar",
-            "lib.android-gif-drawable-release.aar",
-        ],
+        exact_names: &["lib.android-gif-drawable-release.aar"],
         versionless_prefixes: &["android-gif-drawable", "lib.android-gif-drawable"],
     },
     AndroidRequiredAar {
@@ -29,7 +26,7 @@ pub const ANDROID_REQUIRED_AARS: &[AndroidRequiredAar] = &[
     },
     AndroidRequiredAar {
         display_name: "oaid",
-        exact_names: &["oaid_sdk_1.0.25.aar", "lib.oaid.release.aar"],
+        exact_names: &["lib.oaid.release.aar"],
         versionless_prefixes: &["oaid_sdk_", "lib.oaid"],
     },
     AndroidRequiredAar {
@@ -39,7 +36,7 @@ pub const ANDROID_REQUIRED_AARS: &[AndroidRequiredAar] = &[
     },
     AndroidRequiredAar {
         display_name: "breakpad",
-        exact_names: &["breakpad-build-release.aar", "lib.breakpad-release.aar"],
+        exact_names: &["lib.breakpad-release.aar"],
         versionless_prefixes: &["breakpad-build", "lib.breakpad"],
     },
 ];
@@ -418,13 +415,6 @@ pub fn resolve_android_required_aar(
     libs_dir: &Path,
     requirement: &AndroidRequiredAar,
 ) -> Option<PathBuf> {
-    for name in requirement.exact_names {
-        let path = libs_dir.join(name);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
     let mut matches = std::fs::read_dir(libs_dir)
         .ok()?
         .flatten()
@@ -436,6 +426,13 @@ pub fn resolve_android_required_aar(
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                 return false;
             };
+            if requirement
+                .exact_names
+                .iter()
+                .any(|pattern| android_artifact_name_matches(pattern, name))
+            {
+                return true;
+            }
             requirement
                 .versionless_prefixes
                 .iter()
@@ -444,6 +441,206 @@ pub fn resolve_android_required_aar(
         .collect::<Vec<_>>();
     matches.sort();
     matches.into_iter().next()
+}
+
+pub fn android_artifact_name_matches(pattern: &str, candidate: &str) -> bool {
+    if pattern == candidate {
+        return true;
+    }
+
+    let Some(pattern_ext) = android_artifact_extension(pattern) else {
+        return false;
+    };
+    if android_artifact_extension(candidate) != Some(pattern_ext) {
+        return false;
+    }
+
+    let Some(pattern_stem) = android_artifact_stem(pattern) else {
+        return false;
+    };
+    let Some(candidate_stem) = android_artifact_stem(candidate) else {
+        return false;
+    };
+
+    let Some(parts) = versionless_artifact_parts(pattern_stem) else {
+        return false;
+    };
+    versionless_artifact_parts_match(&parts, candidate_stem)
+}
+
+pub fn android_artifact_versionless_stem(pattern: &str) -> String {
+    let stem = android_artifact_stem(pattern).unwrap_or(pattern);
+    versionless_artifact_parts(stem)
+        .map(|parts| {
+            if parts.suffix.is_empty() {
+                parts.prefix
+            } else if parts.prefix.is_empty() {
+                parts.suffix
+            } else {
+                format!("{}-{}", parts.prefix, parts.suffix)
+            }
+        })
+        .unwrap_or_else(|| stem.trim_end_matches("-release").to_string())
+}
+
+struct AndroidArtifactVersionlessParts {
+    prefix: String,
+    suffix: String,
+    wildcard: bool,
+}
+
+fn versionless_artifact_parts(stem: &str) -> Option<AndroidArtifactVersionlessParts> {
+    if let Some((index, marker)) = first_wildcard_marker(stem) {
+        let prefix = trim_artifact_separators(&stem[..index]).to_ascii_lowercase();
+        let suffix = trim_artifact_separators(&stem[index + marker.len()..]).to_ascii_lowercase();
+        return (!prefix.is_empty() || !suffix.is_empty()).then_some(
+            AndroidArtifactVersionlessParts {
+                prefix,
+                suffix,
+                wildcard: true,
+            },
+        );
+    }
+
+    let Some((start, end)) = version_span(stem) else {
+        return None;
+    };
+    let prefix = trim_artifact_separators(&stem[..start]).to_ascii_lowercase();
+    let suffix = stable_suffix_after_version(&stem[end..]);
+    (!prefix.is_empty() || !suffix.is_empty()).then_some(AndroidArtifactVersionlessParts {
+        prefix,
+        suffix,
+        wildcard: false,
+    })
+}
+
+fn versionless_artifact_parts_match(
+    parts: &AndroidArtifactVersionlessParts,
+    candidate_stem: &str,
+) -> bool {
+    let candidate = candidate_stem.to_ascii_lowercase();
+    if !parts.prefix.is_empty() {
+        let Some(rest) = candidate.strip_prefix(&parts.prefix) else {
+            return false;
+        };
+        if !rest.is_empty()
+            && !rest
+                .chars()
+                .next()
+                .map(is_artifact_separator)
+                .unwrap_or(false)
+        {
+            return false;
+        }
+        if parts.suffix.is_empty() && !parts.wildcard {
+            return rest
+                .chars()
+                .find(|ch| !is_artifact_separator(*ch))
+                .map(|ch| ch.is_ascii_digit())
+                .unwrap_or(true);
+        }
+    }
+
+    if !parts.suffix.is_empty() {
+        let Some(before_suffix) = candidate.strip_suffix(&parts.suffix) else {
+            return false;
+        };
+        if !before_suffix.is_empty()
+            && !before_suffix
+                .chars()
+                .last()
+                .map(is_artifact_separator)
+                .unwrap_or(false)
+        {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn first_wildcard_marker(stem: &str) -> Option<(usize, &'static str)> {
+    ["XXX", "xxx", "x.x", "vx", "Vx", "+"]
+        .iter()
+        .filter_map(|marker| stem.find(marker).map(|index| (index, *marker)))
+        .min_by_key(|(index, _)| *index)
+}
+
+fn version_span(stem: &str) -> Option<(usize, usize)> {
+    let bytes = stem.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let ch = bytes[index] as char;
+        if !ch.is_ascii_digit() || (index > 0 && !is_artifact_separator(bytes[index - 1] as char)) {
+            index += 1;
+            continue;
+        }
+
+        let mut end = index;
+        while end < bytes.len() && (bytes[end] as char).is_ascii_digit() {
+            end += 1;
+        }
+
+        let mut groups = 0usize;
+        loop {
+            let separator_start = end;
+            while end < bytes.len() && is_version_separator(bytes[end] as char) {
+                end += 1;
+            }
+            let digits_start = end;
+            while end < bytes.len() && (bytes[end] as char).is_ascii_digit() {
+                end += 1;
+            }
+            if digits_start == end {
+                end = separator_start;
+                break;
+            }
+            groups += 1;
+        }
+
+        let has_prefix = !trim_artifact_separators(&stem[..index]).is_empty();
+        if groups > 0 || has_prefix {
+            return Some((index, end));
+        }
+
+        index = end.max(index + 1);
+    }
+    None
+}
+
+fn stable_suffix_after_version(raw_suffix: &str) -> String {
+    trim_artifact_separators(raw_suffix)
+        .split(is_artifact_separator)
+        .filter(|token| !token.is_empty())
+        .filter(|token| token.chars().any(|ch| ch.is_ascii_alphabetic()))
+        .filter(|token| !token.chars().any(|ch| ch.is_ascii_digit()))
+        .collect::<Vec<_>>()
+        .join("-")
+        .to_ascii_lowercase()
+}
+
+fn android_artifact_extension(name: &str) -> Option<&str> {
+    name.rsplit_once('.').and_then(|(_, ext)| match ext {
+        "aar" | "jar" => Some(ext),
+        _ => None,
+    })
+}
+
+fn android_artifact_stem(name: &str) -> Option<&str> {
+    let (stem, ext) = name.rsplit_once('.')?;
+    matches!(ext, "aar" | "jar").then_some(stem)
+}
+
+fn trim_artifact_separators(value: &str) -> &str {
+    value.trim_matches(is_artifact_separator)
+}
+
+fn is_version_separator(ch: char) -> bool {
+    matches!(ch, '.' | '_' | '-')
+}
+
+fn is_artifact_separator(ch: char) -> bool {
+    matches!(ch, '-' | '_' | '.' | '@' | '+')
 }
 
 fn missing_android_required_aars(libs_dir: &Path) -> Vec<&'static AndroidRequiredAar> {
@@ -566,12 +763,28 @@ mod tests {
     fn write_required_aars(libs_dir: &Path, legacy_names: bool) {
         std::fs::create_dir_all(libs_dir).unwrap();
         for requirement in ANDROID_REQUIRED_AARS {
-            let name = if legacy_names && requirement.exact_names.len() > 1 {
-                requirement.exact_names[1]
-            } else {
-                requirement.exact_names[0]
-            };
+            let name = test_required_aar_name(requirement, legacy_names);
             std::fs::write(libs_dir.join(name), b"aar").unwrap();
+        }
+    }
+
+    fn test_required_aar_name(
+        requirement: &AndroidRequiredAar,
+        legacy_names: bool,
+    ) -> &'static str {
+        match requirement.display_name {
+            "android-gif-drawable" if !legacy_names => "android-gif-drawable-release@2.3.45.aar",
+            "oaid" if !legacy_names => "oaid_sdk_2.3.45.aar",
+            "breakpad" if !legacy_names => "breakpad-build-release@2.3.45.aar",
+            "android-gif-drawable" => "lib.android-gif-drawable-release.aar",
+            "oaid" => "lib.oaid.release.aar",
+            "breakpad" => "lib.breakpad-release.aar",
+            _ => requirement
+                .exact_names
+                .first()
+                .copied()
+                .or_else(|| requirement.versionless_prefixes.first().copied())
+                .expect("test requirement should have a name"),
         }
     }
 
@@ -610,10 +823,6 @@ mod tests {
         let root = unique_temp_dir("unipack-android-sdk-versioned");
         let libs = root.join("SDK/libs");
         write_required_aars(&libs, false);
-        std::fs::remove_file(libs.join("android-gif-drawable-release@1.2.23.aar")).unwrap();
-        std::fs::write(libs.join("android-gif-drawable-1.2.29.aar"), b"aar").unwrap();
-        std::fs::remove_file(libs.join("oaid_sdk_1.0.25.aar")).unwrap();
-        std::fs::write(libs.join("oaid_sdk_1.2.0.aar"), b"aar").unwrap();
         std::fs::create_dir_all(root.join("SDK/assets")).unwrap();
 
         let layout = resolve_android_sdk_layout(&root).unwrap();
@@ -625,13 +834,37 @@ mod tests {
         assert_eq!(layout.root, root.canonicalize().unwrap());
         assert_eq!(
             gif.file_name().and_then(|n| n.to_str()),
-            Some("android-gif-drawable-1.2.29.aar")
+            Some("android-gif-drawable-release@2.3.45.aar")
         );
         assert_eq!(
             oaid.file_name().and_then(|n| n.to_str()),
-            Some("oaid_sdk_1.2.0.aar")
+            Some("oaid_sdk_2.3.45.aar")
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn android_artifact_name_matching_ignores_versions() {
+        assert!(android_artifact_name_matches(
+            "gtc-3.2.16.0.aar",
+            "gtc-3.5.1.0.aar"
+        ));
+        assert!(android_artifact_name_matches(
+            "open_sdk_3.5.12.2_r97423a8_lite.jar",
+            "open_sdk_3.5.0.0_dawfrwafr_lite.jar"
+        ));
+        assert!(android_artifact_name_matches(
+            "Android-7.0.1.20230914.jiagu.aar",
+            "Android-8.2.0.20260101.jiagu.aar"
+        ));
+        assert!(!android_artifact_name_matches(
+            "open_sdk_3.5.12.2_r97423a8_lite.jar",
+            "open_sdk_3.5.0.0_dawfrwafr_full.jar"
+        ));
+        assert!(!android_artifact_name_matches(
+            "gtc-3.2.16.0.aar",
+            "gtsdk-3.5.1.0.aar"
+        ));
     }
 
     #[test]

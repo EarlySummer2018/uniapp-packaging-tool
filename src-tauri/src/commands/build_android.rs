@@ -1,5 +1,34 @@
+//! Android APK 构建模块（V2 - 基于方式二：导入工程）
+//!
+//! ## 架构说明
+//! 使用 DCloud 官方 **HBuilder-Integrate-AS** 工程作为模板基础（`android-template-v2`），
+//! 通过 [`AndroidProjectModifier`](crate::utils::android_project_mod::AndroidProjectModifier) 在运行时动态修改配置，
+//! 替代了 V1 的模板渲染机制（`.tmpl` 文件渲染）。
+//!
+//! ## 主要改进
+//! - ✅ 与官方 SDK 保持一致，减少兼容性问题
+//! - ✅ 支持 Android Studio 直接打开工作区进行调试
+//! - ✅ 模板升级简单，只需替换 `android-template-v2/` 目录
+//! - ✅ 修改逻辑集中，易于维护和扩展
+//!
+//! ## 文件结构（V2）
+//! ```text
+//! workspace/                         # 构建工作区
+//! ├── simpleDemo/                   # 主应用模块（来自 HBuilder-Integrate-AS）
+//! │   ├── build.gradle              # 由 Modifier 动态修改
+//! │   ├── libs/                     # 运行时填入 AAR 文件
+//! │   └── src/main/...
+//! ├── uts-modules/                  # UTS 插件（按需创建）
+//! └── settings.gradle               # 包含 UTS 插件 include
+//! ```
+//!
+//! ## 参考文档
+//! - [DCloud Android 离线SDK使用说明](https://nativesupport.dcloud.net.cn/AppDocs/usesdk/android.html)
+//! - [Android 模块配置教程](../../module-tutorial-android.md)
+//! - [迁移计划](../../../.trae/documents/android-packaging-migration-plan-v1-to-v2.md)
+
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager};
 
@@ -85,12 +114,12 @@ fn emit_log(window: &tauri::Window, level: &str, message: &str, progress: Option
 fn bundled_android_template() -> PathBuf {
     let mut path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
     while path.pop() {
-        let template = path.join("bundled").join("android-template");
+        let template = path.join("bundled").join("android-template-v2");
         if template.exists() {
             return template;
         }
     }
-    PathBuf::from("bundled").join("android-template")
+    PathBuf::from("bundled").join("android-template-v2")
 }
 
 #[tauri::command]
@@ -208,7 +237,9 @@ pub async fn build_android_apk(
         &sdk_config.dcloud_android_sdk_path,
     ))?;
     let sdk_libs = sdk_layout.libs_dir.clone();
-    let libs_dst = workspace.join("app").join("libs");
+    let libs_dst = workspace
+        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join("libs");
     crate::utils::fs::ensure_directory(&libs_dst).map_err(|e| e.to_string())?;
     copy_required_aars(&sdk_libs, &libs_dst, &window)?;
     emit_log(&window, "success", "DCloud SDK 基础 AAR 已注入", Some(18));
@@ -217,8 +248,17 @@ pub async fn build_android_apk(
         .as_ref()
         .map(|info| info.detected_modules.as_slice())
         .unwrap_or(scan.detected_modules.as_slice());
+    let merged_module_config = merged_android_module_config(&config, module_config);
     let module_config_report = manifest_info.as_ref().map(|info| {
-        crate::commands::module::analyze_android_module_config_sync(info, module_config.as_ref())
+        crate::commands::module::analyze_android_module_config_sync(
+            info,
+            merged_module_config.as_ref(),
+        )
+    });
+    let manifest_value = manifest_info.as_ref().and_then(|info| {
+        std::fs::read_to_string(&info.manifest_path)
+            .ok()
+            .and_then(|content| json5::from_str::<serde_json::Value>(&content).ok())
     });
     if let Some(report) = &module_config_report {
         if !report.all_configured {
@@ -233,12 +273,12 @@ pub async fn build_android_apk(
         emit_android_module_config_report(&window, report);
     }
     let mut extra_deps = BTreeSet::new();
+    let mut extra_repos = BTreeSet::new();
     let mut plugin_project_deps = BTreeSet::new();
     let mut plugin_includes = BTreeSet::new();
-    let mut needs_jitpack = false;
 
     if scan.uts.has_uts_plugins {
-        needs_jitpack = true;
+        extra_repos.insert("maven { url 'https://jitpack.io' }".to_string());
         for dep in UTS_RUNTIME_DEPS {
             extra_deps.insert((*dep).to_string());
         }
@@ -279,27 +319,99 @@ pub async fn build_android_apk(
     apply_android_manifest_modules(
         manifest_modules,
         module_config_report.as_ref(),
+        manifest_value.as_ref(),
         &sdk_libs,
         &libs_dst,
         &workspace,
+        &mut extra_repos,
         &mut extra_deps,
         &window,
     )?;
-    render_android_templates(
-        &workspace,
-        &config,
-        &scan.app_id,
-        needs_jitpack,
-        extra_deps,
-        plugin_project_deps.into_iter().collect(),
-        plugin_includes.into_iter().collect(),
+
+    let manifest_patches = render_android_module_manifest_patches(
         module_config_report.as_ref(),
+        &config.android.package_name,
+        &scan.app_id,
+    );
+    let manifest_placeholders = render_android_module_manifest_placeholders(
+        module_config_report.as_ref(),
+        manifest_modules,
+        &config.android.package_name,
+    );
+
+    let store_key = format!("{}-android-store-password", config.id);
+    let key_key = format!("{}-android-key-password", config.id);
+    let store_password = crate::utils::keychain::get_password(&store_key)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Keychain 中缺少 Android Store 密码".to_string())?;
+    let key_password = crate::utils::keychain::get_password(&key_key)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Keychain 中缺少 Android Key 密码".to_string())?;
+
+    let modification_ctx = crate::utils::android_project_mod::BuildModificationContext {
+        project_name: safe_file_name(&config.name),
+        package_name: config.android.package_name.clone(),
+        appid: scan.app_id.clone(),
+        dcloud_appkey: config.android.dcloud_app_key.clone(),
+        app_name: config.app.name.clone(),
+        version_code: config.app.version_code,
+        version_name: config.app.version.clone(),
+        compile_sdk: config.android.compile_sdk_version,
+        target_sdk: config.android.target_sdk_version,
+        min_sdk: config.android.min_sdk_version,
+        keystore_path: config.android.keystore.path.clone(),
+        key_alias: config.android.keystore.alias.clone(),
+        key_password,
+        store_password,
+        android_allow_backup: if android_build_requires_allow_backup_false(&extra_deps) {
+            "false".to_string()
+        } else {
+            "true".to_string()
+        },
+        extra_repositories: extra_repos.into_iter().collect(),
+        extra_dependencies: extra_deps
+            .iter()
+            .map(|dep| render_gradle_dependency_line(dep))
+            .collect(),
+        plugin_includes: plugin_includes.into_iter().collect(),
+        plugin_project_dependencies: plugin_project_deps.into_iter().collect(),
+        module_permissions: manifest_patches
+            .permissions
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.trim().to_string())
+            .collect(),
+        module_application_entries: manifest_patches
+            .application_entries
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect(),
+        module_pandora_entry_intent_filters: manifest_patches
+            .pandora_entry_intent_filters
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect(),
+        manifest_placeholders,
+        dependency_excludes: render_dependency_excludes(
+            &extra_deps
+                .iter()
+                .map(|dep| render_gradle_dependency_line(dep))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+    };
+
+    let modifier = crate::utils::android_project_mod::AndroidProjectModifier::new(
+        template_dir,
+        workspace.clone(),
     )?;
-    cleanup_rendered_templates(&workspace, &window);
+    modifier.apply_all_modifications(&modification_ctx)?;
     emit_log(
         &window,
         "success",
-        "Gradle 与 Android XML 模板已渲染",
+        "Android 工程配置已通过 V2 修改器应用",
         Some(38),
     );
 
@@ -316,6 +428,13 @@ pub async fn build_android_apk(
 
     generate_icons(&config, &workspace, &window)?;
     emit_log(&window, "success", "Android 图标已生成", Some(64));
+
+    let splashscreen = manifest_info
+        .as_ref()
+        .and_then(|info| info.splashscreen.as_ref())
+        .or(scan.splashscreen.as_ref());
+    apply_android_splashscreen(splashscreen, &workspace, &window)?;
+    emit_log(&window, "success", "Android 启动图已处理", Some(66));
 
     emit_log(
         &window,
@@ -345,12 +464,8 @@ pub async fn build_android_apk(
     let output_dir = expand_home(&config.output_dir);
     crate::utils::fs::ensure_directory(&output_dir)
         .map_err(|e| format!("创建输出目录失败: {}", e))?;
-    let app_name = safe_file_name(if config.app.name.is_empty() {
-        &config.name
-    } else {
-        &config.app.name
-    });
-    let dest = output_dir.join(format!("{}-{}.apk", app_name, config.app.version));
+    let ts = timestamp();
+    let dest = output_dir.join(format!("{}-v{}.apk", ts, config.app.version));
     std::fs::copy(&apk, &dest).map_err(|e| format!("复制 APK 到输出目录失败: {}", e))?;
     let size_bytes = std::fs::metadata(&dest)
         .map(|m| m.len())
@@ -398,6 +513,23 @@ fn validate_android_config(
         );
     }
     Ok(())
+}
+
+fn merged_android_module_config(
+    project: &crate::commands::project::ProjectConfig,
+    module_config: Option<HashMap<String, String>>,
+) -> Option<HashMap<String, String>> {
+    let mut merged = project.android_module_config.clone();
+    if let Some(module_config) = module_config {
+        for (key, value) in module_config {
+            if value.trim().is_empty() {
+                merged.remove(&key);
+            } else {
+                merged.insert(key, value);
+            }
+        }
+    }
+    (!merged.is_empty()).then_some(merged)
 }
 
 fn copy_required_aars(
@@ -450,9 +582,11 @@ fn copy_optional_aar(
 fn apply_android_manifest_modules(
     modules: &[crate::commands::resource::DetectedModule],
     config_report: Option<&crate::commands::module::AndroidModuleConfigReport>,
+    manifest: Option<&serde_json::Value>,
     sdk_libs: &Path,
     libs_dst: &Path,
     workspace: &Path,
+    extra_repos: &mut BTreeSet<String>,
     extra_deps: &mut BTreeSet<String>,
     window: &tauri::Window,
 ) -> Result<(), String> {
@@ -471,7 +605,9 @@ fn apply_android_manifest_modules(
     }
 
     let config = module_config_tree_for_android_build(modules, config_report);
-    let properties_path = workspace.join("app/src/main/assets/data/dcloud_properties.xml");
+    let properties_path = workspace
+        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join("src/main/assets/data/dcloud_properties.xml");
     crate::commands::module::generate_dcloud_properties(&properties_path, &config)?;
 
     for module in supported {
@@ -499,12 +635,24 @@ fn apply_android_manifest_modules(
         let template = crate::commands::module::get_module_template_sync(template_key)?;
         copy_android_module_artifacts(
             &module.name,
+            template_key,
             &template.android_config.required_aars,
+            manifest,
             sdk_libs,
             libs_dst,
             window,
         )?;
-        for dep in android_gradle_dependencies(&template.android_config.gradle_dependencies) {
+        for repo in crate::commands::module::android_module_gradle_repositories_for_manifest(
+            template_key,
+            manifest,
+        ) {
+            extra_repos.insert(repo.to_string());
+        }
+        for dep in android_gradle_dependencies(
+            template_key,
+            &template.android_config.gradle_dependencies,
+            manifest,
+        ) {
             extra_deps.insert(dep);
         }
 
@@ -536,13 +684,22 @@ fn android_module_template_key(module_name: &str) -> Option<&'static str> {
 
 fn copy_android_module_artifacts(
     module_name: &str,
+    template_key: &str,
     required_artifacts: &[String],
+    manifest: Option<&serde_json::Value>,
     sdk_libs: &Path,
     libs_dst: &Path,
     window: &tauri::Window,
 ) -> Result<(), String> {
     let mut copied = 0usize;
     for artifact in required_artifacts {
+        if !crate::commands::module::android_module_artifact_enabled_for_manifest(
+            template_key,
+            artifact,
+            manifest,
+        ) {
+            continue;
+        }
         let Some(pattern) = clean_android_artifact_pattern(artifact) else {
             continue;
         };
@@ -589,14 +746,9 @@ fn clean_android_artifact_pattern(raw: &str) -> Option<String> {
 }
 
 fn find_android_sdk_artifact(sdk_libs: &Path, artifact_pattern: &str) -> Option<PathBuf> {
-    if !artifact_pattern.contains("XXX")
-        && !artifact_pattern.contains("xxx")
-        && !artifact_pattern.contains("x.x")
-    {
-        let direct = sdk_libs.join(artifact_pattern);
-        if direct.exists() {
-            return Some(direct);
-        }
+    let direct = sdk_libs.join(artifact_pattern);
+    if direct.exists() {
+        return Some(direct);
     }
     let stem = android_artifact_search_stem(artifact_pattern);
     let mut matches = std::fs::read_dir(sdk_libs)
@@ -615,7 +767,8 @@ fn find_android_sdk_artifact(sdk_libs: &Path, artifact_pattern: &str) -> Option<
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or_default();
-            file_name.starts_with(&stem) || file_name.contains(&stem)
+            crate::commands::sdk::android_artifact_name_matches(artifact_pattern, file_name)
+                || (!stem.is_empty() && (file_name.starts_with(&stem) || file_name.contains(&stem)))
         })
         .collect::<Vec<_>>();
     matches.sort();
@@ -623,23 +776,23 @@ fn find_android_sdk_artifact(sdk_libs: &Path, artifact_pattern: &str) -> Option<
 }
 
 fn android_artifact_search_stem(pattern: &str) -> String {
-    let name = pattern
-        .trim_end_matches(".aar")
-        .trim_end_matches(".jar")
-        .trim_end_matches("-release");
-    let wildcard_markers = ["XXX", "xxx", "x.x", "vx", "Vx", "+"];
-    let mut stem = name.to_string();
-    for marker in wildcard_markers {
-        if let Some(index) = stem.find(marker) {
-            stem.truncate(index);
-        }
-    }
-    stem.trim_end_matches(['-', '_', '.', '@']).to_string()
+    crate::commands::sdk::android_artifact_versionless_stem(pattern)
 }
 
-fn android_gradle_dependencies(raw_deps: &[String]) -> Vec<String> {
+fn android_gradle_dependencies(
+    template_key: &str,
+    raw_deps: &[String],
+    manifest: Option<&serde_json::Value>,
+) -> Vec<String> {
     raw_deps
         .iter()
+        .filter(|dep| {
+            crate::commands::module::android_module_gradle_dependency_enabled_for_manifest(
+                template_key,
+                dep,
+                manifest,
+            )
+        })
         .filter_map(|dep| dep.split_whitespace().next())
         .map(str::trim)
         .filter(|dep| dep.matches(':').count() >= 2)
@@ -879,7 +1032,9 @@ fn copy_sdk_assets(
     window: &tauri::Window,
 ) -> Result<(), String> {
     let src = sdk_assets.join("data");
-    let dst = workspace.join("app/src/main/assets/data");
+    let dst = workspace
+        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join("src/main/assets/data");
     if src.exists() {
         crate::utils::fs::copy_recursive(&src, &dst)
             .map_err(|e| format!("复制 SDK assets/data 失败: {}", e))?;
@@ -894,145 +1049,111 @@ fn copy_sdk_assets(
     Ok(())
 }
 
-fn render_android_templates(
-    workspace: &Path,
-    config: &crate::commands::project::ProjectConfig,
-    app_id: &str,
-    needs_jitpack: bool,
-    extra_deps: BTreeSet<String>,
-    plugin_project_deps: Vec<String>,
-    plugin_includes: Vec<String>,
-    module_config_report: Option<&crate::commands::module::AndroidModuleConfigReport>,
-) -> Result<(), String> {
-    let store_key = format!("{}-android-store-password", config.id);
-    let key_key = format!("{}-android-key-password", config.id);
-    let store_password = crate::utils::keychain::get_password(&store_key)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Keychain 中缺少 Android Store 密码".to_string())?;
-    let key_password = crate::utils::keychain::get_password(&key_key)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Keychain 中缺少 Android Key 密码".to_string())?;
-
-    let extra_repositories = if needs_jitpack {
-        "maven { url 'https://jitpack.io' }"
-    } else {
-        ""
-    };
-    let extra_dependencies = extra_deps
-        .into_iter()
-        .map(|dep| format!("    implementation '{}'", dep))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let plugin_project_dependencies = plugin_project_deps
-        .into_iter()
-        .map(|dep| format!("    {}", dep))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let plugin_includes = plugin_includes.join("\n");
-    let manifest_patches = render_android_module_manifest_patches(
-        module_config_report,
-        &config.android.package_name,
-        app_id,
-    );
-    let module_manifest_placeholders =
-        render_android_module_manifest_placeholders(module_config_report);
-    let project_name = safe_file_name(&config.name);
-    let version_code = config.app.version_code.to_string();
-    let compile_sdk = config.android.compile_sdk_version.to_string();
-    let target_sdk = config.android.target_sdk_version.to_string();
-    let min_sdk = config.android.min_sdk_version.to_string();
-
-    let mut vars: HashMap<&str, &str> = HashMap::new();
-    vars.insert("project_name", &project_name);
-    vars.insert("package_name", &config.android.package_name);
-    vars.insert("compile_sdk", &compile_sdk);
-    vars.insert("target_sdk", &target_sdk);
-    vars.insert("min_sdk", &min_sdk);
-    vars.insert("version_code", &version_code);
-    vars.insert("version_name", &config.app.version);
-    vars.insert("keystore_path", &config.android.keystore.path);
-    vars.insert("key_alias", &config.android.keystore.alias);
-    vars.insert("key_password", &key_password);
-    vars.insert("store_password", &store_password);
-    vars.insert("dcloud_appkey", &config.android.dcloud_app_key);
-    vars.insert("appid", app_id);
-    vars.insert("app_name", &config.app.name);
-    vars.insert("extra_repositories", extra_repositories);
-    vars.insert("extra_dependencies", &extra_dependencies);
-    vars.insert("plugin_project_dependencies", &plugin_project_dependencies);
-    vars.insert("plugin_includes", &plugin_includes);
-    vars.insert("module_manifest_permissions", &manifest_patches.permissions);
-    vars.insert(
-        "module_manifest_application_entries",
-        &manifest_patches.application_entries,
-    );
-    vars.insert(
-        "module_pandora_entry_intent_filters",
-        &manifest_patches.pandora_entry_intent_filters,
-    );
-    vars.insert(
-        "module_manifest_placeholders",
-        &module_manifest_placeholders,
-    );
-
-    render_template_file(
-        &workspace.join("app/build.gradle.tmpl"),
-        &workspace.join("app/build.gradle"),
-        &vars,
-    )?;
-    render_template_file(
-        &workspace.join("app/src/main/AndroidManifest.xml.tmpl"),
-        &workspace.join("app/src/main/AndroidManifest.xml"),
-        &vars,
-    )?;
-    render_template_file(
-        &workspace.join("app/src/main/res/values/strings.xml.tmpl"),
-        &workspace.join("app/src/main/res/values/strings.xml"),
-        &vars,
-    )?;
-    render_template_file(
-        &workspace.join("settings.gradle"),
-        &workspace.join("settings.gradle"),
-        &vars,
-    )?;
-    Ok(())
+fn android_build_requires_allow_backup_false(extra_dependencies: &BTreeSet<String>) -> bool {
+    extra_dependencies
+        .iter()
+        .any(|dep| dep == "com.getui:gysdk:3.1.7.0")
 }
 
 fn render_android_module_manifest_placeholders(
     report: Option<&crate::commands::module::AndroidModuleConfigReport>,
+    detected_modules: &[crate::commands::resource::DetectedModule],
+    package_name: &str,
 ) -> String {
-    let Some(report) = report else {
-        return String::new();
-    };
+    let mut entries = BTreeMap::new();
+    let mut has_push_module = detected_modules
+        .iter()
+        .any(|module| android_module_template_key(&module.name) == Some("push"));
 
-    let mut entries = Vec::new();
-    for module in &report.modules {
-        for field in &module.fields {
-            if let Some(value) = field
-                .value
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                entries.push(format!(
-                    "            \"{}\": \"{}\"",
-                    field.key,
-                    escape_gradle_string(value)
-                ));
+    if let Some(report) = report {
+        for module in &report.modules {
+            if module.template_key == "push" {
+                has_push_module = true;
+            }
+            for field in &module.fields {
+                if let Some(value) = field
+                    .value
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    insert_manifest_placeholder_entries(&mut entries, &field.key, value);
+                }
             }
         }
     }
-    entries.sort();
-    entries.dedup();
+
+    if has_push_module {
+        insert_push_manifest_placeholder_defaults(&mut entries, package_name);
+    }
 
     if entries.is_empty() {
         return String::new();
     }
 
+    let entries = entries
+        .into_iter()
+        .map(|(key, value)| {
+            format!(
+                "            \"{}\": \"{}\"",
+                key,
+                escape_gradle_string(&value)
+            )
+        })
+        .collect::<Vec<_>>();
     format!(
         "\n        manifestPlaceholders = [\n{}\n        ]",
         entries.join(",\n")
     )
+}
+
+fn insert_manifest_placeholder_entries(
+    target: &mut BTreeMap<String, String>,
+    key: &str,
+    value: &str,
+) {
+    for placeholder in manifest_placeholder_aliases(key) {
+        target.insert(placeholder.to_string(), value.to_string());
+    }
+}
+
+fn insert_push_manifest_placeholder_defaults(
+    target: &mut BTreeMap<String, String>,
+    package_name: &str,
+) {
+    for (placeholder, value) in [
+        ("GETUI_APPID", ""),
+        ("PUSH_APPID", ""),
+        ("plus.unipush.appid", ""),
+        ("plus.unipush.appkey", ""),
+        ("PUSH_APPKEY", ""),
+        ("plus.unipush.appsecret", ""),
+        ("PUSH_APPSECRET", ""),
+        ("apk.applicationId", package_name),
+        ("XIAOMI_APP_ID", ""),
+        ("XIAOMI_APP_KEY", ""),
+        ("MEIZU_APP_ID", ""),
+        ("MEIZU_APP_KEY", ""),
+        ("HUAWEI_APP_ID", ""),
+        ("OPPO_APP_KEY", ""),
+        ("OPPO_APP_SECRET", ""),
+        ("VIVO_APP_ID", ""),
+        ("VIVO_APP_KEY", ""),
+        ("HONOR_APP_ID", ""),
+    ] {
+        target
+            .entry(placeholder.to_string())
+            .or_insert_with(|| value.to_string());
+    }
+}
+
+fn manifest_placeholder_aliases(key: &str) -> Vec<&str> {
+    match key {
+        "GETUI_APPID" => vec!["GETUI_APPID", "PUSH_APPID", "plus.unipush.appid"],
+        "plus.unipush.appkey" => vec!["plus.unipush.appkey", "PUSH_APPKEY"],
+        "plus.unipush.appsecret" => vec!["plus.unipush.appsecret", "PUSH_APPSECRET"],
+        _ => vec![key],
+    }
 }
 
 fn render_android_module_manifest_patches(
@@ -1627,6 +1748,23 @@ fn escape_gradle_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+fn render_gradle_dependency_line(dep: &str) -> String {
+    match dep {
+        "com.getui:gtsdk:3.3.7.0" => {
+            "    implementation('com.getui:gtsdk:3.3.7.0'){ exclude(group: 'com.getui') }"
+                .to_string()
+        }
+        "com.getui:gysdk:3.1.7.0" => {
+            "    implementation('com.getui:gysdk:3.1.7.0'){ exclude(group: 'com.getui', module: 'gtc') }".to_string()
+        }
+        _ => format!("    implementation '{}'", dep),
+    }
+}
+
+fn render_dependency_excludes(_extra_dependencies: &str) -> String {
+    String::new()
+}
+
 fn prefix_if_nonempty(value: String, prefix: &str) -> String {
     if value.is_empty() {
         value
@@ -1635,37 +1773,10 @@ fn prefix_if_nonempty(value: String, prefix: &str) -> String {
     }
 }
 
-fn cleanup_rendered_templates(workspace: &Path, window: &tauri::Window) {
-    for relative in [
-        "app/build.gradle.tmpl",
-        "app/src/main/AndroidManifest.xml.tmpl",
-        "app/src/main/res/values/strings.xml.tmpl",
-    ] {
-        let path = workspace.join(relative);
-        if path.exists() {
-            if let Err(e) = std::fs::remove_file(&path) {
-                emit_log(
-                    window,
-                    "warn",
-                    &format!("清理模板文件失败 {}: {}", path.display(), e),
-                    None,
-                );
-            }
-        }
-    }
-}
-
-fn render_template_file(src: &Path, dst: &Path, vars: &HashMap<&str, &str>) -> Result<(), String> {
-    let content = crate::utils::fs::read_file_to_string(src)
-        .map_err(|e| format!("读取模板 {} 失败: {}", src.display(), e))?;
-    let rendered = crate::utils::xml::render_template(&content, vars)
-        .map_err(|e| format!("渲染模板 {} 失败: {}", src.display(), e))?;
-    crate::utils::fs::write_string_to_file(dst, &rendered)
-        .map_err(|e| format!("写入 {} 失败: {}", dst.display(), e))
-}
-
 fn import_uniapp_assets(resource_dir: &Path, workspace: &Path, app_id: &str) -> Result<(), String> {
-    let apps_root = workspace.join("app/src/main/assets/apps");
+    let apps_root = workspace
+        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join("src/main/assets/apps");
     crate::utils::fs::ensure_directory(&apps_root).map_err(|e| e.to_string())?;
     let dest = apps_root.join(app_id);
     crate::utils::fs::copy_recursive(resource_dir, &dest)
@@ -1673,7 +1784,9 @@ fn import_uniapp_assets(resource_dir: &Path, workspace: &Path, app_id: &str) -> 
 }
 
 fn update_dcloud_control(workspace: &Path, app_id: &str) -> Result<(), String> {
-    let path = workspace.join("app/src/main/assets/data/dcloud_control.xml");
+    let path = workspace
+        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join("src/main/assets/data/dcloud_control.xml");
     if !path.exists() {
         return Err(format!("dcloud_control.xml 不存在: {}", path.display()));
     }
@@ -1706,7 +1819,9 @@ fn generate_icons(
     let img = image::open(&source)
         .map_err(|e| format!("读取图标失败: {}", e))?
         .to_rgba8();
-    let res_dir = workspace.join("app/src/main/res");
+    let res_dir = workspace
+        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join("src/main/res");
     for (dir, size) in [
         ("drawable-ldpi", 36),
         ("drawable-mdpi", 48),
@@ -1725,6 +1840,125 @@ fn generate_icons(
         }
     }
     Ok(())
+}
+
+fn apply_android_splashscreen(
+    splashscreen: Option<&crate::commands::resource::SplashscreenConfig>,
+    workspace: &Path,
+    window: &tauri::Window,
+) -> Result<(), String> {
+    let res_dir = workspace
+        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join("src/main/res");
+    let Some(config) = splashscreen else {
+        write_default_android_splashscreen(&res_dir)?;
+        emit_log(
+            window,
+            "info",
+            "manifest 未配置 Android 启动图，已使用默认白底",
+            None,
+        );
+        return Ok(());
+    };
+
+    if config.android.is_empty() {
+        write_default_android_splashscreen(&res_dir)?;
+        emit_log(
+            window,
+            "info",
+            "manifest 未提供 Android 启动图密度资源，已使用默认白底",
+            None,
+        );
+        return Ok(());
+    }
+
+    let mut copied = 0usize;
+    for (density, source) in &config.android {
+        let Some(drawable_dir) = android_splash_drawable_dir(density) else {
+            emit_log(
+                window,
+                "warn",
+                &format!("忽略不支持的 Android 启动图密度: {}", density),
+                None,
+            );
+            continue;
+        };
+        let source_path = PathBuf::from(source);
+        if !source_path.exists() {
+            emit_log(
+                window,
+                "warn",
+                &format!("Android 启动图不存在: {}", source_path.display()),
+                None,
+            );
+            continue;
+        }
+        let target_name = if source_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.ends_with(".9.png"))
+            .unwrap_or(false)
+        {
+            "unipack_splash_image.9.png"
+        } else {
+            "unipack_splash_image.png"
+        };
+        let target = res_dir.join(drawable_dir).join(target_name);
+        crate::utils::fs::copy_file(&source_path, &target)
+            .map_err(|e| format!("复制 Android 启动图失败 {}: {}", source_path.display(), e))?;
+        copied += 1;
+    }
+
+    if copied > 0 {
+        write_android_window_background(&res_dir, "@drawable/unipack_splash_image")?;
+        emit_log(
+            window,
+            "info",
+            &format!("已导入 {} 张 Android 自定义启动图", copied),
+            None,
+        );
+    } else {
+        write_default_android_splashscreen(&res_dir)?;
+        emit_log(
+            window,
+            "warn",
+            "Android 自定义启动图均未找到，已使用默认白底",
+            None,
+        );
+    }
+    Ok(())
+}
+
+fn android_splash_drawable_dir(density: &str) -> Option<&'static str> {
+    match density.to_ascii_lowercase().as_str() {
+        "ldpi" => Some("drawable-ldpi"),
+        "mdpi" => Some("drawable-mdpi"),
+        "hdpi" => Some("drawable-hdpi"),
+        "xhdpi" => Some("drawable-xhdpi"),
+        "xxhdpi" => Some("drawable-xxhdpi"),
+        "xxxhdpi" => Some("drawable-xxxhdpi"),
+        _ => None,
+    }
+}
+
+fn write_default_android_splashscreen(res_dir: &Path) -> Result<(), String> {
+    write_android_window_background(res_dir, "@android:color/white")?;
+    Ok(())
+}
+
+fn write_android_window_background(res_dir: &Path, drawable_ref: &str) -> Result<(), String> {
+    let drawable_dir = res_dir.join("drawable");
+    crate::utils::fs::ensure_directory(&drawable_dir).map_err(|e| e.to_string())?;
+    let content = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="{}" />
+</layer-list>
+"#,
+        drawable_ref
+    );
+    crate::utils::fs::write_string_to_file(&drawable_dir.join("unipack_splash.xml"), &content)
+        .map_err(|e| format!("写入 Android 启动背景资源失败: {}", e))
 }
 
 fn resolve_android_build_environment() -> Result<AndroidBuildEnvironment, String> {
@@ -1798,7 +2032,12 @@ fn java_bin_names() -> &'static [&'static str] {
 
 fn find_apk_in_workspace(workspace: &Path) -> Vec<PathBuf> {
     let mut results = Vec::new();
-    find_apks_recursive(&workspace.join("app/build/outputs"), &mut results);
+    find_apks_recursive(
+        &workspace
+            .join(crate::utils::android_project_mod::MODULE_NAME)
+            .join("build/outputs"),
+        &mut results,
+    );
     results.sort_by(|a, b| {
         let time_a = a.metadata().ok().and_then(|m| m.modified().ok());
         let time_b = b.metadata().ok().and_then(|m| m.modified().ok());
@@ -1844,16 +2083,138 @@ mod tests {
 
     #[test]
     fn android_gradle_dependencies_strip_human_notes() {
-        let deps = android_gradle_dependencies(&[
-            "com.tencent.mm.opensdk:wechat-sdk-android-without-mta:6.8.0 (微信)".to_string(),
-            "百度地图 SDK 或 高德地图 SDK（见官方文档）".to_string(),
-            "com.alipay.sdk:alipay-sdk-java".to_string(),
-        ]);
+        let deps = android_gradle_dependencies(
+            "share",
+            &[
+                "com.tencent.mm.opensdk:wechat-sdk-android-without-mta:6.8.0 (微信)".to_string(),
+                "百度地图 SDK 或 高德地图 SDK（见官方文档）".to_string(),
+                "com.alipay.sdk:alipay-sdk-java".to_string(),
+            ],
+            None,
+        );
 
         assert_eq!(
             deps,
             vec!["com.tencent.mm.opensdk:wechat-sdk-android-without-mta:6.8.0".to_string()]
         );
+    }
+
+    #[test]
+    fn android_gradle_dependencies_follow_enabled_manifest_providers() {
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "modules": {
+                    "Push": {},
+                    "Payment": {}
+                },
+                "distribute": {
+                    "sdkConfigs": {
+                        "push": {
+                            "unipush": {
+                                "hms": {},
+                                "oppo": false,
+                                "honor": { "__platform__": ["ios"] }
+                            }
+                        },
+                        "payment": {
+                            "weixin": { "__platform__": ["android"] }
+                        }
+                    }
+                }
+            }
+        });
+
+        let push_deps = android_gradle_dependencies(
+            "push",
+            &[
+                "com.getui:gtsdk:3.3.7.0".to_string(),
+                "com.getui:gtc-dcloud:3.2.16.7".to_string(),
+                "com.getui.opt:hwp:3.1.1 (华为)".to_string(),
+                "com.huawei.hms:push:6.11.0.300 (华为)".to_string(),
+                "com.assist-v3:oppo:3.3.0 (OPPO)".to_string(),
+                "com.getui.opt:honor:3.6.0 (荣耀)".to_string(),
+            ],
+            Some(&manifest),
+        );
+        assert_eq!(
+            push_deps,
+            vec![
+                "com.getui:gtsdk:3.3.7.0".to_string(),
+                "com.getui:gtc-dcloud:3.2.16.7".to_string(),
+                "com.getui.opt:hwp:3.1.1".to_string(),
+                "com.huawei.hms:push:6.11.0.300".to_string(),
+            ]
+        );
+
+        let payment_deps = android_gradle_dependencies(
+            "payment",
+            &[
+                "com.alipay.sdk:alipaysdk-android:15.8.11 (支付宝)".to_string(),
+                "com.tencent.mm.opensdk:wechat-sdk-android-without-mta:6.8.0 (微信支付)"
+                    .to_string(),
+                "com.paypal.checkout:android-sdk:0.6.2 (PayPal)".to_string(),
+            ],
+            Some(&manifest),
+        );
+        assert_eq!(
+            payment_deps,
+            vec!["com.tencent.mm.opensdk:wechat-sdk-android-without-mta:6.8.0".to_string()]
+        );
+    }
+
+    #[test]
+    fn render_gradle_dependency_line_excludes_getui_from_gtsdk() {
+        assert_eq!(
+            render_gradle_dependency_line("com.getui:gtsdk:3.3.7.0"),
+            "    implementation('com.getui:gtsdk:3.3.7.0'){ exclude(group: 'com.getui') }"
+        );
+        assert_eq!(
+            render_gradle_dependency_line("com.getui:gysdk:3.1.7.0"),
+            "    implementation('com.getui:gysdk:3.1.7.0'){ exclude(group: 'com.getui', module: 'gtc') }"
+        );
+        assert_eq!(
+            render_gradle_dependency_line("com.getui:gtc-dcloud:3.2.16.7"),
+            "    implementation 'com.getui:gtc-dcloud:3.2.16.7'"
+        );
+        assert!(
+            render_dependency_excludes("    implementation 'com.getui:gtc-dcloud:3.2.16.7'")
+                .is_empty()
+        );
+        assert!(
+            render_dependency_excludes("    implementation 'androidx.core:core:1.12.0'").is_empty()
+        );
+    }
+
+    #[test]
+    fn gysdk_forces_allow_backup_false() {
+        let mut deps = BTreeSet::new();
+        deps.insert("com.getui:gysdk:3.1.7.0".to_string());
+        assert!(android_build_requires_allow_backup_false(&deps));
+
+        deps.clear();
+        deps.insert("com.getui:gtc-dcloud:3.2.16.7".to_string());
+        assert!(!android_build_requires_allow_backup_false(&deps));
+    }
+
+    #[test]
+    fn render_manifest_placeholders_adds_push_defaults_without_report() {
+        let detected_modules = vec![crate::commands::resource::DetectedModule {
+            name: "Push".to_string(),
+            category: "push".to_string(),
+            platforms: vec!["android".to_string()],
+            configured: false,
+            required_keys: vec![],
+            source: "manifest.json".to_string(),
+        }];
+
+        let placeholders =
+            render_android_module_manifest_placeholders(None, &detected_modules, "io.demo.app");
+
+        assert!(placeholders.contains(r#""PUSH_APPID": ""#));
+        assert!(placeholders.contains(r#""plus.unipush.appid": ""#));
+        assert!(placeholders.contains(r#""apk.applicationId": "io.demo.app""#));
+        assert!(placeholders.contains(r#""PUSH_APPKEY": ""#));
+        assert!(placeholders.contains(r#""PUSH_APPSECRET": ""#));
     }
 
     #[test]
@@ -1871,5 +2232,35 @@ mod tests {
             android_artifact_search_stem("aliyun-face-XXX.aar"),
             "aliyun-face"
         );
+        assert_eq!(
+            android_artifact_search_stem("open_sdk_XXX_lite.jar"),
+            "open_sdk-lite"
+        );
+    }
+
+    #[test]
+    fn android_sdk_artifact_lookup_ignores_versions() {
+        let root = std::env::temp_dir().join(format!(
+            "unipack-android-artifact-versionless-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("gtc-3.5.1.0.aar"), b"aar").unwrap();
+        std::fs::write(root.join("open_sdk_3.5.0.0_dawfrwafr_lite.jar"), b"jar").unwrap();
+
+        let gtc = find_android_sdk_artifact(&root, "gtc-3.2.16.0.aar").unwrap();
+        let open_sdk = find_android_sdk_artifact(&root, "open_sdk_XXX_lite.jar").unwrap();
+
+        assert_eq!(
+            gtc.file_name().and_then(|name| name.to_str()),
+            Some("gtc-3.5.1.0.aar")
+        );
+        assert_eq!(
+            open_sdk.file_name().and_then(|name| name.to_str()),
+            Some("open_sdk_3.5.0.0_dawfrwafr_lite.jar")
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -190,11 +190,8 @@ pub async fn build_harmony_hap(
         .ok_or_else(|| "构建成功后未找到 HAP 文件".to_string())?;
     let output_dir = expand_home(&config.output_dir);
     crate::utils::fs::ensure_directory(&output_dir).map_err(|e| e.to_string())?;
-    let dest = output_dir.join(format!(
-        "{}-{}.hap",
-        safe_file_name(&config.app.name),
-        config.app.version
-    ));
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let dest = output_dir.join(format!("{}-v{}.hap", ts, config.app.version));
     std::fs::copy(&hap, &dest).map_err(|e| format!("复制 HAP 失败: {}", e))?;
     let size_bytes = std::fs::metadata(&dest)
         .map(|m| m.len())
