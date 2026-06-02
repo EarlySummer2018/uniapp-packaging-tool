@@ -291,26 +291,18 @@ pub async fn build_android_apk(
             }
         }
 
-        let custom_root = workspace.join("uts-modules");
-        for plugin in &scan.uts.custom_plugins {
-            if let Some(android_dir) = &plugin.android_dir {
-                let module_dir = custom_root.join(&plugin.id);
-                crate::utils::fs::copy_recursive(Path::new(android_dir), &module_dir)
-                    .map_err(|e| format!("复制 UTS 插件 {} 失败: {}", plugin.id, e))?;
-                if module_dir.join("build.gradle").exists()
-                    || module_dir.join("build.gradle.kts").exists()
-                {
-                    plugin_includes.insert(format!(
-                        "include ':{0}'\nproject(':{0}').projectDir = file('uts-modules/{0}')",
-                        plugin.id
-                    ));
-                    plugin_project_deps.insert(format!("implementation project(':{}')", plugin.id));
-                }
-                copy_custom_android_libs(&plugin.id, Path::new(android_dir), &libs_dst, &window)?;
-                for dep in &plugin.android_deps {
-                    extra_deps.insert(dep.clone());
-                }
-            }
+        if !scan.uts.custom_plugins.is_empty() {
+            process_custom_uts_plugins_uniapp(
+                &scan.uts.custom_plugins,
+                &workspace,
+                &libs_dst,
+                &mut extra_repos,
+                &mut extra_deps,
+                &mut plugin_includes,
+                &mut plugin_project_deps,
+                &window,
+            )?;
+            generate_dcloud_uniplugins_json(&scan.uts.custom_plugins, &workspace)?;
         }
         emit_log(&window, "success", "UTS 插件依赖已扫描并注入", Some(26));
     }
@@ -691,7 +683,7 @@ fn copy_android_module_artifacts(
     libs_dst: &Path,
     window: &tauri::Window,
 ) -> Result<(), String> {
-    let mut copied = 0usize;
+    let mut copied_names: Vec<String> = Vec::new();
     for artifact in required_artifacts {
         if !crate::commands::module::android_module_artifact_enabled_for_manifest(
             template_key,
@@ -723,14 +715,20 @@ fn copy_android_module_artifacts(
                 e
             )
         })?;
-        copied += 1;
+        copied_names.push(file_name.to_string_lossy().to_string());
     }
-    emit_log(
-        window,
-        "info",
-        &format!("{} 模块已复制 {} 个本地依赖", module_name, copied),
-        None,
-    );
+    if !copied_names.is_empty() {
+        emit_log(
+            window,
+            "info",
+            &format!(
+                "{} 模块已复制本地依赖: {}",
+                module_name,
+                copied_names.join(", ")
+            ),
+            None,
+        );
+    }
     Ok(())
 }
 
@@ -996,34 +994,293 @@ fn report_value(
         .filter(|value| !value.is_empty())
 }
 
-fn copy_custom_android_libs(
-    plugin_id: &str,
-    android_dir: &Path,
-    libs_dst: &Path,
+fn process_custom_uts_plugins_uniapp(
+    custom_plugins: &[crate::commands::resource::UtsCustomPlugin],
+    workspace: &Path,
+    main_libs: &Path,
+    extra_repos: &mut BTreeSet<String>,
+    extra_deps: &mut BTreeSet<String>,
+    plugin_includes: &mut BTreeSet<String>,
+    plugin_project_deps: &mut BTreeSet<String>,
     window: &tauri::Window,
 ) -> Result<(), String> {
-    let mut copied = 0usize;
-    for ext in ["aar", "jar"] {
-        for src in crate::utils::fs::find_files_by_extension(android_dir, ext)
-            .map_err(|e| format!("扫描 UTS 插件 {} 本地依赖失败: {}", plugin_id, e))?
-        {
-            let Some(file_name) = src.file_name() else {
-                continue;
-            };
-            crate::utils::fs::copy_file(&src, &libs_dst.join(file_name))
-                .map_err(|e| format!("复制 UTS 插件 {} 本地依赖失败: {}", plugin_id, e))?;
-            copied += 1;
+    let custom_root = workspace.join("uts-modules");
+    crate::utils::fs::ensure_directory(&custom_root).map_err(|e| e.to_string())?;
+
+    for plugin in custom_plugins {
+        let Some(android_dir) = &plugin.android_dir else {
+            continue;
+        };
+        let module_dir = custom_root.join(&plugin.id);
+
+        crate::utils::fs::copy_recursive(Path::new(android_dir), &module_dir)
+            .map_err(|e| format!("复制 UTS 插件 {} 失败: {}", plugin.id, e))?;
+
+        generate_uts_plugin_build_gradle(plugin, &module_dir)?;
+        copy_uts_plugin_resources(plugin, &module_dir, main_libs, window)?;
+
+        if !plugin.gradle_plugins.is_empty() || !plugin.project_dependencies.is_empty() {
+            emit_log(
+                window,
+                "info",
+                &format!("插件 {} 需要项目级Gradle配置", plugin.id),
+                None,
+            );
+        }
+        if !plugin.dependencies.is_empty() {
+            extra_repos.insert("maven { url 'https://jitpack.io' }".to_string());
+        }
+
+        plugin_includes.insert(format!(
+            "include ':{0}'\nproject(':{0}').projectDir = file('uts-modules/{0}')",
+            plugin.id
+        ));
+        plugin_project_deps.insert(format!("implementation project(':{}')", plugin.id));
+
+        for dep in &plugin.android_deps {
+            extra_deps.insert(dep.clone());
         }
     }
-    if copied > 0 {
+
+    emit_log(
+        window,
+        "success",
+        &format!("已处理 {} 个UTS自定义插件", custom_plugins.len()),
+        Some(26),
+    );
+    Ok(())
+}
+
+fn generate_uts_plugin_build_gradle(
+    plugin: &crate::commands::resource::UtsCustomPlugin,
+    module_dir: &Path,
+) -> Result<(), String> {
+    let path = module_dir.join("build.gradle");
+    if path.exists() {
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        if content.contains("io.dcloud.uts.kotlin") {
+            return Ok(());
+        }
+    }
+
+    let namespace = extract_namespace_from_manifest(module_dir)
+        .unwrap_or_else(|| format!("uts.sdk.modules.{}", plugin.id));
+
+    let ndk_block = match &plugin.abis {
+        Some(abis) if !abis.is_empty() => format!(
+            "\n        ndk {{\n            abiFilters {}\n        }}",
+            abis.iter()
+                .map(|a| format!("'{}'", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => String::new(),
+    };
+
+    let min_sdk = plugin
+        .min_sdk_version
+        .map(|v| format!("\n        minSdk {}", v))
+        .unwrap_or_default();
+
+    let custom_deps: String = plugin
+        .dependencies
+        .iter()
+        .filter_map(|d| d.source.as_deref().or(d.value.as_deref()))
+        .filter(|s| !s.is_empty())
+        .map(|d| format!("    implementation '{}'", d))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let custom_deps = if custom_deps.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", custom_deps)
+    };
+
+    let extra_plugins: String = plugin
+        .gradle_plugins
+        .iter()
+        .map(|p| format!("    id '{}'", p))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let extra_plugins = if extra_plugins.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", extra_plugins)
+    };
+
+    let content = format!(
+        r#"plugins {{
+    id 'com.android.library'
+    id 'kotlin-android'
+    id 'io.dcloud.uts.kotlin'{extra_plugins}
+}}
+
+android {{
+    namespace '{namespace}'
+    compileSdk 35
+    defaultConfig {{{ndk_block}{min_sdk}
+    }}
+}}
+
+dependencies {{
+    compileOnly fileTree(include: ['*.aar'], dir: '../app/libs')
+    compileOnly fileTree(include: ['*.aar'], dir: './libs')
+    compileOnly 'com.alibaba:fastjson:1.1.46.android'
+    compileOnly 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.5.10'
+    compileOnly 'androidx.core:core-ktx:1.6.0'
+    compileOnly 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.6.0'
+    compileOnly 'org.jetbrains.kotlin:kotlin-reflect:1.6.0'
+    compileOnly 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.3.8'
+    compileOnly 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.3.8'{custom_deps}
+}}
+"#
+    );
+
+    std::fs::write(&path, content)
+        .map_err(|e| format!("写入 {} build.gradle 失败: {}", plugin.id, e))
+}
+
+fn extract_namespace_from_manifest(module_dir: &Path) -> Option<String> {
+    let manifest_path = module_dir.join("src/main/AndroidManifest.xml");
+    if !manifest_path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&manifest_path).ok()?;
+    content.find("package=\"").and_then(|start| {
+        let pkg_start = start + "package=\"".len();
+        content[pkg_start..]
+            .find('"')
+            .map(|len| content[pkg_start..pkg_start + len].to_string())
+    })
+}
+
+fn copy_uts_plugin_resources(
+    plugin: &crate::commands::resource::UtsCustomPlugin,
+    module_dir: &Path,
+    main_libs: &Path,
+    window: &tauri::Window,
+) -> Result<(), String> {
+    let main = module_dir.join("src/main");
+    let mut copied_libs: Vec<String> = Vec::new();
+
+    for libs_name in ["libs", "lib"] {
+        let libs_src = module_dir.join(libs_name);
+        if !libs_src.is_dir() {
+            continue;
+        }
+        let mod_libs = module_dir.join("libs");
+        crate::utils::fs::ensure_directory(&mod_libs).map_err(|e| e.to_string())?;
+        crate::utils::fs::ensure_directory(main_libs).map_err(|e| e.to_string())?;
+        for ext in ["aar", "jar"] {
+            for f in crate::utils::fs::find_files_by_extension(&libs_src, ext)
+                .map_err(|e| format!("扫描{}库失败: {}", plugin.id, e))?
+            {
+                let name = f
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                copied_libs.push(name.clone());
+                crate::utils::fs::copy_file(&f, &mod_libs.join(&name))
+                    .map_err(|e| format!("复制插件库失败: {}", e))?;
+                crate::utils::fs::copy_file(&f, &main_libs.join(&name))
+                    .map_err(|e| format!("复制插件库到主模块失败: {}", e))?;
+            }
+        }
+    }
+
+    if !copied_libs.is_empty() {
         emit_log(
             window,
             "info",
-            &format!("UTS 插件 {} 已复制 {} 个本地依赖", plugin_id, copied),
+            &format!(
+                "UTS插件 {} 已复制本地依赖: {}",
+                plugin.id,
+                copied_libs.join(", ")
+            ),
             None,
         );
     }
+
+    if module_dir.join("assets").is_dir() {
+        crate::utils::fs::copy_recursive(&module_dir.join("assets"), &main.join("assets"))
+            .map_err(|e| format!("复制插件{} assets失败: {}", plugin.id, e))?;
+    }
+
+    if module_dir.join("res").is_dir() {
+        crate::utils::fs::copy_recursive(&module_dir.join("res"), &main.join("res"))
+            .map_err(|e| format!("复制插件{} res失败: {}", plugin.id, e))?;
+    }
+
+    let mf = module_dir.join("AndroidManifest.xml");
+    if mf.exists() && !main.join("AndroidManifest.xml").exists() {
+        copy_and_clean_android_manifest(&mf, &main.join("AndroidManifest.xml"))?;
+    }
+
     Ok(())
+}
+
+fn copy_and_clean_android_manifest(src: &Path, dst: &Path) -> Result<(), String> {
+    let content = std::fs::read_to_string(src).map_err(|e| e.to_string())?;
+    let cleaned = content.replace(
+        &format!(
+            "package=\"{}\"",
+            extract_package(&content).unwrap_or_default()
+        ),
+        "",
+    );
+    std::fs::write(dst, cleaned.trim()).map_err(|e| e.to_string())
+}
+
+fn extract_package(manifest_content: &str) -> Option<String> {
+    manifest_content.find("package=\"").and_then(|start| {
+        let s = start + "package=\"".len();
+        manifest_content[s..]
+            .find('"')
+            .map(|e| manifest_content[s..s + e].to_string())
+    })
+}
+
+fn generate_dcloud_uniplugins_json(
+    plugins: &[crate::commands::resource::UtsCustomPlugin],
+    workspace: &Path,
+) -> Result<(), String> {
+    let all_components: Vec<&crate::commands::resource::UtsComponent> =
+        plugins.iter().flat_map(|p| p.components.iter()).collect();
+
+    if all_components.is_empty() {
+        return Ok(());
+    }
+
+    let native_plugins: Vec<serde_json::Value> = plugins
+        .iter()
+        .filter(|p| !p.components.is_empty())
+        .map(|p| {
+            let plugin_components: Vec<serde_json::Value> = p
+                .components
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "type": "component",
+                        "name": c.name,
+                        "class": c.class
+                    })
+                })
+                .collect();
+            serde_json::json!({ "plugins": plugin_components })
+        })
+        .collect();
+
+    let json = serde_json::json!({ "nativePlugins": native_plugins });
+    let path = workspace
+        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join("src/main/assets/dcloud_uniplugins.json");
+
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&json).unwrap_or_default(),
+    )
+    .map_err(|e| format!("写入 dcloud_uniplugins.json 失败: {}", e))
 }
 
 fn copy_sdk_assets(

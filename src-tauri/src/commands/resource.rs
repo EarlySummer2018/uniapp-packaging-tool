@@ -974,6 +974,40 @@ pub struct UtsCustomPlugin {
     pub ios_dir: Option<String>,
     pub android_deps: Vec<String>,
     pub ios_frameworks: Vec<String>,
+    pub abis: Option<Vec<String>>,
+    pub min_sdk_version: Option<u32>,
+    pub dependencies: Vec<PluginDependency>,
+    pub components: Vec<UtsComponent>,
+    pub hooks_class: Option<String>,
+    pub gradle_plugins: Vec<String>,
+    pub project_dependencies: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginDependency {
+    #[serde(rename = "id")]
+    pub id: Option<String>,
+    #[serde(rename = "source")]
+    pub source: Option<String>,
+    #[serde(rename = "value")]
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UtsComponent {
+    pub name: String,
+    pub class: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UtsPluginConfig {
+    pub abis: Option<Vec<String>>,
+    pub min_sdk_version: Option<u32>,
+    pub dependencies: Vec<PluginDependency>,
+    pub components: Vec<UtsComponent>,
+    pub hooks_class: Option<String>,
+    pub gradle_plugins: Vec<String>,
+    pub project_dependencies: Vec<String>,
 }
 
 #[tauri::command]
@@ -1323,7 +1357,14 @@ pub fn builtin_uts_module(name: &str) -> Option<UtsBuiltinModule> {
 fn scan_custom_uts_plugin(id: &str, plugin_root: &std::path::Path) -> UtsCustomPlugin {
     let android_dir = plugin_root.join("utssdk").join("app-android");
     let ios_dir = plugin_root.join("utssdk").join("app-ios");
-    let android_deps = read_custom_android_deps(&android_dir.join("config.json"));
+    let config = parse_uts_plugin_config(&android_dir.join("config.json"));
+    let mut android_deps: Vec<String> = config
+        .dependencies
+        .iter()
+        .filter_map(|dep| dep.source.clone().or(dep.value.clone()))
+        .collect();
+    android_deps.sort();
+    android_deps.dedup();
     let ios_frameworks = if ios_dir.exists() {
         crate::utils::fs::find_files_by_extension(&ios_dir, "framework")
             .unwrap_or_default()
@@ -1348,30 +1389,103 @@ fn scan_custom_uts_plugin(id: &str, plugin_root: &std::path::Path) -> UtsCustomP
             .then(|| ios_dir.to_string_lossy().to_string()),
         android_deps,
         ios_frameworks,
+        abis: config.abis,
+        min_sdk_version: config.min_sdk_version,
+        dependencies: config.dependencies,
+        components: config.components,
+        hooks_class: config.hooks_class,
+        gradle_plugins: config.gradle_plugins,
+        project_dependencies: config.project_dependencies,
     }
 }
 
-fn read_custom_android_deps(config_path: &std::path::Path) -> Vec<String> {
+pub fn parse_uts_plugin_config(config_path: &std::path::Path) -> UtsPluginConfig {
     let Ok(content) = std::fs::read_to_string(config_path) else {
-        return Vec::new();
+        return UtsPluginConfig::default();
     };
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return Vec::new();
+        return UtsPluginConfig::default();
     };
-    let mut deps = Vec::new();
-    for key in [
-        "dependencies",
-        "remoteDependencies",
-        "remote_dependencies",
-        "implementation",
-    ] {
-        if let Some(items) = value.get(key).and_then(|v| v.as_array()) {
-            deps.extend(items.iter().filter_map(|v| v.as_str()).map(String::from));
+
+    UtsPluginConfig {
+        abis: value.get("abis").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(String::from)
+                .collect()
+        }),
+        min_sdk_version: value
+            .get("minSdkVersion")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
+        dependencies: parse_dependencies_array(&value),
+        components: parse_components_array(&value),
+        hooks_class: value
+            .get("hooksClass")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        gradle_plugins: value
+            .get("project")
+            .and_then(|p| p.get("plugins"))
+            .and_then(|p| p.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        project_dependencies: value
+            .get("project")
+            .and_then(|p| p.get("dependencies"))
+            .and_then(|d| d.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn parse_dependencies_array(value: &serde_json::Value) -> Vec<PluginDependency> {
+    let mut result = Vec::new();
+
+    if let Some(arr) = value.get("dependencies").and_then(|d| d.as_array()) {
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                result.push(PluginDependency {
+                    id: None,
+                    source: None,
+                    value: Some(s.to_string()),
+                });
+            } else if let Some(obj) = item.as_object() {
+                result.push(PluginDependency {
+                    id: obj.get("id").and_then(|v| v.as_str()).map(String::from),
+                    source: obj.get("source").and_then(|v| v.as_str()).map(String::from),
+                    value: None,
+                });
+            }
         }
     }
-    deps.sort();
-    deps.dedup();
-    deps
+
+    result
+}
+
+fn parse_components_array(value: &serde_json::Value) -> Vec<UtsComponent> {
+    match value.get("components").and_then(|c| c.as_array()) {
+        Some(arr) => arr
+            .iter()
+            .filter_map(|item| {
+                Some(UtsComponent {
+                    name: item.get("name")?.as_str()?.to_string(),
+                    class: item.get("class")?.as_str()?.to_string(),
+                })
+            })
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -1420,7 +1534,7 @@ mod tests {
         std::fs::create_dir_all(&plugin).unwrap();
         std::fs::write(
             plugin.join("config.json"),
-            r#"{"dependencies":["a:b:1","a:b:1"],"remoteDependencies":["c:d:2"]}"#,
+            r#"{"dependencies":["a:b:1","c:d:2"]}"#,
         )
         .unwrap();
 
