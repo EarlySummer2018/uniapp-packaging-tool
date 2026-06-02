@@ -1082,11 +1082,14 @@ fn escape_xml_text(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// 确保 settings.gradle 包含 pluginManagement 块
+/// 确保 settings.gradle 包含 pluginManagement 块（必须在文件最前面）
 fn ensure_plugin_management_block(content: &str) -> String {
     if content.contains("pluginManagement") {
         return content.to_string();
     }
+
+    // 清理原始内容的前导空白行和 BOM，确保 pluginManagement 是第 1 行
+    let trimmed_content = content.trim_start_matches('\u{FEFF}').trim_start();
 
     let plugin_mgmt = r#"pluginManagement {
     repositories {
@@ -1106,7 +1109,7 @@ dependencyResolutionManagement {
 
 "#;
 
-    format!("{}{}", plugin_mgmt, content)
+    format!("{}{}", plugin_mgmt, trimmed_content)
 }
 
 #[cfg(test)]
