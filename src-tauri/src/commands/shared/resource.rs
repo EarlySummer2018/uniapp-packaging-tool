@@ -44,6 +44,14 @@ pub struct SplashscreenConfig {
     pub use_original_msgbox: Option<bool>,
 }
 
+/// Android 多密度图标配置（来自 manifest.json app-plus.distribute.icons.android）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AndroidIconsConfig {
+    /// 密度名 → 图片绝对路径（如 "hdpi" → "/path/to/72x72.png"）
+    pub android: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UniappManifestInfo {
@@ -52,7 +60,8 @@ pub struct UniappManifestInfo {
     pub version_name: Option<String>,
     pub version_code: Option<u32>,
     pub hbuilderx_version: Option<String>,
-    pub icon1024: Option<String>,
+    #[serde(default)]
+    pub android_icons: Option<AndroidIconsConfig>,
     #[serde(default)]
     pub splashscreen: Option<SplashscreenConfig>,
     pub manifest_path: String,
@@ -480,7 +489,7 @@ pub fn parse_uniapp_manifest(
     let version_name = string_field(manifest, &["versionName", "version"]);
     let version_code = number_field(manifest, &["versionCode", "version_code"]);
     let hbuilderx_version = extract_hbuilderx_version(manifest);
-    let icon1024 = find_manifest_icon(manifest, project_root);
+    let android_icons = find_manifest_android_icons(manifest, project_root);
     let splashscreen = find_manifest_splashscreen(manifest, project_root);
     let android_value = manifest
         .get("app-plus")
@@ -558,7 +567,7 @@ pub fn parse_uniapp_manifest(
         version_name,
         version_code,
         hbuilderx_version,
-        icon1024,
+        android_icons,
         splashscreen,
         manifest_path: manifest_path.to_string_lossy().to_string(),
         project_root: project_root.to_string_lossy().to_string(),
@@ -802,24 +811,41 @@ fn push_detected_module(detected: &mut Vec<DetectedModule>, raw_name: &str, plat
     detected.push(module);
 }
 
-fn find_manifest_icon(manifest: &serde_json::Value, project_root: &Path) -> Option<String> {
-    let app_plus = manifest.get("app-plus");
-    let candidate = app_plus
-        .and_then(|v| string_field(v, &["icon1024", "icon", "iconPath", "appIcon"]))
-        .or_else(|| {
-            app_plus
-                .and_then(|v| v.get("distribute"))
-                .and_then(|v| string_field(v, &["icon1024", "icon", "iconPath", "appIcon"]))
+fn find_manifest_android_icons(
+    manifest: &serde_json::Value,
+    project_root: &Path,
+) -> Option<AndroidIconsConfig> {
+    let icons_value = manifest
+        .get("app-plus")
+        .and_then(|v| v.get("distribute"))
+        .and_then(|v| v.get("icons"))?;
+
+    let android = icons_value
+        .get("android")
+        .and_then(|v| v.as_object())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|(density, path)| {
+                    path.as_str()
+                        .map(str::trim)
+                        .filter(|p| !p.is_empty())
+                        .map(|p| {
+                            (
+                                density.to_string(),
+                                resolve_manifest_asset_path(p, project_root),
+                            )
+                        })
+                })
+                .collect::<BTreeMap<_, _>>()
         })
-        .or_else(|| string_field(manifest, &["icon1024", "icon", "iconPath", "appIcon"]))
-        .or_else(|| find_icon_candidate(manifest))?;
-    let path = PathBuf::from(&candidate);
-    let absolute = if path.is_absolute() {
-        path
-    } else {
-        project_root.join(path)
-    };
-    Some(absolute.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    if android.is_empty() {
+        return None;
+    }
+
+    Some(AndroidIconsConfig { android })
 }
 
 fn find_manifest_splashscreen(
@@ -880,56 +906,4 @@ fn resolve_manifest_asset_path(path: &str, project_root: &Path) -> String {
         project_root.join(path)
     };
     absolute.to_string_lossy().to_string()
-}
-
-fn find_icon_candidate(value: &serde_json::Value) -> Option<String> {
-    fn visit(value: &serde_json::Value, key_hint: &str, candidates: &mut Vec<(u8, String)>) {
-        match value {
-            serde_json::Value::Object(map) => {
-                for (key, item) in map {
-                    let hint = if key_hint.is_empty() {
-                        key.to_string()
-                    } else {
-                        format!("{}.{}", key_hint, key)
-                    };
-                    visit(item, &hint, candidates);
-                }
-            }
-            serde_json::Value::Array(items) => {
-                for item in items {
-                    visit(item, key_hint, candidates);
-                }
-            }
-            serde_json::Value::String(path) => {
-                let lower_path = path.to_ascii_lowercase();
-                let lower_hint = key_hint.to_ascii_lowercase();
-                let is_image = lower_path.ends_with(".png")
-                    || lower_path.ends_with(".jpg")
-                    || lower_path.ends_with(".jpeg")
-                    || lower_path.ends_with(".webp");
-                let is_icon = lower_hint.contains("icon")
-                    || lower_path.contains("icon")
-                    || lower_path.contains("logo");
-                if is_image && is_icon {
-                    let score = if lower_hint.contains("1024")
-                        || lower_hint.contains("appstore")
-                        || lower_path.contains("1024")
-                    {
-                        0
-                    } else if lower_path.ends_with(".png") {
-                        1
-                    } else {
-                        2
-                    };
-                    candidates.push((score, path.clone()));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut candidates = Vec::new();
-    visit(value, "", &mut candidates);
-    candidates.sort_by(|a, b| a.0.cmp(&b.0));
-    candidates.into_iter().map(|(_, path)| path).next()
 }

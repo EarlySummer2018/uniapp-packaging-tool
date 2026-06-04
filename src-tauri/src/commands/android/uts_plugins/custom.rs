@@ -247,7 +247,7 @@ pub fn generate_dcloud_uniplugins_json(
 
     let json = serde_json::json!({ "nativePlugins": native_plugins });
     let path = workspace
-        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join(crate::commands::android::project_mod::MODULE_NAME)
         .join("src/main/assets/dcloud_uniplugins.json");
 
     std::fs::write(

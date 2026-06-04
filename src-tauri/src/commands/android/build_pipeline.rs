@@ -27,7 +27,7 @@ use crate::commands::android::types::{
     emit_log, render_gradle_dependency_line, timestamp, AndroidBuildEnvironment,
     AndroidManifestPatches, UTS_RUNTIME_DEPS,
 };
-use crate::utils::android_project_mod;
+use crate::commands::android::project_mod;
 
 /// Android 构建上下文，持有构建过程中的所有中间状态
 #[allow(dead_code)]
@@ -69,7 +69,7 @@ pub struct BuildContext {
 
     // Manifest 补丁结果
     pub manifest_patches: Option<AndroidManifestPatches>,
-    pub manifest_patch_groups: Vec<android_project_mod::ManifestPatchGroup>,
+    pub manifest_patch_groups: Vec<project_mod::ManifestPatchGroup>,
     pub manifest_placeholders: String,
 }
 
@@ -155,7 +155,7 @@ impl BuildContext {
 
         let sdk_libs = sdk_layout.libs_dir.clone();
         let libs_dst = workspace
-            .join(android_project_mod::MODULE_NAME)
+            .join(project_mod::MODULE_NAME)
             .join("libs");
 
         Ok(Self {
@@ -344,7 +344,7 @@ impl BuildContext {
             .as_ref()
             .expect("manifest_patches must be set before apply_modifications");
 
-        let modification_ctx = android_project_mod::BuildModificationContext {
+        let modification_ctx = project_mod::BuildModificationContext {
             project_name: safe_file_name(&self.config.name),
             package_name: self.config.android.package_name.clone(),
             appid: self.scan.app_id.clone(),
@@ -402,7 +402,7 @@ impl BuildContext {
             ),
         };
 
-        let modifier = android_project_mod::AndroidProjectModifier::new(self.workspace.clone())?;
+        let modifier = project_mod::AndroidProjectModifier::new(self.workspace.clone())?;
         modifier.apply_all_modifications(&modification_ctx)?;
         emit_log(window, "success", "已应用 Android 工程补丁", Some(38));
         Ok(())
@@ -416,8 +416,12 @@ impl BuildContext {
         update_dcloud_control(&self.workspace, &self.scan.app_id)?;
         emit_log(window, "success", "dcloud_control.xml 已更新", Some(55));
 
-        generate_icons(&self.config, &self.workspace, window)?;
-        emit_log(window, "success", "Android 图标已生成", Some(64));
+        let android_icons = self
+            .manifest_info
+            .as_ref()
+            .and_then(|info| info.android_icons.as_ref());
+        generate_icons(android_icons, &self.workspace, window)?;
+        emit_log(window, "success", "Android 图标已导入", Some(64));
 
         let splashscreen = self
             .manifest_info
@@ -441,7 +445,7 @@ impl BuildContext {
         )?;
 
         // 所有工程补丁完成后，最终校验并修复 AndroidManifest.xml 结构
-        android_project_mod::validate_and_fix_final_manifest(&self.workspace)?;
+        project_mod::validate_and_fix_final_manifest(&self.workspace)?;
         Ok(())
     }
 

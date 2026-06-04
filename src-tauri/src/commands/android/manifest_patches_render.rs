@@ -17,7 +17,7 @@ pub fn render_android_module_manifest_patches(
     app_id: &str,
 ) -> (
     AndroidManifestPatches,
-    Vec<crate::utils::android_project_mod::ManifestPatchGroup>,
+    Vec<crate::commands::android::project_mod::ManifestPatchGroup>,
 ) {
     render_android_module_manifest_patches_impl(report, package_name, app_id)
 }
@@ -27,7 +27,7 @@ pub fn render_android_module_manifest_patches_impl(
     app_id: &str,
 ) -> (
     AndroidManifestPatches,
-    Vec<crate::utils::android_project_mod::ManifestPatchGroup>,
+    Vec<crate::commands::android::project_mod::ManifestPatchGroup>,
 ) {
     use crate::commands::android::types::{
         indent_manifest_fragment, prefix_if_nonempty, AndroidManifestPatches,
@@ -42,7 +42,7 @@ pub fn render_android_module_manifest_patches_impl(
     let mut pandora_entry_intent_filters = BTreeSet::new();
     let mut groups_map: std::collections::BTreeMap<
         String,
-        crate::utils::android_project_mod::ManifestPatchGroup,
+        crate::commands::android::project_mod::ManifestPatchGroup,
     > = std::collections::BTreeMap::new();
 
     for module in &report.modules {
@@ -493,7 +493,7 @@ pub fn render_android_module_manifest_patches_impl(
         if !mod_perms.is_empty() || !mod_entries.is_empty() || !mod_filters.is_empty() {
             let group_name = module.template_key.clone();
             let group = groups_map.entry(group_name.clone()).or_insert_with(|| {
-                crate::utils::android_project_mod::ManifestPatchGroup {
+                crate::commands::android::project_mod::ManifestPatchGroup {
                     module_name: group_name,
                     permissions: Vec::new(),
                     application_entries: Vec::new(),
@@ -537,7 +537,7 @@ pub fn render_android_module_manifest_patches_impl(
         application_entries: prefix_if_nonempty(application_entries_str, "\n"),
         pandora_entry_intent_filters: prefix_if_nonempty(pandora_entry_intent_filters_str, "\n"),
     };
-    let groups: Vec<crate::utils::android_project_mod::ManifestPatchGroup> =
+    let groups: Vec<crate::commands::android::project_mod::ManifestPatchGroup> =
         groups_map.into_values().collect();
     (patches, groups)
 }

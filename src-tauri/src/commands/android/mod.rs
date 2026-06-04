@@ -12,6 +12,7 @@ pub mod modules;
 pub mod resources;
 pub(crate) mod sdk_layout;
 pub mod types;
+pub mod project_mod;
 pub mod uts_plugins;
 
 // Re-export types used externally (e.g., lib.rs uses android::AppState)

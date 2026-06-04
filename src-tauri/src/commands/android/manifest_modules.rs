@@ -22,7 +22,7 @@ pub fn copy_module_activity_sources(
     // 去重：同一缺失文件只警告一次（多个模块可能引用同一个第三方 SDK 源码）
     let mut warned_missing: std::collections::HashSet<String> = std::collections::HashSet::new();
     let java_src_root = workspace
-        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join(crate::commands::android::project_mod::MODULE_NAME)
         .join("src/main/java");
 
     // 诊断日志：输出关键路径信息，便于排查路径解析问题
@@ -288,7 +288,7 @@ pub fn render_android_module_manifest_patches(
     app_id: &str,
 ) -> (
     crate::commands::android::types::AndroidManifestPatches,
-    Vec<crate::utils::android_project_mod::ManifestPatchGroup>,
+    Vec<crate::commands::android::project_mod::ManifestPatchGroup>,
 ) {
     super::manifest_patches_render::render_android_module_manifest_patches_impl(
         report,

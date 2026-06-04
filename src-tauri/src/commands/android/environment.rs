@@ -75,7 +75,7 @@ pub fn find_apk_in_workspace(workspace: &std::path::Path) -> Vec<std::path::Path
     let mut results = Vec::new();
     find_apks_recursive(
         &workspace
-            .join(crate::utils::android_project_mod::MODULE_NAME)
+            .join(crate::commands::android::project_mod::MODULE_NAME)
             .join("build/outputs"),
         &mut results,
     );

@@ -4,50 +4,85 @@ use crate::commands::android::types::emit_log;
 use std::path::{Path, PathBuf};
 
 pub fn generate_icons(
-    config: &crate::commands::project::ProjectConfig,
+    android_icons: Option<&crate::commands::shared::resource::AndroidIconsConfig>,
     workspace: &Path,
     window: &tauri::Window,
 ) -> Result<(), String> {
-    if config.app.icon1024.trim().is_empty() {
-        emit_log(window, "warn", "未配置 1024 图标，跳过图标生成", None);
-        return Ok(());
-    }
-    let source = PathBuf::from(&config.app.icon1024);
-    if !source.exists() {
+    let res_dir = workspace
+        .join(crate::commands::android::project_mod::MODULE_NAME)
+        .join("src/main/res");
+
+    // 清理 SDK 模板自带的旧图标文件，避免残留
+    clean_drawable_files(&res_dir, &["icon.png", "push.png", "splash.png"])?;
+
+    let Some(config) = android_icons else {
         emit_log(
             window,
             "warn",
-            &format!("图标文件不存在: {}", source.display()),
+            "manifest 未配置 Android 图标，跳过图标复制",
+            None,
+        );
+        return Ok(());
+    };
+
+    if config.android.is_empty() {
+        emit_log(
+            window,
+            "warn",
+            "manifest 未提供 Android 图标密度资源，跳过",
             None,
         );
         return Ok(());
     }
-    let img = image::open(&source)
-        .map_err(|e| format!("读取图标失败: {}", e))?
-        .to_rgba8();
-    let res_dir = workspace
-        .join(crate::utils::android_project_mod::MODULE_NAME)
-        .join("src/main/res");
 
-    // 先清理 SDK 模板自带的旧图标文件（icon.png / push.png / splash.png），避免残留
-    clean_drawable_files(&res_dir, &["icon.png", "push.png", "splash.png"])?;
+    let density_map: &[(&str, &str)] = &[
+        ("hdpi", "drawable-hdpi"),
+        ("xhdpi", "drawable-xhdpi"),
+        ("xxhdpi", "drawable-xxhdpi"),
+        ("xxxhdpi", "drawable-xxxhdpi"),
+    ];
 
-    for (dir, size) in [
-        ("drawable-ldpi", 36),
-        ("drawable-mdpi", 48),
-        ("drawable-hdpi", 72),
-        ("drawable-xhdpi", 96),
-        ("drawable-xxhdpi", 144),
-        ("drawable-xxxhdpi", 192),
-    ] {
-        let out_dir = res_dir.join(dir);
-        crate::utils::fs::ensure_directory(&out_dir).map_err(|e| e.to_string())?;
-        for name in ["icon.png", "push.png", "splash.png"] {
-            let resized = image::imageops::resize(&img, size, size, image::imageops::Lanczos3);
-            resized
-                .save(out_dir.join(name))
-                .map_err(|e| format!("写入图标失败: {}", e))?;
+    let mut copied = 0usize;
+    for (density, source_path) in &config.android {
+        let Some(res_subdir) = density_map
+            .iter()
+            .find(|(d, _)| *d == density.as_str())
+            .map(|(_, r)| *r)
+        else {
+            emit_log(
+                window,
+                "warn",
+                &format!("忽略不支持的 Android 图标密度: {}", density),
+                None,
+            );
+            continue;
+        };
+        let source = PathBuf::from(source_path);
+        if !source.exists() {
+            emit_log(
+                window,
+                "warn",
+                &format!("Android 图标不存在: {}", source.display()),
+                None,
+            );
+            continue;
         }
+        let target_dir = res_dir.join(res_subdir);
+        crate::utils::fs::ensure_directory(&target_dir).map_err(|e| e.to_string())?;
+        crate::utils::fs::copy_file(&source, &target_dir.join("icon.png"))
+            .map_err(|e| format!("复制 Android 图标失败 {}: {}", source.display(), e))?;
+        copied += 1;
+    }
+
+    if copied > 0 {
+        emit_log(
+            window,
+            "success",
+            &format!("已导入 {} 张 Android 自定义图标", copied),
+            None,
+        );
+    } else {
+        emit_log(window, "warn", "Android 自定义图标均未找到", None);
     }
     Ok(())
 }
@@ -104,36 +139,27 @@ pub fn apply_android_splashscreen(
     window: &tauri::Window,
 ) -> Result<(), String> {
     let res_dir = workspace
-        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join(crate::commands::android::project_mod::MODULE_NAME)
         .join("src/main/res");
 
-    // 先清理 SDK 模板自带的旧启动图和背景 XML，避免残留
-    clean_drawable_files(&res_dir, &["unipack_splash_image.png"])?;
-    // 清理旧的自定义背景 drawable XML
-    let old_bg_xml = res_dir.join("drawable").join("unipack_splash.xml");
-    if old_bg_xml.exists() {
-        let _ = std::fs::remove_file(&old_bg_xml);
-    }
+    // 先清理旧的启动图残留（包括之前可能写入的 unipack_splash_image.* 和 splash.*）
+    clean_drawable_files(&res_dir, &["splash.png", "unipack_splash_image.png"])?;
 
     let Some(config) = splashscreen else {
-        write_default_android_splashscreen(&res_dir)?;
-        emit_log(
-            window,
-            "info",
-            "manifest 未配置 Android 启动图，已使用默认白底",
-            None,
-        );
+        // 无 splashscreen 配置 → 使用 SDK 默认（通用启动界面），不做任何处理
         return Ok(());
     };
 
+    // 判断是否为自定义启动图模式：androidStyle 为 "default"/空/缺失 → 自定义模式
+    // androidStyle 为 "common" → 通用启动界面模式（使用 SDK 渲染逻辑）
+    let is_custom_style = config
+        .android_style
+        .as_deref()
+        .map(|s| s == "default" || s.is_empty())
+        .unwrap_or(true);
+
     if config.android.is_empty() {
-        write_default_android_splashscreen(&res_dir)?;
-        emit_log(
-            window,
-            "info",
-            "manifest 未提供 Android 启动图密度资源，已使用默认白底",
-            None,
-        );
+        // 无图片资源，使用 SDK 默认启动界面
         return Ok(());
     }
 
@@ -164,9 +190,9 @@ pub fn apply_android_splashscreen(
             .map(|name| name.ends_with(".9.png"))
             .unwrap_or(false)
         {
-            "unipack_splash_image.9.png"
+            "splash.9.png"
         } else {
-            "unipack_splash_image.png"
+            "splash.png"
         };
         let target = res_dir.join(drawable_dir).join(target_name);
         crate::utils::fs::copy_file(&source_path, &target)
@@ -175,21 +201,18 @@ pub fn apply_android_splashscreen(
     }
 
     if copied > 0 {
-        write_android_window_background(&res_dir, "@drawable/unipack_splash_image")?;
+        if is_custom_style {
+            // 按官方指南配置全屏启动图：写入 AppTheme.Splash style + 设置主 Activity theme
+            setup_splash_screen(&res_dir)?;
+        }
         emit_log(
             window,
             "info",
-            &format!("已导入 {} 张 Android 自定义启动图", copied),
+            &format!("已导入 {} 张自定义启动图", copied),
             None,
         );
     } else {
-        write_default_android_splashscreen(&res_dir)?;
-        emit_log(
-            window,
-            "warn",
-            "Android 自定义启动图均未找到，已使用默认白底",
-            None,
-        );
+        emit_log(window, "warn", "Android 自定义启动图均未找到", None);
     }
     Ok(())
 }
@@ -206,22 +229,130 @@ pub fn android_splash_drawable_dir(density: &str) -> Option<&'static str> {
     }
 }
 
-pub fn write_default_android_splashscreen(res_dir: &Path) -> Result<(), String> {
-    write_android_window_background(res_dir, "@android:color/white")?;
+/// 按官方 launch-config.md 文档配置全屏启动图：
+/// 1. 在 values/styles.xml 中写入 AppTheme.Splash（windowBackground=@drawable/splash）
+/// 2. 找到 LAUNCHER Activity，将其 android:theme 设为 @style/AppTheme.Splash
+///
+/// Manifest 修改采用与 XmlManifestEditor::set_application_attr() 一致的正则模式。
+fn setup_splash_screen(res_dir: &Path) -> Result<(), String> {
+    // === Part A: 写入 AppTheme.Splash 到 styles.xml ===
+    let styles_path = res_dir.join("values").join("styles.xml");
+    if styles_path.exists() {
+        let content = std::fs::read_to_string(&styles_path)
+            .map_err(|e| format!("读取 styles.xml 失败: {}", e))?;
+
+        if !content.contains("AppTheme.Splash") {
+            const SPLASH_STYLE: &str = r#"
+    <style name="AppTheme.Splash" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="windowNoTitle">true</item>
+        <item name="windowActionBar">false</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowBackground">@drawable/splash</item>
+    </style>"#;
+            let merged =
+                content.replace("</resources>", &format!("{}\n</resources>", SPLASH_STYLE));
+            crate::utils::fs::write_string_to_file(&styles_path, &merged)
+                .map_err(|e| format!("写入 styles.xml 失败: {}", e))?;
+        }
+    }
+
+    // === Part B: 修改 AndroidManifest.xml — 正则模式设置 LAUNCHER Activity theme ===
+    let manifest_path = res_dir
+        .parent()
+        .ok_or("res 目录无父目录".to_string())?
+        .join("AndroidManifest.xml");
+    if !manifest_path.exists() {
+        return Ok(());
+    }
+    let content = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("读取 AndroidManifest.xml 失败: {}", e))?;
+
+    let modified = set_launcher_theme_attr(&content, "@style/TranslucentTheme");
+
+    if modified != content {
+        crate::utils::fs::write_string_to_file(&manifest_path, &modified)
+            .map_err(|e| format!("写入 AndroidManifest.xml 失败: {}", e))?;
+    }
     Ok(())
 }
 
-pub fn write_android_window_background(res_dir: &Path, drawable_ref: &str) -> Result<(), String> {
-    let drawable_dir = res_dir.join("drawable");
-    crate::utils::fs::ensure_directory(&drawable_dir).map_err(|e| e.to_string())?;
-    let content = format!(
-        r#"<?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="{}" />
-</layer-list>
-"#,
-        drawable_ref
-    );
-    crate::utils::fs::write_string_to_file(&drawable_dir.join("unipack_splash.xml"), &content)
-        .map_err(|e| format!("写入 Android 启动背景资源失败: {}", e))
+/// 在 AndroidManifest.xml 中找到包含 LAUNCHER intent-filter 的 <activity>，
+/// 设置其 android:theme 属性。
+///
+/// 实现方式与 XmlManifestEditor::set_application_attr() 完全一致：
+/// - 正则定位 target tag 的 opening tag 范围
+/// - 正则匹配/替换属性值或在 > 前插入新属性
+/// - 从后往前替换避免字节偏移问题
+fn set_launcher_theme_attr(xml: &str, theme_value: &str) -> String {
+    let Some((tag_start, gt_pos)) = find_launcher_activity_opening_tag(xml) else {
+        return xml.to_string();
+    };
+
+    // tag_content = <activity ... （不含 >）
+    let tag_content = &xml[tag_start..gt_pos];
+    let escaped_value = escape_xml_attr(theme_value);
+
+    // 用正则检查是否已有 android:theme 属性
+    let theme_re =
+        regex::Regex::new(r#"\s*android:theme\s*=\s*"[^"]*""#).expect("theme 属性正则编译失败");
+
+    if theme_re.is_match(tag_content) {
+        // 已有 → 替换所有出现（从后往前避免偏移）
+        let mut result = xml.to_string();
+        let mut matches: Vec<_> = theme_re
+            .find_iter(tag_content)
+            .map(|m| (m.start() + tag_start, m.end() + tag_start))
+            .collect();
+        matches.sort_by(|a, b| b.0.cmp(&a.0));
+        for (start, end) in matches {
+            result.replace_range(
+                start..end,
+                &format!(r#" android:theme="{}""#, escaped_value),
+            );
+        }
+        result
+    } else {
+        // 没有 → 在 > 前插入
+        format!(
+            "{} android:theme=\"{}\">{}",
+            tag_content.trim_end(),
+            escaped_value,
+            &xml[gt_pos + 1..]
+        )
+    }
+}
+
+/// 找到 LAUNCHER Activity 的 opening tag 范围。
+///
+/// 返回 `(tag_start, gt_pos)` 其中 gt_pos 是 '>' 的位置（不含）。
+fn find_launcher_activity_opening_tag(xml: &str) -> Option<(usize, usize)> {
+    let activity_re = regex::Regex::new(r#"<activity\b[^>]*>"#).expect("activity 标签正则编译失败");
+
+    for mat in activity_re.find_iter(xml) {
+        let tag_start = mat.start();
+        let after_gt = mat.end(); // > 之后的位置
+
+        // 向后查找对应的 </activity> 确定这个 activity 块的范围
+        let block_end = xml[after_gt..].find("</activity>")?;
+        let block = &xml[tag_start..after_gt + block_end + "</activity>".len()];
+
+        // 检查是否为 LAUNCHER Activity
+        if block.contains("android.intent.action.MAIN")
+            && block.contains("android.intent.category.LAUNCHER")
+        {
+            return Some((tag_start, after_gt - 1)); // > 的位置
+        }
+    }
+
+    None
+}
+
+/// 转义 XML 属性值中的特殊字符。
+fn escape_xml_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }

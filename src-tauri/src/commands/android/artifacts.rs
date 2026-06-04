@@ -96,7 +96,7 @@ pub fn inject_huawei_agconnect_json(
         .map_err(|e| format!("agconnect-services.json 不是有效的 JSON: {}", e))?;
 
     let dest = workspace
-        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join(crate::commands::android::project_mod::MODULE_NAME)
         .join("src")
         .join("main")
         .join("agconnect-services.json");
@@ -137,7 +137,7 @@ pub(crate) fn apply_android_manifest_modules_internal(
     let config =
         super::manifest_modules::module_config_tree_for_android_build(modules, config_report);
     let properties_path = workspace
-        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join(crate::commands::android::project_mod::MODULE_NAME)
         .join("src/main/assets/data/dcloud_properties.xml");
     crate::commands::module::generate_dcloud_properties(&properties_path, &config)?;
 

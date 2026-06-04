@@ -9,7 +9,7 @@ pub fn import_uniapp_assets(
     app_id: &str,
 ) -> Result<(), String> {
     let apps_root = workspace
-        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join(crate::commands::android::project_mod::MODULE_NAME)
         .join("src/main/assets/apps");
     // 先清空 SDK 模板自带的默认 apps 目录（如 __UNI__DEMO__），再完整复制用户资源
     if apps_root.exists() {
@@ -23,7 +23,7 @@ pub fn import_uniapp_assets(
 
 pub fn update_dcloud_control(workspace: &Path, app_id: &str) -> Result<(), String> {
     let path = workspace
-        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join(crate::commands::android::project_mod::MODULE_NAME)
         .join("src/main/assets/data/dcloud_control.xml");
     if !path.exists() {
         return Err(format!("dcloud_control.xml 不存在: {}", path.display()));
@@ -42,7 +42,7 @@ pub fn copy_sdk_assets(
 ) -> Result<(), String> {
     let src = sdk_assets.join("data");
     let dst = workspace
-        .join(crate::utils::android_project_mod::MODULE_NAME)
+        .join(crate::commands::android::project_mod::MODULE_NAME)
         .join("src/main/assets/data");
     if src.exists() {
         crate::utils::fs::copy_recursive(&src, &dst)

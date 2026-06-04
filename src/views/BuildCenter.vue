@@ -79,7 +79,7 @@ interface UniappManifestInfo {
   versionName?: string | null
   versionCode?: number | null
   hbuilderxVersion?: string | null
-  icon1024?: string | null
+  androidIcons?: { android: Record<string, string> } | null
   splashscreen?: SplashscreenConfig | null
   manifestPath: string
   projectRoot: string
@@ -763,7 +763,6 @@ function applyManifestInfoToProject(info: UniappManifestInfo) {
   if (info.appId) project.app.appId = info.appId
   if (info.versionName) project.app.version = info.versionName
   if (typeof info.versionCode === 'number') project.app.versionCode = info.versionCode
-  if (info.icon1024) project.app.icon1024 = info.icon1024
   if (info.android.packageName) project.android.packageName = info.android.packageName
   if (typeof info.android.minSdkVersion === 'number') project.android.minSdkVersion = info.android.minSdkVersion
   if (typeof info.android.targetSdkVersion === 'number') project.android.targetSdkVersion = info.android.targetSdkVersion
@@ -915,7 +914,7 @@ function manifestLogLines(info: UniappManifestInfo) {
     `[info] manifest 应用名称: ${info.appName || '-'}`,
     `[info] manifest UniApp AppId: ${info.appId || '-'}`,
     `[info] manifest 版本: ${info.versionName || '-'} / ${info.versionCode ?? '-'}`,
-    `[info] manifest 图标: ${info.icon1024 || '-'}`,
+    `[info] manifest Android 图标: ${info.androidIcons ? Object.keys(info.androidIcons.android || {}).join(', ') : '-'}`,
     `[info] manifest Android 包名: ${info.android.packageName || '-'}`,
     `[info] manifest Android SDK: min ${info.android.minSdkVersion ?? '-'}, target ${info.android.targetSdkVersion ?? '-'}, compile ${info.android.compileSdkVersion ?? '-'}`,
     `[info] manifest 模块: ${moduleNames.length ? moduleNames.join(', ') : '无'}`

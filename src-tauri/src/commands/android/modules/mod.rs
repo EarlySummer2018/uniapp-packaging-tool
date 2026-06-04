@@ -35,7 +35,7 @@ pub fn render_all_patches(
     app_id: &str,
 ) -> (
     AndroidManifestPatches,
-    Vec<crate::utils::android_project_mod::ManifestPatchGroup>,
+    Vec<crate::commands::android::project_mod::ManifestPatchGroup>,
 ) {
     let Some(report) = report else {
         return (AndroidManifestPatches::default(), Vec::new());
@@ -44,7 +44,7 @@ pub fn render_all_patches(
     let mut permissions = BTreeSet::new();
     let mut application_entries = BTreeSet::new();
     let mut pandora_entry_intent_filters = BTreeSet::new();
-    let mut groups_map: BTreeMap<String, crate::utils::android_project_mod::ManifestPatchGroup> =
+    let mut groups_map: BTreeMap<String, crate::commands::android::project_mod::ManifestPatchGroup> =
         BTreeMap::new();
 
     for module in &report.modules {
@@ -186,7 +186,7 @@ pub fn render_all_patches(
         application_entries: prefix_if_nonempty(application_entries_str, "\n"),
         pandora_entry_intent_filters: prefix_if_nonempty(pandora_entry_intent_filters_str, "\n"),
     };
-    let groups: Vec<crate::utils::android_project_mod::ManifestPatchGroup> =
+    let groups: Vec<crate::commands::android::project_mod::ManifestPatchGroup> =
         groups_map.into_values().collect();
     (patches, groups)
 }
