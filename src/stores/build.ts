@@ -26,6 +26,8 @@ export const useBuildStore = defineStore('build', () => {
   const builds = ref<Record<string, BuildTask>>({})
   const activeBuildIds = ref<string[]>([])
 
+  const MAX_LOG_ENTRIES = 5000
+
   const currentBuilds = computed(() => {
     return activeBuildIds.value.map(id => builds.value[id]).filter(Boolean)
   })
@@ -88,15 +90,20 @@ export const useBuildStore = defineStore('build', () => {
   function addLog(buildId: string, level: BuildLog['level'], message: string) {
     const build = builds.value[buildId]
     if (!build) return
-    
+
     const log: BuildLog = {
       id: generateLogId(),
       timestamp: new Date().toISOString(),
       level,
       message
     }
-    
+
     build.logs.push(log)
+
+    // 防止内存无限增长
+    if (build.logs.length > MAX_LOG_ENTRIES) {
+      build.logs = build.logs.slice(-MAX_LOG_ENTRIES)
+    }
   }
 
   function updateProgress(buildId: string, progress: number) {

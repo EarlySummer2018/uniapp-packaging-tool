@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +84,46 @@ pub fn copy_recursive(src: &Path, dst: &Path) -> Result<()> {
             copy_file(&src_path, &dst_path)?;
         }
     }
+    Ok(())
+}
+
+/// 递归确保目录树中所有目录均可写。
+///
+/// 从 zip/压缩包解压的 SDK 工程文件可能带有只读权限，
+/// std::fs::copy 会保留这些权限，导致后续写入新文件时触发 EROFS。
+/// 本函数在 copy_recursive 之后调用，将目标目录树中的所有目录设为可写。
+pub fn ensure_writable_tree(root: &Path) -> Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+
+    let mut dirs_to_fix = Vec::new();
+
+    // 先收集所有目录路径（避免迭代时修改）
+    fn collect_dirs(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_dirs(&path, out)?;
+                    out.push(path);
+                }
+            }
+        }
+        // 将当前目录也加入列表（子目录优先，父目录后处理）
+        if dir.is_dir() {
+            out.push(dir.to_path_buf());
+        }
+        Ok(())
+    }
+
+    collect_dirs(root, &mut dirs_to_fix)?;
+
+    for dir in &dirs_to_fix {
+        let writable = std::fs::Permissions::from_mode(0o755);
+        let _ = std::fs::set_permissions(dir, writable);
+    }
+
     Ok(())
 }
 

@@ -19,12 +19,13 @@ import {
 } from 'naive-ui'
 import { ArrowBackOutline, FolderOpenOutline, PlayOutline } from '@vicons/ionicons5'
 import { open } from '@tauri-apps/plugin-dialog'
+import { readFile } from '@tauri-apps/plugin-fs'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { LogoAndroid, LogoApple, PhonePortraitOutline } from '@vicons/ionicons5'
 import PlatformCard from '../components/PlatformCard.vue'
 import LogPanel from '../components/LogPanel.vue'
-import { useBuildStore } from '../stores/build'
+import { useBuildStore, type BuildLog } from '../stores/build'
 import { useProjectsStore } from '../stores/projects'
 
 type Platform = 'android' | 'ios' | 'harmony'
@@ -96,6 +97,7 @@ interface AndroidModuleConfigField {
   value?: string | null
   valueSource?: string | null
   placeholder: string
+  field_type?: string
 }
 
 interface AndroidModuleConfigModule {
@@ -163,7 +165,8 @@ interface BuildRecord {
   started_at: string
   finished_at?: string | null
   error_message?: string | null
-  log_path?: string | null
+  log_path?: string | null,
+  resource_path?: string | null
 }
 
 const route = useRoute()
@@ -176,6 +179,8 @@ const projectId = computed(() => route.params.id as string)
 const selectedPlatforms = ref<Platform[]>([])
 const importing = ref(false)
 const isBuilding = ref(false)
+const isGenerating = ref(false)
+const generatedProjectPath = ref<string | null>(null)
 const currentBuildId = ref<string | null>(null)
 const scanResult = ref<ResourceScanResult | null>(null)
 const latestManifestInfo = ref<UniappManifestInfo | null>(null)
@@ -187,6 +192,191 @@ const artifacts = ref<BuildArtifact[]>([])
 
 let unlistenBuildLog: UnlistenFn | null = null
 let androidModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+// ===== 日志节流调度系统（2 秒刷新，最大限度让出主线程给打包编译）=====
+
+interface BufferedLog {
+  buildId: string
+  level: 'info' | 'warn' | 'error' | 'success'
+  message: string
+  progress?: number
+}
+
+/** 原始事件缓冲区：回调只做轻量 push，不做任何响应式/IPC 操作 */
+const logBuffer: BufferedLog[] = []
+
+/** 全局去重集合：记录本构建已写入文件的日志行，防止 Gradle --stacktrace 等重复输出 */
+const emittedLogLines = new Set<string>()
+
+/** UI 刷新定时器句柄 */
+let logFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 是否已有定时器在等待 */
+let flushPending = false
+
+/** UI 刷新间隔（毫秒） */
+const LOG_FLUSH_INTERVAL_MS = 2000
+
+/**
+ * 将缓冲区日志批量写入 store（触发 UI 更新）和文件。
+ * 由 2 秒定时器驱动，也可在 catch/finally 中主动调用以排空缓冲区。
+ */
+async function flushToStoreAndUI() {
+  flushPending = false
+  logFlushTimer = null
+
+  if (logBuffer.length === 0 || !currentBuildId.value) return
+
+  // 取出所有缓冲数据
+  const entries = logBuffer.splice(0)
+
+  // 获取当前构建的最后一条日志，用于连续去重
+  const build = buildStore.getBuild(currentBuildId.value)
+  let lastMsg = build?.logs?.length ? build.logs[build.logs.length - 1] : null
+
+  // 批量推入 store（连续去重：跳过与前一条 level+message 完全相同的日志）
+  for (const entry of entries) {
+    if (lastMsg && lastMsg.level === entry.level && lastMsg.message === entry.message) {
+      continue // Gradle 重复输出常见，跳过连续重复
+    }
+    buildStore.addLog(entry.buildId, entry.level, entry.message)
+    lastMsg = { level: entry.level, message: entry.message } as BuildLog
+    if (entry.progress != null) {
+      buildStore.updateProgress(entry.buildId, entry.progress)
+    }
+  }
+
+  // 文件写入：全局去重 + 堆栈折叠 + D8 警告聚合
+  const rawLines: string[] = []
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]
+    if (i > 0) {
+      const prev = entries[i - 1]
+      if (prev.level === e.level && prev.message === e.message) continue
+    }
+    rawLines.push(`[${e.level}] ${e.message}`)
+  }
+
+  // 全局去重：跳过本次构建中已写入的行
+  const uniqueLines: string[] = []
+  for (const line of rawLines) {
+    if (!emittedLogLines.has(line)) {
+      emittedLogLines.add(line)
+      uniqueLines.push(line)
+    }
+  }
+
+  // 堆栈折叠：压缩连续的 Gradle 堆栈帧
+  const compressedLines = compressGradleStack(uniqueLines)
+
+  // D8 警告聚合
+  const finalLines = aggregateD8Warnings(compressedLines)
+
+  if (finalLines.length > 0) {
+    void appendLog(currentBuildId.value!, finalLines).catch(() => {})
+  }
+}
+
+/** Gradle 堆栈帧正则：匹配 org.gradle / com.android / java.* 的 at 行 */
+const STACK_FRAME_RE = /^\s*at\s+(org\.gradle|com\.android|java)\./
+
+/**
+ * 折叠连续的 Gradle 堆栈帧为摘要行，减少日志体积。
+ * 超过 3 个连续堆栈帧时折叠为省略提示。
+ */
+function compressGradleStack(lines: string[]): string[] {
+  const result: string[] = []
+  let stackStartIdx = -1
+
+  for (let i = 0; i < lines.length; i++) {
+    const isStackFrame = STACK_FRAME_RE.test(lines[i])
+    if (isStackFrame) {
+      if (stackStartIdx < 0) stackStartIdx = i
+    } else {
+      if (stackStartIdx >= 0) {
+        const count = i - stackStartIdx
+        if (count > 3) {
+          result.push(`        [... 省略 ${count} 行 Gradle 堆栈 ...]`)
+        } else {
+          for (let j = stackStartIdx; j < i; j++) result.push(lines[j])
+        }
+        stackStartIdx = -1
+      }
+      result.push(lines[i])
+    }
+  }
+  // 处理末尾残留堆栈
+  if (stackStartIdx >= 0) {
+    const count = lines.length - stackStartIdx
+    if (count > 3) {
+      result.push(`        [... 省略 ${count} 行 Gradle 堆栈 ...]`)
+    } else {
+      for (let j = stackStartIdx; j < lines.length; j++) result.push(lines[j])
+    }
+  }
+  return result
+}
+
+/** D8 Kotlin metadata 警告正则 */
+const D8_WARN_RE = /\[warn\].*D8:.*kotlin metadata/
+
+/**
+ * 聚合 D8 Kotlin metadata 解析警告。
+ * 多条同类警告合并为一条摘要（列出受影响的类名）。
+ */
+function aggregateD8Warnings(lines: string[]): string[] {
+  const d8Indices: number[] = []
+  const d8Classes: string[] = []
+  const otherLines: { idx: number; line: string }[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    if (D8_WARN_RE.test(lines[i])) {
+      d8Indices.push(i)
+      const match = lines[i].match(/class '([^']+)'/)
+      if (match) d8Classes.push(match[1])
+    } else {
+      otherLines.push({ idx: i, line: lines[i] })
+    }
+  }
+
+  if (d8Classes.length === 0) return lines
+
+  // 构建摘要行
+  const summary: string[] = []
+  summary.push(`[warn] D8 Kotlin metadata 解析警告 (${d8Classes.length} 个类受影响):`)
+  const shown = d8Classes.slice(0, 5)
+  for (const cls of shown) summary.push(`[warn]   - ${cls}`)
+  if (d8Classes.length > 5) {
+    summary.push(`[warn]   ... 及其他 ${d8Classes.length - 5} 个类`)
+  }
+  summary.push('[warn]   建议: 升级 R8/D8 版本或降低 Kotlin 版本以兼容。')
+
+  // 将 D8 摘要插入到第一个 D8 警告出现的位置
+  const firstD8Idx = d8Indices[0]
+  const result: string[] = []
+  let summaryInserted = false
+  for (const ol of otherLines) {
+    if (!summaryInserted && ol.idx > firstD8Idx) {
+      result.push(...summary)
+      summaryInserted = true
+    }
+    result.push(ol.line)
+  }
+  if (!summaryInserted) result.push(...summary)
+  return result
+}
+
+/** 调度下一次 UI 刷新（2 秒后，不重复调度） */
+function scheduleLogFlush(): Promise<void> {
+  if (flushPending) return Promise.resolve()
+  flushPending = true
+  return new Promise(resolve => {
+    logFlushTimer = setTimeout(async () => {
+      await flushToStoreAndUI()
+      resolve()
+    }, LOG_FLUSH_INTERVAL_MS)
+  })
+}
 
 const platforms = [
   { key: 'android' as const, label: 'Android', icon: LogoAndroid, description: '生成 APK 安装包', color: '#2f9e44', bgColor: '#e8f5e9' },
@@ -204,6 +394,11 @@ const androidMissingRequired = computed(() => {
 })
 const canBuild = computed(() => {
   if (!scanResult.value || selectedPlatforms.value.length === 0 || isBuilding.value) return false
+  if (selectedNeedsAndroidConfig.value && !androidModulesReady.value) return false
+  return true
+})
+const canGenerateAndroid = computed(() => {
+  if (!scanResult.value || !selectedPlatforms.value.includes('android') || isBuilding.value || isGenerating.value) return false
   if (selectedNeedsAndroidConfig.value && !androidModulesReady.value) return false
   return true
 })
@@ -266,26 +461,31 @@ onMounted(async () => {
   unlistenBuildLog = await listen<any>('build-log', (event) => {
     if (!currentBuildId.value) return
     const payload = event.payload
+
+    // 只做轻量解析 + 推入缓冲区，零响应式、零 IPC
     if (typeof payload === 'string') {
-      buildStore.addLog(currentBuildId.value, 'info', payload)
-      void appendLog(currentBuildId.value, [`[info] ${payload}`])
-      return
+      logBuffer.push({ buildId: currentBuildId.value, level: 'info', message: payload })
+    } else {
+      const line = payload?.message || payload?.line
+      if (line) {
+        const level = payload.level === 'error' || payload.type === 'stderr'
+          ? 'error'
+          : payload.level === 'warn'
+            ? 'warn'
+            : payload.level === 'success'
+              ? 'success'
+              : 'info'
+        logBuffer.push({
+          buildId: currentBuildId.value,
+          level,
+          message: String(line),
+          progress: typeof payload?.progress === 'number' ? payload.progress : undefined,
+        })
+      }
     }
-    const line = payload?.message || payload?.line
-    if (line) {
-      const level = payload.level === 'error' || payload.type === 'stderr'
-        ? 'error'
-        : payload.level === 'warn'
-          ? 'warn'
-          : payload.level === 'success'
-            ? 'success'
-            : 'info'
-      buildStore.addLog(currentBuildId.value, level, String(line))
-      void appendLog(currentBuildId.value, [`[${level}] ${String(line)}`])
-    }
-    if (typeof payload?.progress === 'number') {
-      buildStore.updateProgress(currentBuildId.value, payload.progress)
-    }
+
+    // 调度 2 秒后的 UI 刷新
+    scheduleLogFlush()
   })
 })
 
@@ -295,8 +495,48 @@ onUnmounted(() => {
     androidModuleConfigSaveTimer = null
   }
   void persistAndroidModuleConfigCache()
+  // 立即刷新剩余缓冲区（同步版本，供 onUnmounted 等无法 await 的场景使用）
+  flushLogBufferImmediately()
+  if (logFlushTimer) { clearTimeout(logFlushTimer); logFlushTimer = null }
   unlistenBuildLog?.()
 })
+
+/** 同步版本：立即排空 logBuffer，不经过定时器 */
+function flushLogBufferImmediately() {
+  if (logFlushTimer) {
+    clearTimeout(logFlushTimer)
+    logFlushTimer = null
+  }
+  flushPending = false
+  if (logBuffer.length === 0 || !currentBuildId.value) return
+  const entries = logBuffer.splice(0)
+  const build = buildStore.getBuild(currentBuildId.value)
+  let lastMsg = build?.logs?.length ? build.logs[build.logs.length - 1] : null
+  for (const entry of entries) {
+    if (lastMsg && lastMsg.level === entry.level && lastMsg.message === entry.message) continue
+    buildStore.addLog(entry.buildId, entry.level, entry.message)
+    lastMsg = { level: entry.level, message: entry.message } as BuildLog
+    if (entry.progress != null) buildStore.updateProgress(entry.buildId, entry.progress)
+  }
+  const rawLines: string[] = []
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]
+    if (i > 0) {
+      const prev = entries[i - 1]
+      if (prev.level === e.level && prev.message === e.message) continue
+    }
+    rawLines.push(`[${e.level}] ${e.message}`)
+  }
+  // 全局去重
+  const uniqueLines: string[] = []
+  for (const line of rawLines) {
+    if (!emittedLogLines.has(line)) {
+      emittedLogLines.add(line)
+      uniqueLines.push(line)
+    }
+  }
+  if (uniqueLines.length > 0) void appendLog(currentBuildId.value!, uniqueLines).catch(() => {})
+}
 
 async function chooseResource() {
   const selected = await open({
@@ -339,6 +579,8 @@ function togglePlatform(platform: Platform) {
 
 async function startBuild() {
   if (!scanResult.value || !canBuild.value) return
+  // 重置全局日志去重集合（每次构建独立）
+  emittedLogLines.clear()
   if (!latestManifestInfo.value) {
     message.error(manifestReadWarning.value || '请先导入资源，并确保已从本地项目路径读取 manifest.json')
     return
@@ -383,10 +625,14 @@ async function startBuild() {
       await finalizeBuildRecord(buildId, 'success', startedAt, artifact)
       message.success(`${platform} 构建完成`)
     } catch (e: any) {
+      // 先排空 logBuffer 中的残留 Gradle 输出，确保错误日志在清理日志之前写入
+      if (logBuffer.length > 0 || flushPending) await flushToStoreAndUI()
       buildStore.failBuild(buildId, String(e))
       await finalizeBuildRecord(buildId, 'failed', startedAt, null, String(e))
       message.error(`${platform} 构建失败: ${String(e)}`)
     } finally {
+      // 同样先排空缓冲区，确保所有构建日志在清理日志之前完成写入
+      if (logBuffer.length > 0 || flushPending) await flushToStoreAndUI()
       await cleanupBuildTemporaryFiles(buildId, buildId, null)
     }
   }
@@ -400,6 +646,51 @@ async function startBuild() {
   }
   isBuilding.value = false
   scanResult.value = null
+}
+
+async function generateAndroidProject() {
+  if (!scanResult.value || !canGenerateAndroid.value) return
+  if (!latestManifestInfo.value) {
+    message.error(manifestReadWarning.value || '请先导入资源，并确保已从本地项目路径读取 manifest.json')
+    return
+  }
+  if (selectedNeedsAndroidConfig.value && androidMissingRequired.value.length) {
+    message.error(`请先填写 Android 模块配置: ${androidMissingRequired.value.map(item => `${item.moduleName}-${item.label}`).join('、')}`)
+    return
+  }
+  const manifestInfo = latestManifestInfo.value
+  const androidModuleConfig = buildAndroidModuleConfigPayload()
+  await persistAndroidModuleConfigCache()
+  isGenerating.value = true
+  generatedProjectPath.value = null
+  // 重置全局日志去重集合
+  emittedLogLines.clear()
+  const buildId = buildStore.startBuild(projectId.value, 'android')
+  currentBuildId.value = buildId
+  const startedAt = new Date()
+  await createBuildRecord(buildId, 'android', startedAt)
+  await appendManifestLog(buildId, manifestInfo)
+  try {
+    const projectPath = await invoke<string>('generate_android_project', {
+      projectId: projectId.value,
+      resourcePath: scanResult.value!.importedPath,
+      buildId,
+      manifestInfo,
+      moduleConfig: androidModuleConfig,
+    })
+    generatedProjectPath.value = projectPath
+    buildStore.stopBuild(buildId, true)
+    await finalizeBuildRecord(buildId, 'success', startedAt, null)
+    message.success(`安卓工程已生成: ${projectPath}`)
+  } catch (e: any) {
+    if (logBuffer.length > 0 || flushPending) await flushToStoreAndUI()
+    buildStore.failBuild(buildId, String(e))
+    await finalizeBuildRecord(buildId, 'failed', startedAt, null, String(e))
+    message.error(`生成安卓工程失败: ${String(e)}`)
+  } finally {
+    if (logBuffer.length > 0 || flushPending) await flushToStoreAndUI()
+    isGenerating.value = false
+  }
 }
 
 async function persistAndroidModuleConfigCache() {
@@ -539,6 +830,39 @@ function updateAndroidField(field: AndroidModuleConfigField, value: string) {
   scheduleAndroidModuleConfigCacheSave()
 }
 
+async function pickAndroidFileField(field: AndroidModuleConfigField) {
+  const selected = await open({
+    multiple: false,
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    title: `选择 ${field.label}`,
+  })
+  if (typeof selected !== 'string') return
+  try {
+    const content = await readFile(selected)
+    // 转为 base64 存储
+    let binary = ''
+    for (let i = 0; i < content.length; i++) binary += String.fromCharCode(content[i])
+    const base64 = btoa(binary)
+    updateAndroidField(field, base64)
+  } catch (e) {
+    message.error('读取文件失败: ' + String(e))
+  }
+}
+
+function clearAndroidFileField(field: AndroidModuleConfigField) {
+  updateAndroidField(field, '')
+}
+
+function isFileField(field: AndroidModuleConfigField): boolean {
+  return field.field_type === 'file'
+}
+
+function formatFileSize(base64Value: string): string {
+  if (!base64Value) return ''
+  const kb = Math.ceil((base64Value.length * 3 / 4) / 1024)
+  return `${kb}KB`
+}
+
 function buildAndroidModuleConfigPayload() {
   const payload: Record<string, string> = {}
   for (const [key, value] of Object.entries(androidModuleConfigValues.value)) {
@@ -634,7 +958,8 @@ async function createBuildRecord(buildId: string, platform: Platform, startedAt:
     started_at: startedAt.toISOString(),
     finished_at: null,
     error_message: null,
-    log_path: null
+    log_path: null,
+    resource_path: scanResult.value?.importedPath || null
   }
   try {
     await invoke('add_build_record', { record })
@@ -772,6 +1097,10 @@ function goBack() {
           />
           <n-space justify="end" style="margin-top: 18px;">
             <n-text v-if="buildDisabledReason && !canBuild" depth="3">{{ buildDisabledReason }}</n-text>
+            <n-button type="primary" :disabled="!canGenerateAndroid" :loading="isGenerating" @click="generateAndroidProject">
+              <template #icon><n-icon><LogoAndroid /></n-icon></template>
+              生成安卓项目
+            </n-button>
             <n-button type="success" :disabled="!canBuild" :loading="isBuilding" @click="startBuild">
               <template #icon><n-icon><PlayOutline /></n-icon></template>
               开始打包
@@ -821,7 +1150,20 @@ function goBack() {
                       <n-tag size="tiny" :type="fieldStatusType(field)">{{ fieldStatusLabel(field) }}</n-tag>
                     </n-space>
                   </template>
+                  <!-- 文件类型字段：渲染文件选择器 -->
+                  <template v-if="isFileField(field)">
+                    <n-space :size="8" align="center" style="width: 100%;">
+                      <n-button size="small" @click="pickAndroidFileField(field)">选择文件</n-button>
+                      <n-text v-if="androidFieldValue(field)" depth="3" style="font-size: 12px;">
+                        已选择 ({{ formatFileSize(androidFieldValue(field)) }})
+                      </n-text>
+                      <n-button v-if="androidFieldValue(field)" size="small" quaternary type="error" @click="clearAndroidFileField(field)">清除</n-button>
+                      <n-text v-else depth="3" style="font-size: 12px;">{{ field.placeholder }}</n-text>
+                    </n-space>
+                  </template>
+                  <!-- 文本类型字段：渲染输入框 -->
                   <n-input
+                    v-else
                     :value="androidFieldValue(field)"
                     :placeholder="field.placeholder"
                     :type="field.secret ? 'password' : 'text'"
@@ -933,6 +1275,13 @@ function goBack() {
       />
       <n-alert v-for="artifact in artifacts" :key="artifact.path" type="success" style="margin-top: 12px;">
         {{ artifact.platform }}: <n-text code>{{ artifact.path }}</n-text>
+      </n-alert>
+      <n-alert v-if="generatedProjectPath" type="info" style="margin-top: 12px;">
+        <n-space align="center">
+          <span>Android 工程已生成:</span>
+          <n-text code>{{ generatedProjectPath }}</n-text>
+          <n-button size="small" @click="() => { void invoke('tauri', { __tauriModule: 'shell', message: { cmd: 'open', path: generatedProjectPath } }) }">打开目录</n-button>
+        </n-space>
       </n-alert>
     </n-card>
   </div>
