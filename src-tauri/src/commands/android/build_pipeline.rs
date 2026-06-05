@@ -114,6 +114,18 @@ fn manifest_value_for_build_context(
     manifest_info.and_then(crate::commands::module::manifest_value_from_info)
 }
 
+fn render_buildscript_dependency_line(dep: &str) -> Option<String> {
+    let dep = dep.trim();
+    if dep.is_empty() {
+        return None;
+    }
+    if dep.starts_with("classpath ") {
+        Some(dep.to_string())
+    } else {
+        Some(format!("classpath '{}'", dep))
+    }
+}
+
 impl BuildContext {
     /// Step 0: 创建构建上下文（解析参数、加载配置、准备工作区）
     pub fn new(
@@ -411,7 +423,15 @@ impl BuildContext {
             version_name: self.config.app.version.clone(),
             compile_sdk: self.config.android.compile_sdk_version,
             target_sdk: self.config.android.target_sdk_version,
-            min_sdk: self.config.android.min_sdk_version,
+            min_sdk: self
+                .scan
+                .uts
+                .custom_plugins
+                .iter()
+                .filter_map(|plugin| plugin.min_sdk_version)
+                .max()
+                .map(|min_sdk| min_sdk.max(self.config.android.min_sdk_version))
+                .unwrap_or(self.config.android.min_sdk_version),
             keystore_path: self.config.android.keystore.path.clone(),
             key_alias: self.config.android.keystore.alias.clone(),
             key_password,
@@ -427,8 +447,37 @@ impl BuildContext {
                 .iter()
                 .map(|dep| render_gradle_dependency_line(dep))
                 .collect(),
+            project_buildscript_dependencies: self
+                .scan
+                .uts
+                .custom_plugins
+                .iter()
+                .flat_map(|plugin| plugin.project_dependencies.iter())
+                .filter_map(|dep| render_buildscript_dependency_line(dep))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
             plugin_includes: self.plugin_includes.clone().into_iter().collect(),
             plugin_project_dependencies: self.plugin_project_deps.clone().into_iter().collect(),
+            uts_abi_filters: self
+                .scan
+                .uts
+                .custom_plugins
+                .iter()
+                .filter_map(|plugin| plugin.abis.as_ref())
+                .flat_map(|abis| abis.iter().cloned())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            uts_hooks_classes: self
+                .scan
+                .uts
+                .custom_plugins
+                .iter()
+                .filter_map(|plugin| plugin.hooks_class.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
             module_permissions: manifest_patches
                 .permissions
                 .lines()

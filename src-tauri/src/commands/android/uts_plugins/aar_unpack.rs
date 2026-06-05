@@ -148,6 +148,9 @@ pub fn unpack_nonstandard_aar(
         }
     }
 
+    std::fs::remove_file(aar_path)
+        .map_err(|e| format!("移除已解包的原始 AAR {} 失败: {}", aar_path.display(), e))?;
+
     emit_log(
         window,
         "info",

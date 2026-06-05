@@ -26,6 +26,9 @@ mod tests {
             android_allow_backup: "false".to_string(),
             extra_repositories: vec!["maven { url 'https://jitpack.io' }".to_string()],
             extra_dependencies: vec!["implementation 'androidx.core:core:1.12.0'".to_string()],
+            project_buildscript_dependencies: vec![
+                "classpath 'com.example:demo-gradle-plugin:1.0.0'".to_string(),
+            ],
             plugin_includes: vec![
                 "include ':demo-plugin'\nproject(':demo-plugin').projectDir = file('uts-modules/demo-plugin')"
                     .to_string(),
@@ -33,6 +36,8 @@ mod tests {
             plugin_project_dependencies: vec![
                 "implementation project(':demo-plugin')".to_string(),
             ],
+            uts_abi_filters: vec!["armeabi-v7a".to_string(), "arm64-v8a".to_string()],
+            uts_hooks_classes: vec!["uts.sdk.modules.demo.DemoHook".to_string()],
             module_permissions: vec![
                 r#"<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />"#
                     .to_string(),
@@ -200,6 +205,10 @@ dependencies {
         assert!(build_gradle.contains("targetSdkVersion 34"));
         assert!(build_gradle.contains("versionCode 178"));
         assert!(build_gradle.contains("versionName \"1.7.8\""));
+        assert!(build_gradle.contains("abiFilters 'arm64-v8a', 'armeabi-v7a'"));
+        assert!(build_gradle.contains(
+            "buildConfigField 'String[]', 'UTSHooksClassArray', '{\"uts.sdk.modules.demo.DemoHook\"}'"
+        ));
         assert!(build_gradle.contains("signingConfig signingConfigs.release"));
         assert!(build_gradle.contains("storeFile file('/tmp/test-release.keystore')"));
         assert_eq!(
@@ -212,6 +221,7 @@ dependencies {
 
         let root_gradle = std::fs::read_to_string(workspace.join("build.gradle")).unwrap();
         assert!(root_gradle.contains("classpath 'com.android.tools.build:gradle:8.10.0'"));
+        assert!(root_gradle.contains("classpath 'com.example:demo-gradle-plugin:1.0.0'"));
         assert!(!root_gradle.contains("allprojects"));
 
         let manifest = std::fs::read_to_string(

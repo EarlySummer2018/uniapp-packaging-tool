@@ -4,9 +4,10 @@ use super::gradle::{
     ensure_android_block_content, ensure_android_gradle_plugin_supports_kotlin_22,
     ensure_apply_plugin_after_android_application, ensure_build_type_signing_config,
     ensure_buildscript_dependency, ensure_buildscript_repository,
-    ensure_dependencies_block_content, ensure_gradle_statement, ensure_plugin_management_block,
-    ensure_repositories_in_allprojects, ensure_repositories_in_drm, ensure_signing_configs_block,
-    ensure_top_level_block_content, escape_gradle_double_quoted, escape_gradle_single_quoted,
+    ensure_default_config_ndk_abi_filters, ensure_dependencies_block_content,
+    ensure_gradle_statement, ensure_plugin_management_block, ensure_repositories_in_allprojects,
+    ensure_repositories_in_drm, ensure_signing_configs_block, ensure_top_level_block_content,
+    ensure_uts_hooks_class_array, escape_gradle_double_quoted, escape_gradle_single_quoted,
     remove_allprojects_repositories, render_aapt_options, render_packaging_options,
     render_signing_configs, render_source_sets, replace_or_insert_android_assignment,
     replace_or_insert_default_config_assignment, set_manifest_placeholders,
@@ -100,6 +101,9 @@ impl AndroidProjectModifier {
                 "classpath 'com.huawei.agconnect:agcp:1.9.1.301'",
             );
         }
+        for dependency in &ctx.project_buildscript_dependencies {
+            content = ensure_buildscript_dependency(&content, dependency);
+        }
 
         self.validate_gradle_syntax(&content, &path)?;
         self.write_file(&path, &content)
@@ -169,6 +173,8 @@ impl AndroidProjectModifier {
             ),
         )?;
 
+        content = ensure_default_config_ndk_abi_filters(&content, &ctx.uts_abi_filters)?;
+        content = ensure_uts_hooks_class_array(&content, &ctx.uts_hooks_classes)?;
         content = set_manifest_placeholders(&content, &ctx.manifest_placeholders)?;
         content = ensure_signing_configs_block(&content, &render_signing_configs(ctx))?;
         content = ensure_build_type_signing_config(&content, "debug", "release")?;

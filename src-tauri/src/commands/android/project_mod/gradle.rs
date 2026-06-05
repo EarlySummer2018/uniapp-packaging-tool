@@ -447,6 +447,133 @@ pub(crate) fn set_manifest_placeholders(
     ensure_block_body_content(content, default_config, placeholders)
 }
 
+pub(crate) fn ensure_default_config_ndk_abi_filters(
+    content: &str,
+    abis: &[String],
+) -> Result<String, String> {
+    let abis = normalized_gradle_values(abis);
+    if abis.is_empty() {
+        return Ok(content.to_string());
+    }
+
+    let abi_line = format!(
+        "abiFilters {}",
+        abis.iter()
+            .map(|abi| format!("'{}'", escape_gradle_single_quoted(abi)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let default_config = find_required_block(content, "defaultConfig")?;
+    let ndk_block = find_named_block(content, "ndk", default_config.open_brace)
+        .filter(|block| block.open_brace < default_config.close_brace);
+
+    if let Some(ndk_block) = ndk_block {
+        let body_start = ndk_block.open_brace + 1;
+        let body = &content[body_start..ndk_block.close_brace];
+        let re = Regex::new(r#"(?m)^([ \t]*)abiFilters\s+.*$"#).unwrap();
+        if let Some(mat) = re.find(body) {
+            let line = &body[mat.start()..mat.end()];
+            let indent = line
+                .chars()
+                .take_while(|ch| ch.is_whitespace())
+                .collect::<String>();
+            return Ok(replace_range(
+                content,
+                body_start + mat.start(),
+                body_start + mat.end(),
+                &format!("{}{}", indent, abi_line),
+            ));
+        }
+        return Ok(insert_before_index(
+            content,
+            ndk_block.close_brace,
+            &format!("\n{}{}", child_indent(content, ndk_block), abi_line),
+        ));
+    }
+
+    ensure_block_body_content(
+        content,
+        default_config,
+        &format!("ndk {{\n    {}\n}}", abi_line),
+    )
+}
+
+pub(crate) fn ensure_uts_hooks_class_array(
+    content: &str,
+    hooks: &[String],
+) -> Result<String, String> {
+    let mut hooks = normalized_gradle_values(hooks);
+    if hooks.is_empty() {
+        return Ok(content.to_string());
+    }
+
+    let default_config = find_required_block(content, "defaultConfig")?;
+    let body_start = default_config.open_brace + 1;
+    let body = &content[body_start..default_config.close_brace];
+    let re = Regex::new(
+        r#"(?m)^([ \t]*)buildConfigField\s+['"]String\[\]['"]\s*,\s*['"]UTSHooksClassArray['"]\s*,\s*.*$"#,
+    )
+    .unwrap();
+
+    if let Some(caps) = re.captures(body) {
+        let mat = caps.get(0).unwrap();
+        for hook in parse_hooks_class_array(mat.as_str()) {
+            if !hooks.iter().any(|item| item == &hook) {
+                hooks.push(hook);
+            }
+        }
+        hooks.sort();
+        hooks.dedup();
+        let indent = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let replacement = format!("{}{}", indent, render_uts_hooks_class_array_line(&hooks));
+        return Ok(replace_range(
+            content,
+            body_start + mat.start(),
+            body_start + mat.end(),
+            &replacement,
+        ));
+    }
+
+    ensure_block_body_content(
+        content,
+        default_config,
+        &render_uts_hooks_class_array_line(&hooks),
+    )
+}
+
+fn normalized_gradle_values(values: &[String]) -> Vec<String> {
+    let mut result = values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(String::from)
+        .collect::<Vec<_>>();
+    result.sort();
+    result.dedup();
+    result
+}
+
+fn render_uts_hooks_class_array_line(hooks: &[String]) -> String {
+    let value = hooks
+        .iter()
+        .map(|hook| format!("\"{}\"", escape_gradle_single_quoted(hook)))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "buildConfigField 'String[]', 'UTSHooksClassArray', '{{{}}}'",
+        value
+    )
+}
+
+fn parse_hooks_class_array(value: &str) -> Vec<String> {
+    let normalized = value.replace("\\\"", "\"");
+    let re = Regex::new(r#""([^"]+)""#).unwrap();
+    re.captures_iter(&normalized)
+        .filter_map(|caps| caps.get(1).map(|m| m.as_str().trim().to_string()))
+        .filter(|hook| !hook.is_empty())
+        .collect()
+}
+
 pub(crate) fn ensure_signing_configs_block(
     content: &str,
     block_content: &str,

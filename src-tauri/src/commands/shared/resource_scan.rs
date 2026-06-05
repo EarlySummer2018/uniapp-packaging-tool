@@ -431,7 +431,11 @@ pub fn builtin_uts_module(name: &str) -> Option<UtsBuiltinModule> {
 }
 
 fn scan_custom_uts_plugin(id: &str, plugin_root: &std::path::Path) -> UtsCustomPlugin {
-    let android_dir = plugin_root.join("utssdk").join("app-android");
+    let package_id = read_uts_package_id(plugin_root);
+    let module_id = package_id.clone().unwrap_or_else(|| id.to_string());
+    let source_android_dir = plugin_root.join("utssdk").join("app-android");
+    let android_dir =
+        resolve_android_uts_dir(plugin_root, &source_android_dir, id, package_id.as_deref());
     let ios_dir = plugin_root.join("utssdk").join("app-ios");
     let config = parse_uts_plugin_config(&android_dir.join("config.json"));
     let mut android_deps: Vec<String> = config
@@ -456,7 +460,7 @@ fn scan_custom_uts_plugin(id: &str, plugin_root: &std::path::Path) -> UtsCustomP
     };
 
     UtsCustomPlugin {
-        id: id.to_string(),
+        id: module_id,
         android_dir: android_dir
             .exists()
             .then(|| android_dir.to_string_lossy().to_string()),
@@ -473,6 +477,103 @@ fn scan_custom_uts_plugin(id: &str, plugin_root: &std::path::Path) -> UtsCustomP
         gradle_plugins: config.gradle_plugins,
         project_dependencies: config.project_dependencies,
     }
+}
+
+fn read_uts_package_id(plugin_root: &std::path::Path) -> Option<String> {
+    let content = std::fs::read_to_string(plugin_root.join("package.json")).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    value
+        .get("id")
+        .and_then(|id| id.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(String::from)
+}
+
+fn resolve_android_uts_dir(
+    plugin_root: &std::path::Path,
+    source_android_dir: &std::path::Path,
+    folder_id: &str,
+    package_id: Option<&str>,
+) -> std::path::PathBuf {
+    if android_uts_dir_has_native_sources(source_android_dir) {
+        return source_android_dir.to_path_buf();
+    }
+
+    find_compiled_android_uts_dir(plugin_root, folder_id, package_id)
+        .unwrap_or_else(|| source_android_dir.to_path_buf())
+}
+
+fn android_uts_dir_has_native_sources(android_dir: &std::path::Path) -> bool {
+    let src_dir = android_dir.join("src");
+    if !src_dir.is_dir() {
+        return false;
+    }
+    for ext in ["kt", "java"] {
+        if crate::utils::fs::find_files_by_extension(&src_dir, ext)
+            .map(|files| !files.is_empty())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn find_compiled_android_uts_dir(
+    plugin_root: &std::path::Path,
+    folder_id: &str,
+    package_id: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    let uni_modules = plugin_root.parent()?;
+    let project_root = uni_modules.parent()?;
+    let candidate_roots = [
+        project_root.join("unpackage/resources/uni_modules"),
+        project_root.join("unpackage/dist/build/app-plus/uni_modules"),
+        project_root.join("unpackage/dist/dev/app-plus/uni_modules"),
+    ];
+    let mut names = vec![folder_id.to_string()];
+    if let Some(package_id) = package_id {
+        if !names.iter().any(|name| name == package_id) {
+            names.push(package_id.to_string());
+        }
+    }
+
+    for root in candidate_roots {
+        if !root.is_dir() {
+            continue;
+        }
+        for name in &names {
+            if let Some(plugin_dir) = find_uni_module_dir(&root, name) {
+                let android_dir = plugin_dir.join("utssdk").join("app-android");
+                if android_uts_dir_has_native_sources(&android_dir) {
+                    return Some(android_dir);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn find_uni_module_dir(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+    let exact = root.join(name);
+    if exact.is_dir() {
+        return Some(exact);
+    }
+    let target = name.to_ascii_lowercase();
+    std::fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.is_dir()
+                && path
+                    .file_name()
+                    .and_then(|file_name| file_name.to_str())
+                    .map(|file_name| file_name.to_ascii_lowercase() == target)
+                    .unwrap_or(false)
+        })
 }
 
 pub fn parse_uts_plugin_config(config_path: &std::path::Path) -> UtsPluginConfig {

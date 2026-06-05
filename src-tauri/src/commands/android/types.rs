@@ -52,7 +52,9 @@ pub const UTS_RUNTIME_DEPS: &[&str] = &[
     "com.github.getActivity:XXPermissions:18.63",
 ];
 
-pub const UTS_KOTLIN_PLUGIN_VERSION: &str = "1.9.22";
+// DCloud Android SDK 5.07 ships UTS runtime artifacts with Kotlin 2.2 metadata.
+// The UTS Android library modules must use a compiler that can read that metadata.
+pub const UTS_KOTLIN_PLUGIN_VERSION: &str = "2.2.0";
 
 #[derive(Debug, Clone)]
 pub struct AndroidBuildEnvironment {
@@ -112,6 +114,24 @@ pub fn sanitize_java_identifier(id: &str) -> String {
 }
 
 pub fn render_gradle_dependency_line(dep: &str) -> String {
+    let dep = dep.trim();
+    let known_gradle_configurations = [
+        "implementation ",
+        "api ",
+        "compileOnly ",
+        "runtimeOnly ",
+        "debugImplementation ",
+        "releaseImplementation ",
+        "kapt ",
+        "annotationProcessor ",
+    ];
+    if known_gradle_configurations
+        .iter()
+        .any(|configuration| dep.starts_with(configuration))
+    {
+        return format!("    {}", dep);
+    }
+
     match dep {
         "com.getui:gtsdk:3.3.7.0" => {
             "    implementation('com.getui:gtsdk:3.3.7.0'){ exclude(group: 'com.getui') }"

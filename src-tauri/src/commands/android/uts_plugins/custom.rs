@@ -80,8 +80,8 @@ pub fn process_custom_uts_plugins_uniapp(
             }
         }
 
-        generate_uts_plugin_build_gradle(plugin, &module_dir, &unpacked_aars)?;
         copy_uts_plugin_resources(plugin, &module_dir, main_libs, window, &unpacked_names)?;
+        generate_uts_plugin_build_gradle(plugin, &module_dir, &unpacked_aars)?;
 
         if !plugin.gradle_plugins.is_empty() || !plugin.project_dependencies.is_empty() {
             emit_log(
@@ -115,7 +115,7 @@ pub fn process_custom_uts_plugins_uniapp(
     Ok(())
 }
 
-/// 复制 UTS 插件的本地库文件（jar/aar）、assets、res 到模块目录和主模块
+/// 复制 UTS 插件的本地库文件（jar/aar）、源码、assets、res 到模块目录和主模块
 fn copy_uts_plugin_resources(
     plugin: &UtsCustomPlugin,
     module_dir: &Path,
@@ -183,25 +183,121 @@ fn copy_uts_plugin_resources(
             .map_err(|e| format!("复制插件{} res失败: {}", plugin.id, e))?;
     }
 
+    copy_uts_plugin_source_files(plugin, module_dir, window)?;
+
     let mf = module_dir.join("AndroidManifest.xml");
     if mf.exists() && !main.join("AndroidManifest.xml").exists() {
         copy_and_clean_android_manifest(&mf, &main.join("AndroidManifest.xml"))?;
     }
+    if main.join("AndroidManifest.xml").exists() {
+        clean_android_manifest_package(&main.join("AndroidManifest.xml"))?;
+    }
 
+    Ok(())
+}
+
+/// 将 HBuilderX 生成的 UTS Kotlin/Java 源码复制到 Android 标准 source set。
+fn copy_uts_plugin_source_files(
+    plugin: &UtsCustomPlugin,
+    module_dir: &Path,
+    window: &tauri::Window,
+) -> Result<(), String> {
+    let src = module_dir.join("src");
+    if !src.is_dir() {
+        return Ok(());
+    }
+
+    let dst = module_dir.join("src/main/java");
+    let mut copied = 0usize;
+    copy_uts_source_tree(&src, &src, &dst, &mut copied)
+        .map_err(|e| format!("复制插件{} src失败: {}", plugin.id, e))?;
+
+    if copied > 0 {
+        emit_log(
+            window,
+            "info",
+            &format!("UTS插件 {} 已复制原生源码: {} 个文件", plugin.id, copied),
+            None,
+        );
+    } else if crate::utils::fs::find_files_by_extension(module_dir, "uts")
+        .map(|files| !files.is_empty())
+        .unwrap_or(false)
+    {
+        emit_log(
+            window,
+            "warn",
+            &format!(
+                "UTS插件 {} 仅发现 .uts 源码，未发现 HBuilderX 编译后的 Kotlin/Java 产物",
+                plugin.id
+            ),
+            None,
+        );
+    }
+
+    Ok(())
+}
+
+fn copy_uts_source_tree(
+    root: &Path,
+    current: &Path,
+    dst_root: &Path,
+    copied: &mut usize,
+) -> Result<(), String> {
+    for entry in std::fs::read_dir(current).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
+
+        if relative
+            .components()
+            .next()
+            .and_then(|c| c.as_os_str().to_str())
+            == Some("main")
+        {
+            continue;
+        }
+
+        if path.is_dir() {
+            copy_uts_source_tree(root, &path, dst_root, copied)?;
+            continue;
+        }
+
+        let is_source = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| matches!(ext, "kt" | "java"))
+            .unwrap_or(false);
+        if !is_source {
+            continue;
+        }
+
+        let dst = dst_root.join(relative);
+        crate::utils::fs::copy_file(&path, &dst).map_err(|e| e.to_string())?;
+        *copied += 1;
+    }
     Ok(())
 }
 
 /// 复制 AndroidManifest.xml 并移除 package 声明以避免合并冲突
 fn copy_and_clean_android_manifest(src: &Path, dst: &Path) -> Result<(), String> {
     let content = std::fs::read_to_string(src).map_err(|e| e.to_string())?;
-    let cleaned = content.replace(
-        &format!(
-            "package=\"{}\"",
-            extract_package(&content).unwrap_or_default()
-        ),
-        "",
-    );
+    let cleaned = clean_android_manifest_package_content(&content);
     std::fs::write(dst, cleaned.trim()).map_err(|e| e.to_string())
+}
+
+fn clean_android_manifest_package(path: &Path) -> Result<(), String> {
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let cleaned = clean_android_manifest_package_content(&content);
+    if cleaned != content {
+        std::fs::write(path, cleaned.trim()).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn clean_android_manifest_package_content(content: &str) -> String {
+    extract_package(content)
+        .map(|package_name| content.replace(&format!("package=\"{}\"", package_name), ""))
+        .unwrap_or_else(|| content.to_string())
 }
 
 /// 从 AndroidManifest XML 内容中提取 package 属性值

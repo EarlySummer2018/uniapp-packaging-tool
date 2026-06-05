@@ -36,8 +36,11 @@ pub struct BuildModificationContext {
     pub android_allow_backup: String,
     pub extra_repositories: Vec<String>,
     pub extra_dependencies: Vec<String>,
+    pub project_buildscript_dependencies: Vec<String>,
     pub plugin_includes: Vec<String>,
     pub plugin_project_dependencies: Vec<String>,
+    pub uts_abi_filters: Vec<String>,
+    pub uts_hooks_classes: Vec<String>,
     /// 旧字段（扁平化），保留向后兼容
     pub module_permissions: Vec<String>,
     pub module_application_entries: Vec<String>,
