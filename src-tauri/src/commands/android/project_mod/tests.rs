@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::commands::android::project_mod::gradle::ensure_android_gradle_plugin_supports_kotlin_22;
     use crate::commands::android::project_mod::manifest::fix_manifest_xml_structure;
     use crate::commands::android::project_mod::*;
     use std::path::{Path, PathBuf};
@@ -15,7 +16,7 @@ mod tests {
             app_name: "Test App".to_string(),
             version_code: 178,
             version_name: "1.7.8".to_string(),
-            compile_sdk: 35,
+            compile_sdk: 36,
             target_sdk: 34,
             min_sdk: 21,
             keystore_path: "/tmp/test-release.keystore".to_string(),
@@ -65,6 +66,9 @@ mod tests {
             r#"buildscript {
     repositories {
         google()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.7.3'
     }
 }
 
@@ -156,6 +160,27 @@ dependencies {
     }
 
     #[test]
+    fn android_gradle_plugin_is_raised_for_kotlin_22_metadata() {
+        let old = r#"buildscript {
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.7.3'
+    }
+}
+"#;
+        let patched = ensure_android_gradle_plugin_supports_kotlin_22(old);
+        assert!(patched.contains("classpath 'com.android.tools.build:gradle:8.10.0'"));
+
+        let current = r#"buildscript {
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.12.0'
+    }
+}
+"#;
+        let unchanged = ensure_android_gradle_plugin_supports_kotlin_22(current);
+        assert!(unchanged.contains("classpath 'com.android.tools.build:gradle:8.12.0'"));
+    }
+
+    #[test]
     fn official_project_patch_is_idempotent_without_template_markers() {
         let workspace =
             std::env::temp_dir().join(format!("unipack-android-mod-{}", uuid::Uuid::new_v4()));
@@ -169,7 +194,7 @@ dependencies {
         let build_gradle =
             std::fs::read_to_string(workspace.join(MODULE_NAME).join("build.gradle")).unwrap();
         assert!(build_gradle.contains("namespace 'com.example.test'"));
-        assert!(build_gradle.contains("compileSdkVersion 35"));
+        assert!(build_gradle.contains("compileSdkVersion 36"));
         assert!(build_gradle.contains("applicationId \"com.example.test\""));
         assert!(build_gradle.contains("minSdkVersion 21"));
         assert!(build_gradle.contains("targetSdkVersion 34"));
@@ -184,6 +209,10 @@ dependencies {
             1
         );
         assert_eq!(build_gradle.matches("manifestPlaceholders").count(), 1);
+
+        let root_gradle = std::fs::read_to_string(workspace.join("build.gradle")).unwrap();
+        assert!(root_gradle.contains("classpath 'com.android.tools.build:gradle:8.10.0'"));
+        assert!(!root_gradle.contains("allprojects"));
 
         let manifest = std::fs::read_to_string(
             workspace
@@ -274,8 +303,10 @@ dependencies {
 
         let root_gradle = std::fs::read_to_string(workspace.join("build.gradle")).unwrap();
         assert!(root_gradle.contains("google()"));
-        assert_eq!(root_gradle.matches("mavenCentral()").count(), 1);
-        assert_eq!(root_gradle.matches("https://jitpack.io").count(), 1);
+        assert!(root_gradle.contains("classpath 'com.android.tools.build:gradle:8.10.0'"));
+        assert!(!root_gradle.contains("allprojects"));
+        assert_eq!(root_gradle.matches("mavenCentral()").count(), 0);
+        assert_eq!(root_gradle.matches("https://jitpack.io").count(), 0);
 
         let _ = std::fs::remove_dir_all(workspace);
     }
@@ -320,7 +351,7 @@ dependencies {
         assert_eq!(manifest.matches(r#"android:name="GETUI_APPID""#).count(), 1);
 
         let root_gradle = std::fs::read_to_string(workspace.join("build.gradle")).unwrap();
-        assert_eq!(root_gradle.matches("https://jitpack.io").count(), 1);
+        assert_eq!(root_gradle.matches("https://jitpack.io").count(), 0);
 
         let _ = std::fs::remove_dir_all(workspace);
     }

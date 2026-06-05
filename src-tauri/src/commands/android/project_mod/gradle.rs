@@ -180,6 +180,44 @@ pub(crate) fn ensure_repositories_in_allprojects(content: &str, repositories: &[
     }
 }
 
+pub(crate) fn remove_allprojects_repositories(content: &str) -> String {
+    let mut result = content.to_string();
+    loop {
+        let Some(allprojects) = find_named_block(&result, "allprojects", 0) else {
+            break;
+        };
+        let repositories = find_named_block(&result, "repositories", allprojects.open_brace)
+            .filter(|block| block.open_brace < allprojects.close_brace);
+        let Some(repositories) = repositories else {
+            break;
+        };
+
+        result = remove_named_gradle_block(&result, "repositories", repositories);
+        if let Some(updated_allprojects) = find_named_block(&result, "allprojects", 0) {
+            let body = &result[updated_allprojects.open_brace + 1..updated_allprojects.close_brace];
+            if body.trim().is_empty() {
+                result = remove_named_gradle_block(&result, "allprojects", updated_allprojects);
+            }
+        }
+    }
+    result
+}
+
+fn remove_named_gradle_block(content: &str, name: &str, block: GradleBlock) -> String {
+    let keyword_start = content[..block.open_brace]
+        .rfind(name)
+        .unwrap_or(block.open_brace);
+    let start = content[..keyword_start]
+        .rfind('\n')
+        .map(|idx| idx + 1)
+        .unwrap_or(0);
+    let mut end = block.close_brace + 1;
+    if content.as_bytes().get(end) == Some(&b'\n') {
+        end += 1;
+    }
+    replace_range(content, start, end, "")
+}
+
 pub(crate) fn ensure_buildscript_repository(content: &str, repository: &str) -> String {
     let repository = repository.trim();
     if repository.is_empty() {
@@ -250,6 +288,49 @@ pub(crate) fn ensure_buildscript_dependency(content: &str, dependency: &str) -> 
             &format!("\n        {}", dependency),
         )
     }
+}
+
+pub(crate) fn ensure_android_gradle_plugin_supports_kotlin_22(content: &str) -> String {
+    const MIN_AGP_FOR_KOTLIN_22: &str = "8.10.0";
+    let re = Regex::new(r#"classpath\s+['"]com\.android\.tools\.build:gradle:([^'"]+)['"]"#)
+        .expect("valid Android Gradle Plugin regex");
+
+    re.replace_all(content, |caps: &regex::Captures| {
+        let full = caps.get(0).map(|m| m.as_str()).unwrap_or_default();
+        let current = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+        if version_is_less_than(current, MIN_AGP_FOR_KOTLIN_22) {
+            full.replace(current, MIN_AGP_FOR_KOTLIN_22)
+        } else {
+            full.to_string()
+        }
+    })
+    .to_string()
+}
+
+fn version_is_less_than(current: &str, minimum: &str) -> bool {
+    let current_parts = parse_version_parts(current);
+    let minimum_parts = parse_version_parts(minimum);
+    for idx in 0..minimum_parts.len().max(current_parts.len()) {
+        let current_part = current_parts.get(idx).copied().unwrap_or(0);
+        let minimum_part = minimum_parts.get(idx).copied().unwrap_or(0);
+        if current_part != minimum_part {
+            return current_part < minimum_part;
+        }
+    }
+    false
+}
+
+fn parse_version_parts(version: &str) -> Vec<u32> {
+    version
+        .split('.')
+        .map(|part| {
+            part.chars()
+                .take_while(|ch| ch.is_ascii_digit())
+                .collect::<String>()
+                .parse::<u32>()
+                .unwrap_or(0)
+        })
+        .collect()
 }
 
 pub(crate) fn ensure_apply_plugin_after_android_application(

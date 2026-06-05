@@ -231,29 +231,34 @@ async function flushToStoreAndUI() {
 
   // 取出所有缓冲数据
   const entries = logBuffer.splice(0)
+  const compactedEntries = compactBufferedLogs(entries)
+
+  // 进度事件不一定都有可展示日志，先从原始事件里同步进度
+  for (const entry of entries) {
+    if (entry.progress != null) {
+      buildStore.updateProgress(entry.buildId, entry.progress)
+    }
+  }
 
   // 获取当前构建的最后一条日志，用于连续去重
   const build = buildStore.getBuild(currentBuildId.value)
   let lastMsg = build?.logs?.length ? build.logs[build.logs.length - 1] : null
 
   // 批量推入 store（连续去重：跳过与前一条 level+message 完全相同的日志）
-  for (const entry of entries) {
+  for (const entry of compactedEntries) {
     if (lastMsg && lastMsg.level === entry.level && lastMsg.message === entry.message) {
       continue // Gradle 重复输出常见，跳过连续重复
     }
     buildStore.addLog(entry.buildId, entry.level, entry.message)
     lastMsg = { level: entry.level, message: entry.message } as BuildLog
-    if (entry.progress != null) {
-      buildStore.updateProgress(entry.buildId, entry.progress)
-    }
   }
 
-  // 文件写入：全局去重 + 堆栈折叠 + D8 警告聚合
+  // 文件写入：写入与实时 UI 一致的精简日志
   const rawLines: string[] = []
-  for (let i = 0; i < entries.length; i++) {
-    const e = entries[i]
+  for (let i = 0; i < compactedEntries.length; i++) {
+    const e = compactedEntries[i]
     if (i > 0) {
-      const prev = entries[i - 1]
+      const prev = compactedEntries[i - 1]
       if (prev.level === e.level && prev.message === e.message) continue
     }
     rawLines.push(`[${e.level}] ${e.message}`)
@@ -268,104 +273,156 @@ async function flushToStoreAndUI() {
     }
   }
 
-  // 堆栈折叠：压缩连续的 Gradle 堆栈帧
-  const compressedLines = compressGradleStack(uniqueLines)
-
-  // D8 警告聚合
-  const finalLines = aggregateD8Warnings(compressedLines)
-
-  if (finalLines.length > 0) {
-    void appendLog(currentBuildId.value!, finalLines).catch(() => {})
+  if (uniqueLines.length > 0) {
+    void appendLog(currentBuildId.value!, uniqueLines).catch(() => {})
   }
 }
 
-/** Gradle 堆栈帧正则：匹配 org.gradle / com.android / java.* 的 at 行 */
-const STACK_FRAME_RE = /^\s*at\s+(org\.gradle|com\.android|java)\./
+const STACK_FRAME_RE = /^\s*(at\s+|\.\.\. \d+ more)/
+const D8_METADATA_RE = /WARNING:\s*D8:.*kotlin metadata/i
+const D8_REWRITE_RE = /WARNING:\s*D8:\s*Unexpected error during rewriting of Kotlin metadata for class '([^']+)'/i
+const D8_INTERNAL_RE = /^\s*(com\.android\.tools\.r8\.internal\.|at\s+com\.android\.tools\.r8\.|at\s+com\.android\.builder\.dexing\.|at\s+org\.gradle\.|at\s+java\.|at\s+com\.google\.common\.|at\s+org\.jetbrains\.)/
+const KOTLIN_METADATA_MISMATCH_RE = /Module was compiled with an incompatible version of Kotlin\..*binary version of its metadata is .*expected version is/i
+const SETTINGS_REPOSITORY_WARNING_RE = /Build was configured to prefer settings repositories over project repositories but repository '([^']+)' was added by build file 'build\.gradle'/i
 
-/**
- * 折叠连续的 Gradle 堆栈帧为摘要行，减少日志体积。
- * 超过 3 个连续堆栈帧时折叠为省略提示。
- */
-function compressGradleStack(lines: string[]): string[] {
-  const result: string[] = []
-  let stackStartIdx = -1
+function compactBufferedLogs(entries: BufferedLog[]): BufferedLog[] {
+  const result: BufferedLog[] = []
+  const stackBuffer: BufferedLog[] = []
+  const d8Classes = new Set<string>()
+  const kotlinModules = new Set<string>()
+  const settingsRepositoryWarnings = new Set<string>()
+  let d8WarningCount = 0
+  let d8SuppressedLines = 0
+  let kotlinMismatchCount = 0
+  let settingsRepositoryWarningCount = 0
+  let suppressingD8Details = false
 
-  for (let i = 0; i < lines.length; i++) {
-    const isStackFrame = STACK_FRAME_RE.test(lines[i])
-    if (isStackFrame) {
-      if (stackStartIdx < 0) stackStartIdx = i
-    } else {
-      if (stackStartIdx >= 0) {
-        const count = i - stackStartIdx
-        if (count > 3) {
-          result.push(`        [... 省略 ${count} 行 Gradle 堆栈 ...]`)
-        } else {
-          for (let j = stackStartIdx; j < i; j++) result.push(lines[j])
-        }
-        stackStartIdx = -1
-      }
-      result.push(lines[i])
-    }
+  function pushEntry(entry: BufferedLog) {
+    flushStack()
+    flushD8Summary()
+    flushKotlinMismatchSummary()
+    flushSettingsRepositorySummary()
+    result.push(entry)
   }
-  // 处理末尾残留堆栈
-  if (stackStartIdx >= 0) {
-    const count = lines.length - stackStartIdx
-    if (count > 3) {
-      result.push(`        [... 省略 ${count} 行 Gradle 堆栈 ...]`)
+
+  function flushStack() {
+    if (!stackBuffer.length) return
+    if (stackBuffer.length > 3) {
+      result.push({
+        ...stackBuffer[0],
+        level: stackBuffer.some(entry => entry.level === 'error') ? 'warn' : stackBuffer[0].level,
+        message: `已折叠 ${stackBuffer.length} 行 Gradle/Java 内部堆栈`,
+      })
     } else {
-      for (let j = stackStartIdx; j < lines.length; j++) result.push(lines[j])
+      result.push(...stackBuffer)
     }
+    stackBuffer.length = 0
   }
+
+  function flushD8Summary() {
+    if (!d8WarningCount && d8Classes.size === 0 && !d8SuppressedLines) return
+    const shownClasses = Array.from(d8Classes).slice(0, 5)
+    const classText = shownClasses.length
+      ? `，示例: ${shownClasses.join('、')}${d8Classes.size > shownClasses.length ? ` 等 ${d8Classes.size} 个类` : ''}`
+      : ''
+    result.push({
+      buildId: currentBuildId.value!,
+      level: 'warn',
+      message: `D8 Kotlin metadata 警告已折叠${classText}；省略 ${d8SuppressedLines} 行 R8/D8 内部堆栈。建议对齐 Kotlin 与 AGP/R8 版本。`,
+    })
+    d8Classes.clear()
+    d8WarningCount = 0
+    d8SuppressedLines = 0
+    suppressingD8Details = false
+  }
+
+  function flushKotlinMismatchSummary() {
+    if (!kotlinMismatchCount) return
+    const modules = Array.from(kotlinModules)
+    const shownModules = modules.slice(0, 5)
+    result.push({
+      buildId: currentBuildId.value!,
+      level: 'warn',
+      message: `Kotlin 元数据版本不兼容提示已折叠: ${kotlinMismatchCount} 条，涉及 ${shownModules.join('、')}${modules.length > shownModules.length ? ` 等 ${modules.length} 个依赖` : ''}。`,
+    })
+    kotlinModules.clear()
+    kotlinMismatchCount = 0
+  }
+
+  function flushSettingsRepositorySummary() {
+    if (!settingsRepositoryWarningCount) return
+    const repositories = Array.from(settingsRepositoryWarnings)
+    const shown = repositories.slice(0, 6).join('、')
+    result.push({
+      buildId: currentBuildId.value!,
+      level: 'info',
+      message: `Gradle 项目级仓库提示已折叠: ${settingsRepositoryWarningCount} 条；settings.gradle 已接管依赖仓库${shown ? `，被忽略仓库: ${shown}` : ''}。`,
+    })
+    settingsRepositoryWarnings.clear()
+    settingsRepositoryWarningCount = 0
+  }
+
+  for (const entry of entries) {
+    const message = entry.message.trimEnd()
+    const d8Class = message.match(D8_REWRITE_RE)?.[1]
+    if (D8_METADATA_RE.test(message) || d8Class) {
+      flushStack()
+      flushKotlinMismatchSummary()
+      d8WarningCount += 1
+      if (d8Class) d8Classes.add(d8Class)
+      suppressingD8Details = true
+      continue
+    }
+
+    if (suppressingD8Details && (D8_INTERNAL_RE.test(message) || STACK_FRAME_RE.test(message))) {
+      d8SuppressedLines += 1
+      continue
+    }
+
+    if (KOTLIN_METADATA_MISMATCH_RE.test(message)) {
+      flushStack()
+      flushD8Summary()
+      kotlinMismatchCount += 1
+      kotlinModules.add(extractKotlinMismatchModule(message))
+      continue
+    }
+
+    const settingsRepository = message.match(SETTINGS_REPOSITORY_WARNING_RE)?.[1]
+    if (settingsRepository) {
+      flushStack()
+      flushD8Summary()
+      flushKotlinMismatchSummary()
+      settingsRepositoryWarnings.add(settingsRepository)
+      settingsRepositoryWarningCount += 1
+      continue
+    }
+
+    if (STACK_FRAME_RE.test(message)) {
+      flushD8Summary()
+      flushKotlinMismatchSummary()
+      flushSettingsRepositorySummary()
+      stackBuffer.push({ ...entry, message })
+      continue
+    }
+
+    pushEntry({ ...entry, message })
+  }
+
+  flushStack()
+  flushD8Summary()
+  flushKotlinMismatchSummary()
+  flushSettingsRepositorySummary()
   return result
 }
 
-/** D8 Kotlin metadata 警告正则 */
-const D8_WARN_RE = /\[warn\].*D8:.*kotlin metadata/
-
-/**
- * 聚合 D8 Kotlin metadata 解析警告。
- * 多条同类警告合并为一条摘要（列出受影响的类名）。
- */
-function aggregateD8Warnings(lines: string[]): string[] {
-  const d8Indices: number[] = []
-  const d8Classes: string[] = []
-  const otherLines: { idx: number; line: string }[] = []
-
-  for (let i = 0; i < lines.length; i++) {
-    if (D8_WARN_RE.test(lines[i])) {
-      d8Indices.push(i)
-      const match = lines[i].match(/class '([^']+)'/)
-      if (match) d8Classes.push(match[1])
-    } else {
-      otherLines.push({ idx: i, line: lines[i] })
-    }
-  }
-
-  if (d8Classes.length === 0) return lines
-
-  // 构建摘要行
-  const summary: string[] = []
-  summary.push(`[warn] D8 Kotlin metadata 解析警告 (${d8Classes.length} 个类受影响):`)
-  const shown = d8Classes.slice(0, 5)
-  for (const cls of shown) summary.push(`[warn]   - ${cls}`)
-  if (d8Classes.length > 5) {
-    summary.push(`[warn]   ... 及其他 ${d8Classes.length - 5} 个类`)
-  }
-  summary.push('[warn]   建议: 升级 R8/D8 版本或降低 Kotlin 版本以兼容。')
-
-  // 将 D8 摘要插入到第一个 D8 警告出现的位置
-  const firstD8Idx = d8Indices[0]
-  const result: string[] = []
-  let summaryInserted = false
-  for (const ol of otherLines) {
-    if (!summaryInserted && ol.idx > firstD8Idx) {
-      result.push(...summary)
-      summaryInserted = true
-    }
-    result.push(ol.line)
-  }
-  if (!summaryInserted) result.push(...summary)
-  return result
+function extractKotlinMismatchModule(message: string): string {
+  const kotlinModule = message.match(/org\.jetbrains\.kotlin\/([^/]+)\/([^/]+)/)
+  if (kotlinModule) return `${kotlinModule[1]}:${kotlinModule[2]}`
+  if (message.includes('utsplugin_release.kotlin_module')) return 'utsplugin-release'
+  const jar = message.match(/\/([^/!]+\.jar)!\/META-INF/)
+  if (jar) return jar[1]
+  const metadata = message.match(/META-INF\/([^/\s]+\.kotlin_module)/)
+  return metadata?.[1] || 'unknown'
 }
 
 /** 调度下一次 UI 刷新（2 秒后，不重复调度） */
@@ -517,19 +574,22 @@ function flushLogBufferImmediately() {
   flushPending = false
   if (logBuffer.length === 0 || !currentBuildId.value) return
   const entries = logBuffer.splice(0)
+  const compactedEntries = compactBufferedLogs(entries)
+  for (const entry of entries) {
+    if (entry.progress != null) buildStore.updateProgress(entry.buildId, entry.progress)
+  }
   const build = buildStore.getBuild(currentBuildId.value)
   let lastMsg = build?.logs?.length ? build.logs[build.logs.length - 1] : null
-  for (const entry of entries) {
+  for (const entry of compactedEntries) {
     if (lastMsg && lastMsg.level === entry.level && lastMsg.message === entry.message) continue
     buildStore.addLog(entry.buildId, entry.level, entry.message)
     lastMsg = { level: entry.level, message: entry.message } as BuildLog
-    if (entry.progress != null) buildStore.updateProgress(entry.buildId, entry.progress)
   }
   const rawLines: string[] = []
-  for (let i = 0; i < entries.length; i++) {
-    const e = entries[i]
+  for (let i = 0; i < compactedEntries.length; i++) {
+    const e = compactedEntries[i]
     if (i > 0) {
-      const prev = entries[i - 1]
+      const prev = compactedEntries[i - 1]
       if (prev.level === e.level && prev.message === e.message) continue
     }
     rawLines.push(`[${e.level}] ${e.message}`)
@@ -950,7 +1010,7 @@ function manifestLogLines(info: UniappManifestInfo) {
     `[info] manifest UniApp AppId: ${info.appId || '-'}`,
     `[info] manifest 版本: ${info.versionName || '-'} / ${info.versionCode ?? '-'}`,
     `[info] manifest Android 图标: ${info.androidIcons ? Object.keys(info.androidIcons.android || {}).join(', ') : '-'}`,
-    `[info] manifest Android 包名: ${info.android.packageName || '-'}`,
+    // `[info] manifest Android 包名: ${info.android.packageName || '-'}`,
     `[info] manifest Android SDK: min ${info.android.minSdkVersion ?? '-'}, target ${info.android.targetSdkVersion ?? '-'}, compile ${info.android.compileSdkVersion ?? '-'}`,
     `[info] manifest 模块: ${moduleNames.length ? moduleNames.join(', ') : '无'}`
   ]

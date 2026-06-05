@@ -104,7 +104,7 @@ pub fn generate_uts_plugin_build_gradle(
 
 android {{
     namespace '{namespace}'
-    compileSdk 35
+    compileSdk 36
     defaultConfig {{{ndk_block}{min_sdk}
     }}
 }}

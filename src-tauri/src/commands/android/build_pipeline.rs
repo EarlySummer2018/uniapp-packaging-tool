@@ -537,16 +537,11 @@ impl BuildContext {
             .android_env
             .expect("android_env must be set for build_apk mode");
 
-        emit_log(
-            window,
-            "info",
-            "执行 Gradle assembleRelease --stacktrace",
-            Some(70),
-        );
+        emit_log(window, "info", "执行 Gradle assembleRelease", Some(70));
         let app_handle = window.app_handle().clone();
         let output = crate::utils::process::run_command_streaming_with_env(
             &android_env.gradle_bin.to_string_lossy(),
-            &["assembleRelease".to_string(), "--stacktrace".to_string()],
+            &["assembleRelease".to_string()],
             &self.workspace.to_string_lossy(),
             &android_process_env(&android_env),
             app_handle,

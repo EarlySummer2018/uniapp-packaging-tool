@@ -18,9 +18,10 @@ import {
   NTabPane,
   NTabs,
   NText,
+  NTooltip,
   useMessage
 } from 'naive-ui'
-import { ArrowBackOutline, FolderOpenOutline, SaveOutline } from '@vicons/ionicons5'
+import { ArrowBackOutline, FolderOpenOutline, HelpCircleOutline, SaveOutline } from '@vicons/ionicons5'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
 import { useProjectsStore, type Project } from '../stores/projects'
@@ -38,6 +39,15 @@ const androidKeyPassword = ref('')
 const iosCertificatePassword = ref('')
 const harmonyStorePassword = ref('')
 const harmonyKeyPassword = ref('')
+const MIN_16KB_COMPILE_SDK = 36
+
+const compileSdkWarning = computed(() => {
+  const value = projectForm.value?.android.compileSdkVersion
+  if (typeof value === 'number' && value < MIN_16KB_COMPILE_SDK) {
+    return '为兼容 16KB 内存页，compileSdk 建议设置为 36 或以上。'
+  }
+  return undefined
+})
 
 const exportMethodOptions = [
   { label: 'App Store', value: 'app-store' },
@@ -215,7 +225,29 @@ function goBuild() {
             </n-form-item>
             <n-grid :cols="2" :x-gap="18">
               <n-gi><n-form-item label="包名"><n-input v-model:value="projectForm.android.packageName" /></n-form-item></n-gi>
-              <n-gi><n-form-item label="compileSdk"><n-input-number v-model:value="projectForm.android.compileSdkVersion" /></n-form-item></n-gi>
+              <n-gi>
+                <n-form-item
+                  label="compileSdk"
+                  :feedback="compileSdkWarning"
+                  :validation-status="compileSdkWarning ? 'warning' : undefined"
+                >
+                  <div class="compile-sdk-control">
+                    <n-input-number
+                      v-model:value="projectForm.android.compileSdkVersion"
+                      :min="1"
+                      class="compile-sdk-input"
+                    />
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <n-icon class="compile-sdk-help">
+                          <HelpCircleOutline />
+                        </n-icon>
+                      </template>
+                      为适配 16KB 内存页，compileSdk 建议配置为 36 或以上。
+                    </n-tooltip>
+                  </div>
+                </n-form-item>
+              </n-gi>
             </n-grid>
             <n-form-item label="Keystore">
               <n-space style="width: 100%;">
@@ -291,6 +323,24 @@ function goBuild() {
 
 .title {
   font-size: 24px;
+}
+
+.compile-sdk-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.compile-sdk-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.compile-sdk-help {
+  color: #d48806;
+  cursor: help;
+  font-size: 18px;
 }
 
 </style>

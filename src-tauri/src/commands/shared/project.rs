@@ -110,7 +110,7 @@ impl Default for ProjectConfig {
                 package_name: String::new(),
                 min_sdk_version: 21,
                 target_sdk_version: 34,
-                compile_sdk_version: 35,
+                compile_sdk_version: 36,
                 keystore: AndroidKeystoreConfig {
                     path: String::new(),
                     alias: String::new(),
@@ -284,7 +284,7 @@ fn migrate_legacy_value(value: serde_json::Value) -> ProjectConfig {
             .get("compileSdkVersion")
             .or_else(|| android.get("compile_sdk"))
             .and_then(|v| v.as_u64())
-            .unwrap_or(35) as u32;
+            .unwrap_or(36) as u32;
     }
 
     if let Some(ios) = value.get("ios") {

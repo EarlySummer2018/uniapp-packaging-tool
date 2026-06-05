@@ -1,14 +1,16 @@
 //! AndroidProjectModifier 核心实现：对 Android 工程工作区执行所有构建修改。
 
 use super::gradle::{
-    ensure_android_block_content, ensure_apply_plugin_after_android_application,
-    ensure_build_type_signing_config, ensure_buildscript_dependency, ensure_buildscript_repository,
+    ensure_android_block_content, ensure_android_gradle_plugin_supports_kotlin_22,
+    ensure_apply_plugin_after_android_application, ensure_build_type_signing_config,
+    ensure_buildscript_dependency, ensure_buildscript_repository,
     ensure_dependencies_block_content, ensure_gradle_statement, ensure_plugin_management_block,
     ensure_repositories_in_allprojects, ensure_repositories_in_drm, ensure_signing_configs_block,
     ensure_top_level_block_content, escape_gradle_double_quoted, escape_gradle_single_quoted,
-    render_aapt_options, render_packaging_options, render_signing_configs, render_source_sets,
-    replace_or_insert_android_assignment, replace_or_insert_default_config_assignment,
-    set_manifest_placeholders, set_or_insert_root_project_name, validate_base_gradle_dependencies,
+    remove_allprojects_repositories, render_aapt_options, render_packaging_options,
+    render_signing_configs, render_source_sets, replace_or_insert_android_assignment,
+    replace_or_insert_default_config_assignment, set_manifest_placeholders,
+    set_or_insert_root_project_name, validate_base_gradle_dependencies,
 };
 use super::manifest::{
     child_identity, entry_identity, escape_xml_attr, fix_manifest_xml_structure,
@@ -81,7 +83,10 @@ impl AndroidProjectModifier {
         }
 
         let mut content = self.read_file(&path)?;
-        if !ctx.extra_repositories.is_empty() {
+        content = ensure_android_gradle_plugin_supports_kotlin_22(&content);
+        if self.settings_prefers_settings_repositories() {
+            content = remove_allprojects_repositories(&content);
+        } else if !ctx.extra_repositories.is_empty() {
             let repositories = dependency_repositories_with_defaults(ctx);
             content = ensure_repositories_in_allprojects(&content, &repositories);
         }
@@ -98,6 +103,13 @@ impl AndroidProjectModifier {
 
         self.validate_gradle_syntax(&content, &path)?;
         self.write_file(&path, &content)
+    }
+
+    fn settings_prefers_settings_repositories(&self) -> bool {
+        let path = self.workspace_dir.join("settings.gradle");
+        self.read_file(&path)
+            .map(|content| content.contains("RepositoriesMode.PREFER_SETTINGS"))
+            .unwrap_or(false)
     }
 
     fn modify_app_build_gradle(&self, ctx: &BuildModificationContext) -> Result<(), String> {
