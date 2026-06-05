@@ -85,6 +85,20 @@ pub fn render_android_module_manifest_patches_impl(
                 );
                 pandora_entry_intent_filters.insert(push_filter.clone());
                 mod_filters.push(push_filter);
+
+                if has_report_value(module, "OPPO_APP_KEY")
+                    || has_report_value(module, "OPPO_APP_SECRET")
+                {
+                    let oppo_filter = indent_manifest_fragment(
+                        r#"<intent-filter>
+    <action android:name="android.intent.action.oppopush" />
+    <category android:name="android.intent.category.DEFAULT" />
+</intent-filter>"#,
+                        12,
+                    );
+                    pandora_entry_intent_filters.insert(oppo_filter.clone());
+                    mod_filters.push(oppo_filter);
+                }
             }
             "geolocation" => {
                 add_permissions(
@@ -345,13 +359,23 @@ pub fn render_android_module_manifest_patches_impl(
                 add_permissions(
                     &mut permissions,
                     &[
-                        "android.permission.MODIFY_AUDIO_SETTINGS",
+                        "android.permission.INTERNET",
+                        "android.permission.ACCESS_NETWORK_STATE",
+                        "android.permission.ACCESS_WIFI_STATE",
+                        "android.permission.READ_PHONE_STATE",
+                        "android.permission.WRITE_EXTERNAL_STORAGE",
                         "android.permission.ACCESS_COARSE_LOCATION",
+                        "android.permission.MODIFY_AUDIO_SETTINGS",
                     ],
                 );
                 mod_perms.extend([
-                    "android.permission.MODIFY_AUDIO_SETTINGS".to_string(),
+                    "android.permission.INTERNET".to_string(),
+                    "android.permission.ACCESS_NETWORK_STATE".to_string(),
+                    "android.permission.ACCESS_WIFI_STATE".to_string(),
+                    "android.permission.READ_PHONE_STATE".to_string(),
+                    "android.permission.WRITE_EXTERNAL_STORAGE".to_string(),
                     "android.permission.ACCESS_COARSE_LOCATION".to_string(),
+                    "android.permission.MODIFY_AUDIO_SETTINGS".to_string(),
                 ]);
                 if has_report_value(module, "WX_APPID") {
                     let wx_pay_entries = [
@@ -485,6 +509,10 @@ pub fn render_android_module_manifest_patches_impl(
                 )];
                 add_application_entries(&mut application_entries, &face_entries);
                 mod_entries.extend(face_entries.iter().cloned());
+            }
+            "camera" => {
+                add_permissions(&mut permissions, &["android.permission.CAMERA"]);
+                mod_perms.push("android.permission.CAMERA".to_string());
             }
             _ => {}
         }
@@ -654,4 +682,116 @@ fn qq_assist_activity() -> String {
 pub fn render_dependency_excludes_impl(_extra_dependencies: &str) -> String {
     use crate::commands::android::types::render_dependency_excludes;
     render_dependency_excludes(_extra_dependencies)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::shared::module::types::{
+        AndroidModuleConfigField, AndroidModuleConfigModule, AndroidModuleConfigReport,
+    };
+
+    #[test]
+    fn payment_manifest_patches_include_alipay_permissions_and_wechat_entries() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "Payment".to_string(),
+                template_key: "payment".to_string(),
+                category: "payment".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: vec![AndroidModuleConfigField {
+                    key: "WX_APPID".to_string(),
+                    value: Some("wx-demo".to_string()),
+                    ..Default::default()
+                }],
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, _) =
+            render_android_module_manifest_patches_impl(Some(&report), "com.example.demo", "");
+
+        for permission in [
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.READ_PHONE_STATE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.ACCESS_COARSE_LOCATION",
+            "android.permission.MODIFY_AUDIO_SETTINGS",
+        ] {
+            assert!(patches.permissions.contains(permission));
+        }
+        assert!(patches
+            .application_entries
+            .contains("io.dcloud.feature.payment.weixin.WXPayProcessMeadiatorActivity"));
+        assert!(patches
+            .application_entries
+            .contains("com.example.demo.wxapi.WXPayEntryActivity"));
+    }
+
+    #[test]
+    fn payment_template_uses_wx_pay_entry_activity_source() {
+        let template = crate::commands::module::get_module_template_sync("payment").unwrap();
+
+        assert!(template
+            .android_config
+            .activities
+            .iter()
+            .any(|activity| activity.starts_with(".wxapi.WXPayEntryActivity")));
+        assert!(!template
+            .android_config
+            .activities
+            .iter()
+            .any(|activity| activity.starts_with(".wxapi.WXPayActivity")));
+    }
+
+    #[test]
+    fn push_manifest_patches_include_unipush_and_oppo_intent_filters() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "Push".to_string(),
+                template_key: "push".to_string(),
+                category: "push".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: vec![
+                    AndroidModuleConfigField {
+                        key: "GETUI_APPID".to_string(),
+                        value: Some("push-appid".to_string()),
+                        ..Default::default()
+                    },
+                    AndroidModuleConfigField {
+                        key: "plus.unipush.appkey".to_string(),
+                        value: Some("push-appkey".to_string()),
+                        ..Default::default()
+                    },
+                    AndroidModuleConfigField {
+                        key: "plus.unipush.appsecret".to_string(),
+                        value: Some("push-secret".to_string()),
+                        ..Default::default()
+                    },
+                    AndroidModuleConfigField {
+                        key: "OPPO_APP_KEY".to_string(),
+                        value: Some("oppo-key".to_string()),
+                        ..Default::default()
+                    },
+                ],
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, _) =
+            render_android_module_manifest_patches_impl(Some(&report), "com.example.demo", "");
+
+        assert!(patches
+            .pandora_entry_intent_filters
+            .contains("android:host=\"io.dcloud.unipush\""));
+        assert!(patches
+            .pandora_entry_intent_filters
+            .contains("android.intent.action.oppopush"));
+    }
 }

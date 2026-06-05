@@ -52,6 +52,24 @@ pub struct AndroidIconsConfig {
     pub android: BTreeMap<String, String>,
 }
 
+/// iOS 多尺寸图标配置（来自 manifest.json app-plus.distribute.icons.ios）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct IosIconsConfig {
+    /// slot 名 → 图片绝对路径（如 "iphone.app@3x" → "/path/to/180x180.png"）
+    pub ios: BTreeMap<String, String>,
+}
+
+/// Push 通知图标配置（来自 manifest.json app-plus.distribute.sdkConfigs.push）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PushIconsConfig {
+    /// Android 小图标绝对路径
+    pub small: Option<String>,
+    /// Android 小图标多密度资源（密度名 → 图片绝对路径）
+    pub small_densities: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UniappManifestInfo {
@@ -63,7 +81,13 @@ pub struct UniappManifestInfo {
     #[serde(default)]
     pub android_icons: Option<AndroidIconsConfig>,
     #[serde(default)]
+    pub ios_icons: Option<IosIconsConfig>,
+    #[serde(default)]
+    pub push_icons: Option<PushIconsConfig>,
+    #[serde(default)]
     pub splashscreen: Option<SplashscreenConfig>,
+    #[serde(default)]
+    pub manifest_value: Option<serde_json::Value>,
     pub manifest_path: String,
     pub project_root: String,
     pub android: AndroidManifestConfig,
@@ -490,6 +514,8 @@ pub fn parse_uniapp_manifest(
     let version_code = number_field(manifest, &["versionCode", "version_code"]);
     let hbuilderx_version = extract_hbuilderx_version(manifest);
     let android_icons = find_manifest_android_icons(manifest, project_root);
+    let ios_icons = find_manifest_ios_icons(manifest, project_root);
+    let push_icons = find_manifest_push_icons(manifest, project_root);
     let splashscreen = find_manifest_splashscreen(manifest, project_root);
     let android_value = manifest
         .get("app-plus")
@@ -568,7 +594,10 @@ pub fn parse_uniapp_manifest(
         version_code,
         hbuilderx_version,
         android_icons,
+        ios_icons,
+        push_icons,
         splashscreen,
+        manifest_value: Some(manifest.clone()),
         manifest_path: manifest_path.to_string_lossy().to_string(),
         project_root: project_root.to_string_lossy().to_string(),
         android: AndroidManifestConfig {
@@ -848,6 +877,121 @@ fn find_manifest_android_icons(
     Some(AndroidIconsConfig { android })
 }
 
+fn find_manifest_ios_icons(
+    manifest: &serde_json::Value,
+    project_root: &Path,
+) -> Option<IosIconsConfig> {
+    let ios_value = manifest
+        .get("app-plus")
+        .and_then(|v| v.get("distribute"))
+        .and_then(|v| v.get("icons"))
+        .and_then(|v| v.get("ios"))?;
+
+    let mut ios = BTreeMap::new();
+    if let Some(path) = ios_value
+        .get("appstore")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        ios.insert(
+            "appstore".to_string(),
+            resolve_manifest_asset_path(path, project_root),
+        );
+    }
+
+    for idiom in ["iphone", "ipad"] {
+        let Some(items) = ios_value.get(idiom).and_then(|v| v.as_object()) else {
+            continue;
+        };
+        for (slot, path) in items {
+            let Some(path) = path.as_str().map(str::trim).filter(|path| !path.is_empty()) else {
+                continue;
+            };
+            ios.insert(
+                format!("{}.{}", idiom, slot),
+                resolve_manifest_asset_path(path, project_root),
+            );
+        }
+    }
+
+    if ios.is_empty() {
+        return None;
+    }
+
+    Some(IosIconsConfig { ios })
+}
+
+fn find_manifest_push_icons(
+    manifest: &serde_json::Value,
+    project_root: &Path,
+) -> Option<PushIconsConfig> {
+    let push_config = manifest
+        .get("app-plus")
+        .and_then(|v| v.get("distribute"))
+        .and_then(|v| v.get("sdkConfigs"))
+        .and_then(|v| v.get("push"))?;
+
+    let mut config = PushIconsConfig::default();
+    for small_value in push_small_icon_values(push_config) {
+        collect_push_small_icon_value(small_value, project_root, &mut config);
+    }
+
+    if config.small.is_none() && config.small_densities.is_empty() {
+        None
+    } else {
+        Some(config)
+    }
+}
+
+fn push_small_icon_values(push_config: &serde_json::Value) -> Vec<&serde_json::Value> {
+    let mut values = Vec::new();
+    if let Some(value) = push_config
+        .get("icons")
+        .and_then(|icons| icons.get("small"))
+    {
+        values.push(value);
+    }
+    for key in ["unipush", "unipushV2", "uniPush"] {
+        if let Some(value) = push_config
+            .get(key)
+            .and_then(|provider| provider.get("icons"))
+            .and_then(|icons| icons.get("small"))
+        {
+            values.push(value);
+        }
+    }
+    values
+}
+
+fn collect_push_small_icon_value(
+    value: &serde_json::Value,
+    project_root: &Path,
+    config: &mut PushIconsConfig,
+) {
+    if let Some(path) = value
+        .as_str()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        config.small = Some(resolve_manifest_asset_path(path, project_root));
+        return;
+    }
+
+    let Some(items) = value.as_object() else {
+        return;
+    };
+    for (density, path) in items {
+        let Some(path) = path.as_str().map(str::trim).filter(|path| !path.is_empty()) else {
+            continue;
+        };
+        config.small_densities.insert(
+            density.to_string(),
+            resolve_manifest_asset_path(path, project_root),
+        );
+    }
+}
+
 fn find_manifest_splashscreen(
     manifest: &serde_json::Value,
     project_root: &Path,
@@ -906,4 +1050,229 @@ fn resolve_manifest_asset_path(path: &str, project_root: &Path) -> String {
         project_root.join(path)
     };
     absolute.to_string_lossy().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_manifest_reads_distribute_app_icons() {
+        let project_root =
+            std::env::temp_dir().join(format!("unipack-app-icons-{}", uuid::Uuid::new_v4()));
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "icons": {
+                        "android": {
+                            "hdpi": "unpackage/res/icons/72x72.png",
+                            "xhdpi": "unpackage/res/icons/96x96.png"
+                        },
+                        "ios": {
+                            "appstore": "unpackage/res/icons/1024x1024.png",
+                            "iphone": {
+                                "app@3x": "unpackage/res/icons/180x180.png"
+                            },
+                            "ipad": {
+                                "proapp@2x": "unpackage/res/icons/167x167.png"
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let info = parse_uniapp_manifest(
+            &manifest,
+            &project_root.join("manifest.json"),
+            &project_root,
+            None,
+        );
+
+        let android = &info
+            .android_icons
+            .as_ref()
+            .expect("Android icons should be parsed")
+            .android;
+        assert_eq!(
+            android.get("xhdpi"),
+            Some(
+                &project_root
+                    .join("unpackage/res/icons/96x96.png")
+                    .to_string_lossy()
+                    .to_string()
+            )
+        );
+
+        let ios = &info
+            .ios_icons
+            .as_ref()
+            .expect("iOS icons should be parsed")
+            .ios;
+        assert_eq!(
+            ios.get("appstore"),
+            Some(
+                &project_root
+                    .join("unpackage/res/icons/1024x1024.png")
+                    .to_string_lossy()
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            ios.get("iphone.app@3x"),
+            Some(
+                &project_root
+                    .join("unpackage/res/icons/180x180.png")
+                    .to_string_lossy()
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            ios.get("ipad.proapp@2x"),
+            Some(
+                &project_root
+                    .join("unpackage/res/icons/167x167.png")
+                    .to_string_lossy()
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn read_uniapp_manifest_caches_raw_manifest_value() {
+        let project_root =
+            std::env::temp_dir().join(format!("unipack-manifest-cache-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&project_root).unwrap();
+        std::fs::write(
+            project_root.join("manifest.json"),
+            r#"{
+                "appid": "__UNI__CACHE",
+                "app-plus": {
+                    "distribute": {
+                        "icons": {
+                            "android": {
+                                "hdpi": "unpackage/res/icons/72x72.png"
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let info = read_uniapp_manifest_sync(project_root.to_str().unwrap()).unwrap();
+        let cached = info
+            .manifest_value
+            .as_ref()
+            .expect("raw manifest JSON should be cached");
+
+        assert_eq!(
+            cached.get("appid").and_then(|value| value.as_str()),
+            Some("__UNI__CACHE")
+        );
+        assert_eq!(
+            cached
+                .pointer("/app-plus/distribute/icons/android/hdpi")
+                .and_then(|value| value.as_str()),
+            Some("unpackage/res/icons/72x72.png")
+        );
+
+        let _ = std::fs::remove_dir_all(project_root);
+    }
+
+    #[test]
+    fn parse_manifest_reads_push_small_icon_path() {
+        let project_root =
+            std::env::temp_dir().join(format!("unipack-push-icon-{}", uuid::Uuid::new_v4()));
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "sdkConfigs": {
+                        "push": {
+                            "icons": {
+                                "small": "static/push_icon.png"
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let info = parse_uniapp_manifest(
+            &manifest,
+            &project_root.join("manifest.json"),
+            &project_root,
+            None,
+        );
+
+        let small_icon = info
+            .push_icons
+            .as_ref()
+            .and_then(|icons| icons.small.as_ref())
+            .expect("push small icon should be parsed");
+        assert_eq!(
+            small_icon,
+            &project_root
+                .join("static/push_icon.png")
+                .to_string_lossy()
+                .to_string()
+        );
+    }
+
+    #[test]
+    fn parse_manifest_reads_nested_unipush_small_icon_densities() {
+        let project_root = std::env::temp_dir().join(format!(
+            "unipack-push-icon-density-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "sdkConfigs": {
+                        "push": {
+                            "unipush": {
+                                "icons": {
+                                    "small": {
+                                        "hdpi": "static/push/36x36.png",
+                                        "xhdpi": "static/push/48x48.png"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let info = parse_uniapp_manifest(
+            &manifest,
+            &project_root.join("manifest.json"),
+            &project_root,
+            None,
+        );
+
+        let densities = &info
+            .push_icons
+            .as_ref()
+            .expect("push icons should be parsed")
+            .small_densities;
+        assert_eq!(
+            densities.get("hdpi"),
+            Some(
+                &project_root
+                    .join("static/push/36x36.png")
+                    .to_string_lossy()
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            densities.get("xhdpi"),
+            Some(
+                &project_root
+                    .join("static/push/48x48.png")
+                    .to_string_lossy()
+                    .to_string()
+            )
+        );
+    }
 }

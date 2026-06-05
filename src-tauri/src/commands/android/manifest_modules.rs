@@ -21,22 +21,10 @@ pub fn copy_module_activity_sources(
     let mut copied = Vec::new();
     // 去重：同一缺失文件只警告一次（多个模块可能引用同一个第三方 SDK 源码）
     let mut warned_missing: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut logged_prepare = false;
     let java_src_root = workspace
         .join(crate::commands::android::project_mod::MODULE_NAME)
         .join("src/main/java");
-
-    // 诊断日志：输出关键路径信息，便于排查路径解析问题
-    emit_log(
-        window,
-        "info",
-        &format!(
-            "准备复制模块 Activity 源文件: workspace={} java_src_root={} package_name={}",
-            workspace.display(),
-            java_src_root.display(),
-            package_name
-        ),
-        None,
-    );
 
     for module in modules {
         let template_key = match super::artifacts::android_module_template_key(&module.name) {
@@ -58,6 +46,25 @@ pub fn copy_module_activity_sources(
             if class_name.is_empty() {
                 continue;
             }
+            if !should_copy_activity_source(template_key, class_name) {
+                continue;
+            }
+            if !logged_prepare {
+                // 诊断日志：输出关键路径信息，便于排查路径解析问题
+                emit_log(
+                    window,
+                    "info",
+                    &format!(
+                        "准备复制模块 Activity 源文件: workspace={} java_src_root={} package_name={}",
+                        workspace.display(),
+                        java_src_root.display(),
+                        package_name
+                    ),
+                    None,
+                );
+                logged_prepare = true;
+            }
+            let is_relative_activity = class_name.starts_with('.');
             let class_path = class_name.trim_start_matches('.');
             // 从类全限定名推导源文件相对路径：wxapi/WXEntryActivity.java
             let source_relative = format!("{}.java", class_path.replace('.', "/"));
@@ -80,12 +87,12 @@ pub fn copy_module_activity_sources(
                 continue;
             }
 
-            // 目标路径：{workspace}/simpleDemo/src/main/java/{package_name}/{activity_subpath}
-            let activity_subpath =
-                source_relative[source_relative.find('/').unwrap_or(0)..].trim_start_matches('/');
-            let dest_file = java_src_root
-                .join(package_name.replace('.', "/"))
-                .join(activity_subpath);
+            let dest_file = activity_destination_file(
+                &java_src_root,
+                package_name,
+                class_name,
+                &source_relative,
+            );
 
             // 安全守卫：目标路径不能落在根目录或非工作区位置
             if !dest_file.starts_with(workspace) {
@@ -110,7 +117,7 @@ pub fn copy_module_activity_sources(
             })?;
 
             // 使用 read + write 替代 std::fs::copy，避免部分文件系统上的 EROFS 问题
-            let content = match std::fs::read(&source_file) {
+            let mut content = match std::fs::read(&source_file) {
                 Ok(c) => c,
                 Err(e) => {
                     emit_log(
@@ -125,6 +132,10 @@ pub fn copy_module_activity_sources(
                     continue;
                 }
             };
+            if is_relative_activity {
+                let target_package = relative_activity_package_name(package_name, class_path);
+                content = rewrite_java_package_declaration_bytes(&content, &target_package);
+            }
             if let Err(e) = std::fs::write(&dest_file, &content) {
                 let abs_path = dest_file
                     .canonicalize()
@@ -170,6 +181,116 @@ pub fn copy_module_activity_sources(
         );
     }
     Ok(())
+}
+
+fn should_copy_activity_source(template_key: &str, class_name: &str) -> bool {
+    matches!(
+        (template_key, class_name),
+        ("login", ".wxapi.WXEntryActivity") | ("payment", ".wxapi.WXPayEntryActivity")
+    )
+}
+
+fn activity_destination_file(
+    java_src_root: &Path,
+    package_name: &str,
+    class_name: &str,
+    source_relative: &str,
+) -> std::path::PathBuf {
+    if class_name.starts_with('.') {
+        java_src_root
+            .join(package_name.replace('.', "/"))
+            .join(source_relative)
+    } else {
+        java_src_root.join(source_relative)
+    }
+}
+
+fn relative_activity_package_name(package_name: &str, class_path: &str) -> String {
+    match class_path.rsplit_once('.') {
+        Some((subpackage, _)) if !subpackage.is_empty() => {
+            format!("{}.{}", package_name, subpackage)
+        }
+        _ => package_name.to_string(),
+    }
+}
+
+fn rewrite_java_package_declaration_bytes(content: &[u8], target_package: &str) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(content) else {
+        return content.to_vec();
+    };
+    rewrite_java_package_declaration(text, target_package).into_bytes()
+}
+
+fn rewrite_java_package_declaration(content: &str, target_package: &str) -> String {
+    let replacement = format!("package {};", target_package);
+    let package_re = regex::Regex::new(
+        r"(?m)^\s*package\s+[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\s*;",
+    )
+    .expect("valid Java package regex");
+    if package_re.is_match(content) {
+        package_re.replacen(content, 1, replacement).to_string()
+    } else {
+        format!("{}\n\n{}", replacement, content)
+    }
+}
+
+#[cfg(test)]
+mod activity_source_tests {
+    use super::*;
+
+    #[test]
+    fn relative_wx_activity_keeps_wxapi_subdirectory() {
+        let root = Path::new("/tmp/java");
+        let dest = activity_destination_file(
+            root,
+            "com.example.demo",
+            ".wxapi.WXEntryActivity",
+            "wxapi/WXEntryActivity.java",
+        );
+
+        assert_eq!(
+            dest,
+            Path::new("/tmp/java/com/example/demo/wxapi/WXEntryActivity.java")
+        );
+    }
+
+    #[test]
+    fn activity_source_copy_is_limited_to_wechat_login_and_payment() {
+        assert!(should_copy_activity_source(
+            "login",
+            ".wxapi.WXEntryActivity"
+        ));
+        assert!(should_copy_activity_source(
+            "payment",
+            ".wxapi.WXPayEntryActivity"
+        ));
+
+        assert!(!should_copy_activity_source(
+            "push",
+            "com.tencent.tauth.AuthActivity"
+        ));
+        assert!(!should_copy_activity_source(
+            "push",
+            "cn.sharesdk.wechat.friends.WXFriendActivity"
+        ));
+        assert!(!should_copy_activity_source(
+            "login",
+            "com.tencent.tauth.AuthActivity"
+        ));
+        assert!(!should_copy_activity_source(
+            "share",
+            ".wxapi.WXEntryActivity"
+        ));
+    }
+
+    #[test]
+    fn relative_activity_package_is_rewritten_to_app_wxapi_package() {
+        let content = "\n\npackage io.dcloud.HBuilder.wxapi;\n\npublic class WXEntryActivity {}\n";
+        let rewritten = rewrite_java_package_declaration(content, "com.example.demo.wxapi");
+
+        assert!(rewritten.contains("package com.example.demo.wxapi;"));
+        assert!(!rewritten.contains("package io.dcloud.HBuilder.wxapi;"));
+    }
 }
 
 // ===== 配置校验与合并 =====

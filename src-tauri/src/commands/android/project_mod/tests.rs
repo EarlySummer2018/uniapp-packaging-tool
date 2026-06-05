@@ -2,9 +2,9 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::commands::android::project_mod::manifest::fix_manifest_xml_structure;
     use crate::commands::android::project_mod::*;
     use std::path::{Path, PathBuf};
-    use crate::commands::android::project_mod::manifest::fix_manifest_xml_structure;
 
     fn test_context() -> BuildModificationContext {
         BuildModificationContext {
@@ -223,6 +223,59 @@ dependencies {
         )
         .unwrap();
         assert!(dcloud.contains(r#"appid="__UNI__TEST""#));
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn huawei_push_injects_agconnect_gradle_plugin() {
+        let workspace =
+            std::env::temp_dir().join(format!("unipack-huawei-push-{}", uuid::Uuid::new_v4()));
+        write_official_like_project(&workspace);
+        let modifier = AndroidProjectModifier::new(workspace.clone()).unwrap();
+        let mut ctx = test_context();
+        ctx.extra_repositories
+            .push("maven { url 'https://developer.huawei.com/repo/' }".to_string());
+        ctx.extra_dependencies
+            .push("implementation 'com.huawei.hms:push:6.11.0.300'".to_string());
+
+        modifier.apply_all_modifications(&ctx).unwrap();
+
+        let root_gradle = std::fs::read_to_string(workspace.join("build.gradle")).unwrap();
+        assert!(root_gradle.contains("maven { url 'https://developer.huawei.com/repo/' }"));
+        assert!(root_gradle.contains("classpath 'com.huawei.agconnect:agcp:1.9.1.301'"));
+
+        let app_gradle =
+            std::fs::read_to_string(workspace.join(MODULE_NAME).join("build.gradle")).unwrap();
+        assert!(app_gradle.contains("apply plugin: 'com.huawei.agconnect'"));
+        assert!(app_gradle.contains("implementation 'com.huawei.hms:push:6.11.0.300'"));
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn extra_repositories_keep_default_dependency_repositories_without_plugins() {
+        let workspace =
+            std::env::temp_dir().join(format!("unipack-extra-repos-{}", uuid::Uuid::new_v4()));
+        write_official_like_project(&workspace);
+        let modifier = AndroidProjectModifier::new(workspace.clone()).unwrap();
+        let mut ctx = test_context();
+        ctx.plugin_includes.clear();
+        ctx.plugin_project_dependencies.clear();
+
+        modifier.apply_all_modifications(&ctx).unwrap();
+        modifier.apply_all_modifications(&ctx).unwrap();
+
+        let settings = std::fs::read_to_string(workspace.join("settings.gradle")).unwrap();
+        assert!(settings.contains("dependencyResolutionManagement"));
+        assert_eq!(settings.matches("google()").count(), 1);
+        assert_eq!(settings.matches("mavenCentral()").count(), 1);
+        assert_eq!(settings.matches("https://jitpack.io").count(), 1);
+
+        let root_gradle = std::fs::read_to_string(workspace.join("build.gradle")).unwrap();
+        assert!(root_gradle.contains("google()"));
+        assert_eq!(root_gradle.matches("mavenCentral()").count(), 1);
+        assert_eq!(root_gradle.matches("https://jitpack.io").count(), 1);
 
         let _ = std::fs::remove_dir_all(workspace);
     }

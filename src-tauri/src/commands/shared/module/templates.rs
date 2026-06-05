@@ -24,6 +24,7 @@ pub fn android_module_template_key(module_name: &str) -> Option<&'static str> {
         "UniAD" | "uni-ad" | "uniAD" | "ad" | "Ad" => Some("uni_ad"),
         "X5Webview" | "X5TBS" | "Android X5 Webview" | "x5" | "x5_tbs" => Some("x5_tbs"),
         "LivePusher" | "livepusher" => Some("livepusher"),
+        "Camera" | "camera" => Some("camera"),
         _ => None,
     }
 }
@@ -65,6 +66,9 @@ pub fn apply_module_name_to_tree(tree: &mut ModuleConfigTree, name: &str) {
         }
         "LivePusher" => {
             tree.livepusher = Some(livepusher_manifest_config());
+        }
+        "Camera" => {
+            tree.camera = Some(SimpleModuleConfig { enabled: true });
         }
         "UIWebview" | "UIWebView" => {
             tree.ui_webview = Some(SimpleModuleConfig { enabled: true });
@@ -224,6 +228,7 @@ pub fn get_module_template_sync(module_name: &str) -> Result<ModuleTemplate, Str
         "uni_ad" => Ok(get_uniad_template()),
         "x5_tbs" => Ok(get_x5_template()),
         "livepusher" => Ok(get_livepusher_template()),
+        "camera" => Ok(get_camera_template()),
         _ => Err(format!("Unknown module: {}", module_name)),
     }
 }
@@ -242,7 +247,7 @@ fn get_push_template() -> ModuleTemplate {
                 "com.getui:gtsdk:3.3.7.0 (个推SDK)".to_string(),
                 "com.getui:gtc-dcloud:3.2.16.7 (个推核心)".to_string(),
                 "com.getui.opt:hwp:3.1.1 (华为)".to_string(),
-                "com.huawei.hms:push:6.13.0.301 (华为)".to_string(),
+                "com.huawei.hms:push:6.11.0.300 (华为)".to_string(),
                 "com.getui.opt:xmp:3.3.1 (小米)".to_string(),
                 "com.assist-v3:oppo:3.3.0 (OPPO)".to_string(),
                 "com.google.code.gson:gson:2.6.2 (OPPO)".to_string(),
@@ -279,10 +284,7 @@ fn get_push_template() -> ModuleTemplate {
                     ("android:value".to_string(), "${MEIZU_APP_KEY}".to_string()),
                 ]),
             ],
-            activities: vec![
-                "com.tencent.tauth.AuthActivity (QQ)".to_string(),
-                "cn.sharesdk.wechat.friends.WXFriendActivity (需要分享时)".to_string(),
-            ],
+            activities: vec![],
             properties_xml: "<feature name=\"Push\" value=\"io.dcloud.feature.aps.APSFeatureImpl\"><module name=\"unipush\"/></feature>".to_string(),
         },
         ios_config: IosModuleTemplate {
@@ -436,8 +438,7 @@ fn get_payment_template() -> ModuleTemplate {
             ],
             manifest_meta_data: vec![],
             activities: vec![
-                ".wxapi.WXPayActivity (微信支付回调)".to_string(),
-                ".wxapi.WXEntryActivity (微信支付回调)".to_string(),
+                ".wxapi.WXPayEntryActivity (微信支付回调)".to_string(),
             ],
             properties_xml: "<feature name=\"Payment\"><module name=\"WeixinPay\"/><module name=\"Alipay\"/></feature>".to_string(),
         },
@@ -845,5 +846,43 @@ fn get_livepusher_template() -> ModuleTemplate {
             url_schemes: vec![],
             plist_entry: "iOS 直播推流模块：推荐使用腾讯云 LiteAVSDK (TXLiteAVSDK)；Podfile 添加 pod 'TXLiteAVSDK_Professional'；需配置相机+麦克风权限".to_string(),
         },
+    }
+}
+
+fn get_camera_template() -> ModuleTemplate {
+    ModuleTemplate {
+        module_name: "Camera".to_string(),
+        description: "相机/相册模块 — SDK 内置模块，无需额外 AAR".to_string(),
+        android_config: AndroidModuleTemplate {
+            required_aars: vec![],
+            vendor_aars: vec![],
+            gradle_dependencies: vec![],
+            manifest_placeholders: vec![],
+            manifest_meta_data: vec![],
+            activities: vec![],
+            properties_xml: "<feature name=\"Camera\" value=\"io.dcloud.js.camera.CameraFeatureImpl\"/>".to_string(),
+        },
+        ios_config: IosModuleTemplate {
+            required_frameworks: vec![],
+            required_libraries: vec![],
+            info_plist_keys: HashMap::from([
+                ("NSCameraUsageDescription".to_string(), "需要使用相机功能".to_string()),
+                ("NSPhotoLibraryUsageDescription".to_string(), "需要访问相册".to_string()),
+            ]),
+            url_schemes: vec![],
+            plist_entry: "iOS 相机/相册模块：需配置 NSCameraUsageDescription 和 NSPhotoLibraryUsageDescription 权限描述".to_string(),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_template_does_not_declare_third_party_activities() {
+        let template = get_push_template();
+
+        assert!(template.android_config.activities.is_empty());
     }
 }

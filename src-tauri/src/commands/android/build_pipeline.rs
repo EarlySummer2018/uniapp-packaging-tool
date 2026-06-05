@@ -11,7 +11,9 @@ use crate::commands::android::environment::{
     android_build_requires_allow_backup_false, android_process_env, expand_home,
     find_apk_in_workspace, resolve_android_build_environment, safe_file_name,
 };
-use crate::commands::android::icons::{apply_android_splashscreen, generate_icons};
+use crate::commands::android::icons::{
+    apply_android_splashscreen, apply_push_small_icon, generate_icons,
+};
 use crate::commands::android::manifest_modules::{
     apply_android_manifest_modules, copy_module_activity_sources,
     emit_android_module_config_report, merged_android_module_config, validate_android_config,
@@ -20,6 +22,7 @@ use crate::commands::android::manifest_patches_render::{
     render_android_module_manifest_patches_impl, render_dependency_excludes_impl,
 };
 use crate::commands::android::manifest_placeholders::render_android_module_manifest_placeholders;
+use crate::commands::android::project_mod;
 use crate::commands::android::resources::{
     copy_sdk_assets, import_uniapp_assets, update_dcloud_control,
 };
@@ -27,7 +30,6 @@ use crate::commands::android::types::{
     emit_log, render_gradle_dependency_line, timestamp, AndroidBuildEnvironment,
     AndroidManifestPatches, UTS_RUNTIME_DEPS,
 };
-use crate::commands::android::project_mod;
 
 /// Android 构建上下文，持有构建过程中的所有中间状态
 #[allow(dead_code)]
@@ -71,6 +73,45 @@ pub struct BuildContext {
     pub manifest_patches: Option<AndroidManifestPatches>,
     pub manifest_patch_groups: Vec<project_mod::ManifestPatchGroup>,
     pub manifest_placeholders: String,
+}
+
+fn push_small_icon_manifest_entry() -> &'static str {
+    r#"        <meta-data android:name="com.getui.push.notification.smallIcon" android:resource="@drawable/push_icon" />"#
+}
+
+fn push_module_enabled_for(modules: &[crate::commands::shared::resource::DetectedModule]) -> bool {
+    modules.iter().any(|module| {
+        crate::commands::module::android_module_template_key(&module.name) == Some("push")
+    })
+}
+
+fn push_small_icon_configured_for(
+    push_icons: Option<&crate::commands::resource::PushIconsConfig>,
+) -> bool {
+    push_icons
+        .map(|icons| {
+            icons
+                .small
+                .as_deref()
+                .map(str::trim)
+                .map(|path| !path.is_empty())
+                .unwrap_or(false)
+                || !icons.small_densities.is_empty()
+        })
+        .unwrap_or(false)
+}
+
+fn should_apply_push_small_icon_for(
+    modules: &[crate::commands::shared::resource::DetectedModule],
+    push_icons: Option<&crate::commands::resource::PushIconsConfig>,
+) -> bool {
+    push_module_enabled_for(modules) && push_small_icon_configured_for(push_icons)
+}
+
+fn manifest_value_for_build_context(
+    manifest_info: Option<&crate::commands::resource::UniappManifestInfo>,
+) -> Option<serde_json::Value> {
+    manifest_info.and_then(crate::commands::module::manifest_value_from_info)
 }
 
 impl BuildContext {
@@ -154,9 +195,7 @@ impl BuildContext {
         );
 
         let sdk_libs = sdk_layout.libs_dir.clone();
-        let libs_dst = workspace
-            .join(project_mod::MODULE_NAME)
-            .join("libs");
+        let libs_dst = workspace.join(project_mod::MODULE_NAME).join("libs");
 
         Ok(Self {
             project_id,
@@ -210,11 +249,7 @@ impl BuildContext {
                 self.merged_module_config.as_ref(),
             )
         });
-        self.manifest_value = self.manifest_info.as_ref().and_then(|info| {
-            std::fs::read_to_string(&info.manifest_path)
-                .ok()
-                .and_then(|content| json5::from_str::<serde_json::Value>(&content).ok())
-        });
+        self.manifest_value = manifest_value_for_build_context(self.manifest_info.as_ref());
         if let Some(report) = &self.module_config_report {
             if !report.all_configured {
                 let missing = report
@@ -286,11 +321,33 @@ impl BuildContext {
 
     /// Step 4: 渲染 Manifest 补丁 + Placeholder
     pub fn render_patches(&mut self, _window: &Window) -> Result<(), String> {
-        let (manifest_patches, manifest_patch_groups) = render_android_module_manifest_patches_impl(
-            self.module_config_report.as_ref(),
-            &self.config.android.package_name,
-            &self.scan.app_id,
-        );
+        let (mut manifest_patches, mut manifest_patch_groups) =
+            render_android_module_manifest_patches_impl(
+                self.module_config_report.as_ref(),
+                &self.config.android.package_name,
+                &self.scan.app_id,
+            );
+        if self.should_apply_push_small_icon() {
+            let entry = push_small_icon_manifest_entry();
+            if !manifest_patches.application_entries.trim().is_empty() {
+                manifest_patches.application_entries.push('\n');
+            }
+            manifest_patches.application_entries.push_str(entry);
+
+            if let Some(group) = manifest_patch_groups
+                .iter_mut()
+                .find(|group| group.module_name == "push")
+            {
+                group.application_entries.push(entry.to_string());
+            } else {
+                manifest_patch_groups.push(project_mod::ManifestPatchGroup {
+                    module_name: "push".to_string(),
+                    permissions: Vec::new(),
+                    application_entries: vec![entry.to_string()],
+                    intent_filters: Vec::new(),
+                });
+            }
+        }
         let manifest_placeholders = render_android_module_manifest_placeholders(
             self.module_config_report.as_ref(),
             self.manifest_modules.as_slice(),
@@ -423,6 +480,15 @@ impl BuildContext {
         generate_icons(android_icons, &self.workspace, window)?;
         emit_log(window, "success", "Android 图标已导入", Some(64));
 
+        let push_icons = if self.push_module_enabled() {
+            self.manifest_info
+                .as_ref()
+                .and_then(|info| info.push_icons.as_ref())
+        } else {
+            None
+        };
+        apply_push_small_icon(push_icons, &self.workspace, window)?;
+
         let splashscreen = self
             .manifest_info
             .as_ref()
@@ -447,6 +513,19 @@ impl BuildContext {
         // 所有工程补丁完成后，最终校验并修复 AndroidManifest.xml 结构
         project_mod::validate_and_fix_final_manifest(&self.workspace)?;
         Ok(())
+    }
+
+    fn push_module_enabled(&self) -> bool {
+        push_module_enabled_for(&self.manifest_modules)
+    }
+
+    fn should_apply_push_small_icon(&self) -> bool {
+        should_apply_push_small_icon_for(
+            &self.manifest_modules,
+            self.manifest_info
+                .as_ref()
+                .and_then(|info| info.push_icons.as_ref()),
+        )
     }
 
     /// Step 8 (仅 build_apk): 执行 Gradle + 收集 APK
@@ -515,5 +594,82 @@ impl BuildContext {
     /// 获取工作区路径（用于 generate_android_project 返回值）
     pub fn workspace_path(&self) -> String {
         self.workspace.display().to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn detected_module(name: &str) -> crate::commands::resource::DetectedModule {
+        crate::commands::resource::DetectedModule {
+            name: name.to_string(),
+            category: name.to_ascii_lowercase(),
+            platforms: vec!["android".to_string()],
+            configured: true,
+            required_keys: vec![],
+            source: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn push_small_icon_requires_push_module_and_icon_config() {
+        let push_icons = crate::commands::resource::PushIconsConfig {
+            small: Some("/tmp/push.png".to_string()),
+            ..Default::default()
+        };
+
+        assert!(should_apply_push_small_icon_for(
+            &[detected_module("Push")],
+            Some(&push_icons),
+        ));
+        assert!(!should_apply_push_small_icon_for(
+            &[detected_module("Payment")],
+            Some(&push_icons),
+        ));
+        assert!(!should_apply_push_small_icon_for(
+            &[detected_module("Push")],
+            None,
+        ));
+    }
+
+    #[test]
+    fn build_context_manifest_value_uses_cached_manifest_when_path_is_missing() {
+        let project_root =
+            std::env::temp_dir().join(format!("unipack-build-manifest-{}", uuid::Uuid::new_v4()));
+        let manifest = serde_json::json!({
+            "appid": "__UNI__BUILD_CACHE",
+            "app-plus": {
+                "distribute": {
+                    "sdkConfigs": {
+                        "payment": {
+                            "weixin": {
+                                "appid": "wx-build"
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let mut info = crate::commands::shared::resource::parse_uniapp_manifest(
+            &manifest,
+            &project_root.join("manifest.json"),
+            &project_root,
+            None,
+        );
+        info.manifest_path = project_root
+            .join("manifest-was-not-read-again.json")
+            .to_string_lossy()
+            .to_string();
+
+        let cached = manifest_value_for_build_context(Some(&info))
+            .expect("BuildContext should use cached manifestValue");
+
+        assert_eq!(
+            cached
+                .pointer("/app-plus/distribute/sdkConfigs/payment/weixin/appid")
+                .and_then(|value| value.as_str()),
+            Some("wx-build")
+        );
     }
 }

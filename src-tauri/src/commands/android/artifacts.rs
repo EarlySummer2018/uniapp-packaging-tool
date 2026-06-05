@@ -136,10 +136,18 @@ pub(crate) fn apply_android_manifest_modules_internal(
 
     let config =
         super::manifest_modules::module_config_tree_for_android_build(modules, config_report);
+
+    // 构建白名单：只在 detected_modules 中且 template key 匹配的模块名
+    let enabled_module_names: Vec<String> = supported.iter().map(|m| m.name.clone()).collect();
+
     let properties_path = workspace
         .join(crate::commands::android::project_mod::MODULE_NAME)
         .join("src/main/assets/data/dcloud_properties.xml");
-    crate::commands::module::generate_dcloud_properties(&properties_path, &config)?;
+    crate::commands::module::generate_dcloud_properties(
+        &properties_path,
+        &config,
+        &enabled_module_names,
+    )?;
 
     for module in supported {
         emit_log(

@@ -36,10 +36,10 @@ pub fn generate_icons(
     }
 
     let density_map: &[(&str, &str)] = &[
-        ("hdpi", "drawable-hdpi"),
-        ("xhdpi", "drawable-xhdpi"),
-        ("xxhdpi", "drawable-xxhdpi"),
-        ("xxxhdpi", "drawable-xxxhdpi"),
+        ("hdpi", "mipmap-hdpi"),
+        ("xhdpi", "mipmap-xhdpi"),
+        ("xxhdpi", "mipmap-xxhdpi"),
+        ("xxxhdpi", "mipmap-xxxhdpi"),
     ];
 
     let mut copied = 0usize;
@@ -75,6 +75,7 @@ pub fn generate_icons(
     }
 
     if copied > 0 {
+        set_android_launcher_icon_reference(workspace)?;
         emit_log(
             window,
             "success",
@@ -87,7 +88,142 @@ pub fn generate_icons(
     Ok(())
 }
 
-/// 清理 res 目录下所有 drawable 子目录中的指定文件名。
+fn set_android_launcher_icon_reference(workspace: &Path) -> Result<(), String> {
+    let manifest_path = workspace
+        .join(crate::commands::android::project_mod::MODULE_NAME)
+        .join("src/main/AndroidManifest.xml");
+    if !manifest_path.exists() {
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("读取 AndroidManifest.xml 失败: {}", e))?;
+    let mut editor =
+        crate::commands::android::project_mod::xml_editor::XmlManifestEditor::from_str(&content);
+    editor.set_application_attr("android:icon", "@mipmap/icon")?;
+    std::fs::write(&manifest_path, editor.as_str())
+        .map_err(|e| format!("写入 AndroidManifest.xml 图标引用失败: {}", e))
+}
+
+pub fn apply_push_small_icon(
+    push_icons: Option<&crate::commands::shared::resource::PushIconsConfig>,
+    workspace: &Path,
+    window: &tauri::Window,
+) -> Result<(), String> {
+    let Some(config) = push_icons else {
+        return Ok(());
+    };
+    if config.small.is_none() && config.small_densities.is_empty() {
+        return Ok(());
+    }
+
+    let res_dir = workspace
+        .join(crate::commands::android::project_mod::MODULE_NAME)
+        .join("src/main/res");
+    clean_push_icon_files(&res_dir)?;
+
+    let mut copied = 0usize;
+    if let Some(source_path) = config.small.as_deref() {
+        let drawable_dir = res_dir.join("drawable");
+        copy_push_icon_file(source_path, &drawable_dir)?;
+        copied += 1;
+    }
+    for (density, source_path) in &config.small_densities {
+        let Some(drawable_dir) = push_icon_drawable_dir(density).map(|dir| res_dir.join(dir))
+        else {
+            emit_log(
+                window,
+                "warn",
+                &format!("忽略不支持的 Push 小图标密度: {}", density),
+                None,
+            );
+            continue;
+        };
+        copy_push_icon_file(source_path, &drawable_dir)?;
+        copied += 1;
+    }
+
+    if copied == 0 {
+        return Err("Push 小图标未导入：未找到支持的 Android 密度或本地图片".to_string());
+    }
+
+    emit_log(
+        window,
+        "success",
+        &format!("已导入 {} 张 Push 小图标", copied),
+        None,
+    );
+    Ok(())
+}
+
+fn copy_push_icon_file(source_path: &str, target_dir: &Path) -> Result<(), String> {
+    let source_path = source_path.trim();
+    if source_path.contains("://") || source_path.starts_with("data:") {
+        return Err("Push 小图标必须是本地图片文件，不能使用远程 URL 或 data URI".to_string());
+    }
+
+    let source = PathBuf::from(source_path);
+    if !source.exists() {
+        return Err(format!("Push 小图标不存在: {}", source.display()));
+    }
+
+    let extension = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .filter(|ext| !ext.is_empty())
+        .unwrap_or_else(|| "png".to_string());
+
+    crate::utils::fs::ensure_directory(target_dir).map_err(|e| e.to_string())?;
+    let target = target_dir.join(format!("push_icon.{}", extension));
+    crate::utils::fs::copy_file(&source, &target)
+        .map_err(|e| format!("复制 Push 小图标失败 {}: {}", source.display(), e))?;
+    Ok(())
+}
+
+fn push_icon_drawable_dir(density: &str) -> Option<&'static str> {
+    match density {
+        "ldpi" => Some("drawable-ldpi"),
+        "mdpi" => Some("drawable-mdpi"),
+        "hdpi" => Some("drawable-hdpi"),
+        "xhdpi" => Some("drawable-xhdpi"),
+        "xxhdpi" => Some("drawable-xxhdpi"),
+        "xxxhdpi" => Some("drawable-xxxhdpi"),
+        _ => None,
+    }
+}
+
+fn clean_push_icon_files(res_dir: &Path) -> Result<(), String> {
+    if !res_dir.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(res_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with("drawable") || !entry.path().is_dir() {
+            continue;
+        }
+        for file in std::fs::read_dir(entry.path()).map_err(|e| e.to_string())? {
+            let file = file.map_err(|e| e.to_string())?;
+            let path = file.path();
+            let is_push_icon = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(|stem| stem == "push_icon")
+                .unwrap_or(false);
+            if is_push_icon && path.is_file() {
+                std::fs::remove_file(&path)
+                    .map_err(|e| format!("清理旧 Push 小图标失败 {}: {}", path.display(), e))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 清理 res 目录下所有 drawable/mipmap 子目录中的指定文件名。
 ///
 /// 用于在写入用户自定义资源（图标、启动图等）之前，
 /// 删除 SDK 模板自带的同名默认文件，避免新旧文件共存。
@@ -101,8 +237,10 @@ pub fn clean_drawable_files(res_dir: &Path, file_names: &[&str]) -> Result<(), S
             Some(n) => n,
             None => continue,
         };
-        // 只处理 drawable-* 目录和 drawable 目录
-        if !name_str.starts_with("drawable") || !entry.path().is_dir() {
+        // 只处理 drawable/mipmap 资源目录
+        if !(name_str.starts_with("drawable") || name_str.starts_with("mipmap"))
+            || !entry.path().is_dir()
+        {
             continue;
         }
         for &file_name in file_names {
@@ -355,4 +493,37 @@ fn escape_xml_attr(value: &str) -> String {
         .replace('"', "&quot;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launcher_icon_reference_uses_mipmap_icon() {
+        let workspace =
+            std::env::temp_dir().join(format!("unipack-android-icon-{}", uuid::Uuid::new_v4()));
+        let manifest_dir = workspace
+            .join(crate::commands::android::project_mod::MODULE_NAME)
+            .join("src/main");
+        std::fs::create_dir_all(&manifest_dir).unwrap();
+        let manifest_path = manifest_dir.join("AndroidManifest.xml");
+        std::fs::write(
+            &manifest_path,
+            r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:icon="@drawable/icon" android:label="@string/app_name">
+    </application>
+</manifest>
+"#,
+        )
+        .unwrap();
+
+        set_android_launcher_icon_reference(&workspace).unwrap();
+
+        let manifest = std::fs::read_to_string(manifest_path).unwrap();
+        assert!(manifest.contains(r#"android:icon="@mipmap/icon""#));
+        assert!(!manifest.contains(r#"android:icon="@drawable/icon""#));
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
 }

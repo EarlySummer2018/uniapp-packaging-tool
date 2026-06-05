@@ -1,8 +1,8 @@
 //! Gradle 文件操作：settings.gradle / build.gradle 修改、块解析、依赖校验。
 
+use super::types::BuildModificationContext;
 use regex::Regex;
 use std::path::Path;
-use super::types::BuildModificationContext;
 
 // ============================================================================
 // Gradle 转义工具函数
@@ -180,6 +180,97 @@ pub(crate) fn ensure_repositories_in_allprojects(content: &str, repositories: &[
     }
 }
 
+pub(crate) fn ensure_buildscript_repository(content: &str, repository: &str) -> String {
+    let repository = repository.trim();
+    if repository.is_empty() {
+        return content.to_string();
+    }
+
+    let Some(buildscript) = find_named_block(content, "buildscript", 0) else {
+        let block = format!(
+            "buildscript {{\n    repositories {{\n        {}\n    }}\n}}\n",
+            repository
+        );
+        return prepend_statement(content, &block);
+    };
+
+    let repositories_block = find_named_block(content, "repositories", buildscript.open_brace)
+        .filter(|block| block.open_brace < buildscript.close_brace);
+    let Some(repositories_block) = repositories_block else {
+        return insert_before_index(
+            content,
+            buildscript.close_brace,
+            &format!("\n    repositories {{\n        {}\n    }}\n", repository),
+        );
+    };
+
+    let existing_body = &content[repositories_block.open_brace + 1..repositories_block.close_brace];
+    if existing_body.contains(repository) {
+        content.to_string()
+    } else {
+        insert_before_index(
+            content,
+            repositories_block.close_brace,
+            &format!("\n        {}", repository),
+        )
+    }
+}
+
+pub(crate) fn ensure_buildscript_dependency(content: &str, dependency: &str) -> String {
+    let dependency = dependency.trim();
+    if dependency.is_empty() {
+        return content.to_string();
+    }
+
+    let Some(buildscript) = find_named_block(content, "buildscript", 0) else {
+        let block = format!(
+            "buildscript {{\n    dependencies {{\n        {}\n    }}\n}}\n",
+            dependency
+        );
+        return prepend_statement(content, &block);
+    };
+
+    let dependencies_block = find_named_block(content, "dependencies", buildscript.open_brace)
+        .filter(|block| block.open_brace < buildscript.close_brace);
+    let Some(dependencies_block) = dependencies_block else {
+        return insert_before_index(
+            content,
+            buildscript.close_brace,
+            &format!("\n    dependencies {{\n        {}\n    }}\n", dependency),
+        );
+    };
+
+    let existing_body = &content[dependencies_block.open_brace + 1..dependencies_block.close_brace];
+    if existing_body.contains(dependency) {
+        content.to_string()
+    } else {
+        insert_before_index(
+            content,
+            dependencies_block.close_brace,
+            &format!("\n        {}", dependency),
+        )
+    }
+}
+
+pub(crate) fn ensure_apply_plugin_after_android_application(
+    content: &str,
+    plugin_id: &str,
+) -> String {
+    let statement = format!("apply plugin: '{}'", escape_gradle_single_quoted(plugin_id));
+    if content.contains(&statement) {
+        return content.to_string();
+    }
+
+    let android_plugin_re =
+        Regex::new(r#"(?m)^\s*apply\s+plugin:\s*['"]com\.android\.application['"]\s*$"#)
+            .expect("valid apply plugin regex");
+    if let Some(mat) = android_plugin_re.find(content) {
+        insert_after_index(content, mat.end(), &format!("\n{}", statement))
+    } else {
+        prepend_statement(content, &statement)
+    }
+}
+
 // ============================================================================
 // build.gradle 赋值辅助
 // ============================================================================
@@ -248,7 +339,10 @@ fn replace_or_insert_assignment_in_block(
 // build.gradle 块内容操作 + 渲染器
 // ============================================================================
 
-pub(crate) fn set_manifest_placeholders(content: &str, placeholders: &str) -> Result<String, String> {
+pub(crate) fn set_manifest_placeholders(
+    content: &str,
+    placeholders: &str,
+) -> Result<String, String> {
     let placeholders = placeholders.trim_matches('\n');
     if placeholders.trim().is_empty() {
         return Ok(content.to_string());
@@ -272,7 +366,10 @@ pub(crate) fn set_manifest_placeholders(content: &str, placeholders: &str) -> Re
     ensure_block_body_content(content, default_config, placeholders)
 }
 
-pub(crate) fn ensure_signing_configs_block(content: &str, block_content: &str) -> Result<String, String> {
+pub(crate) fn ensure_signing_configs_block(
+    content: &str,
+    block_content: &str,
+) -> Result<String, String> {
     let block_content = block_content.trim_matches('\n');
     if block_content.trim().is_empty() {
         return Ok(content.to_string());
@@ -294,7 +391,10 @@ pub(crate) fn ensure_signing_configs_block(content: &str, block_content: &str) -
     ensure_block_body_content(content, android, block_content)
 }
 
-pub(crate) fn ensure_android_block_content(content: &str, block_content: &str) -> Result<String, String> {
+pub(crate) fn ensure_android_block_content(
+    content: &str,
+    block_content: &str,
+) -> Result<String, String> {
     let block_content = block_content.trim_matches('\n');
     if block_content.trim().is_empty() {
         return Ok(content.to_string());
@@ -303,7 +403,10 @@ pub(crate) fn ensure_android_block_content(content: &str, block_content: &str) -
     ensure_block_body_content(content, android, block_content)
 }
 
-pub(crate) fn ensure_top_level_block_content(content: &str, block_content: &str) -> Result<String, String> {
+pub(crate) fn ensure_top_level_block_content(
+    content: &str,
+    block_content: &str,
+) -> Result<String, String> {
     if content.contains(block_content) {
         Ok(content.to_string())
     } else {
@@ -446,40 +549,12 @@ pub(crate) fn render_aapt_options() -> String {
 // 依赖校验
 // ============================================================================
 
-/// 校验 build.gradle 是否包含文档 4.2 节要求的基础依赖库。
-/// 缺失时输出警告日志（不阻断构建，因为 SDK 模板可能已以不同方式包含这些依赖）。
-pub(crate) fn validate_base_gradle_dependencies(content: &str, file_path: &Path) -> Result<(), String> {
-    /// 文档 4.2 节 ① 列出的关键基础依赖（通过依赖坐标中的特征片段匹配）
-    const REQUIRED_DEPS: &[(&str, &str)] = &[
-        ("androidx.appcompat:appcompat", "AndroidX AppCompat"),
-        (
-            "androidx.recyclerview:recyclerview",
-            "AndroidX RecyclerView",
-        ),
-        ("com.facebook.fresco:fresco", "Fresco 图片库"),
-        ("com.github.bumptech.glide:glide", "Glide 图片加载"),
-        ("com.alibaba:fastjson", "FastJSON"),
-        ("androidx.webkit:webkit", "AndroidX WebKit"),
-        ("net.lingala.zip4j:zip4j", "Zip4J 压缩库"),
-        ("fileTree.*libs", "本地 libs 目录引用 (jar/aar)"),
-    ];
-
-    let mut warnings = Vec::new();
-    for &(pattern, name) in REQUIRED_DEPS {
-        if !content.contains(pattern) {
-            warnings.push(name);
-        }
-    }
-
-    if !warnings.is_empty() {
-        eprintln!(
-            "[WARN] {} 可能缺少以下 UniApp SDK 基础依赖（文档 4.2 节 ① 要求）: {}。\
-             如果 SDK 模板已包含这些依赖则可忽略此警告",
-            file_path.display(),
-            warnings.join(", ")
-        );
-    }
-
+/// 保留基础依赖校验入口以兼容调用链。
+/// 依赖可能由 SDK 模板、本地 libs 或模块逻辑间接提供，这里不再输出非阻断警告。
+pub(crate) fn validate_base_gradle_dependencies(
+    _content: &str,
+    _file_path: &Path,
+) -> Result<(), String> {
     Ok(())
 }
 
@@ -508,7 +583,11 @@ pub(crate) fn find_named_block(content: &str, name: &str, start_at: usize) -> Op
     })
 }
 
-pub(crate) fn find_named_block_from(content: &str, start_at: usize, name: &str) -> Option<GradleBlock> {
+pub(crate) fn find_named_block_from(
+    content: &str,
+    start_at: usize,
+    name: &str,
+) -> Option<GradleBlock> {
     let re = Regex::new(&format!(r#"(?m)\b{}\b\s*\{{"#, regex::escape(name))).ok()?;
     let mat = re.find(&content[start_at..])?;
     let open_brace = start_at + mat.end() - 1;

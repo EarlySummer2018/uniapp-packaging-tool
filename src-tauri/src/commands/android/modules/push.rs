@@ -4,8 +4,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::commands::shared::module::types::AndroidModuleConfigModule;
 use crate::commands::android::project_mod::ManifestPatchGroup;
+use crate::commands::shared::module::types::AndroidModuleConfigModule;
 
 use super::helpers::*;
 
@@ -49,6 +49,19 @@ pub fn render_patches(
     );
     pandora_filters.insert(push_filter.clone());
 
+    let mut mod_filters = vec![push_filter.clone()];
+    if has_report_value(module, "OPPO_APP_KEY") || has_report_value(module, "OPPO_APP_SECRET") {
+        let oppo_filter = crate::commands::android::types::indent_manifest_fragment(
+            r#"<intent-filter>
+    <action android:name="android.intent.action.oppopush" />
+    <category android:name="android.intent.category.DEFAULT" />
+</intent-filter>"#,
+            12,
+        );
+        pandora_filters.insert(oppo_filter.clone());
+        mod_filters.push(oppo_filter);
+    }
+
     // 写入 patch group
     let group_name = module.template_key.clone();
     let group = patch_groups
@@ -56,11 +69,11 @@ pub fn render_patches(
         .or_insert_with(|| ManifestPatchGroup {
             module_name: group_name,
             permissions: Vec::new(),
-            application_entries: push_entries.to_vec(),
-            intent_filters: vec![push_filter.clone()],
+            application_entries: Vec::new(),
+            intent_filters: Vec::new(),
         });
     group
         .application_entries
         .extend(push_entries.iter().cloned());
-    group.intent_filters.push(push_filter);
+    group.intent_filters.extend(mod_filters);
 }

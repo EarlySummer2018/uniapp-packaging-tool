@@ -20,6 +20,6 @@ pub mod xml_editor;
 mod tests;
 
 // Re-export 关键公共 API，保持外部调用路径兼容
-pub use types::{BuildModificationContext, ManifestPatchGroup, MODULE_NAME};
-pub use modifier::AndroidProjectModifier;
 pub use manifest::validate_and_fix_final_manifest;
+pub use modifier::AndroidProjectModifier;
+pub use types::{BuildModificationContext, ManifestPatchGroup, MODULE_NAME};

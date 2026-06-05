@@ -6,8 +6,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::commands::shared::module::types::AndroidModuleConfigModule;
 use crate::commands::android::project_mod::ManifestPatchGroup;
+use crate::commands::shared::module::types::AndroidModuleConfigModule;
 
 use super::helpers::*;
 
@@ -26,13 +26,23 @@ pub fn render_patches(
     add_permissions(
         permissions,
         &[
-            "android.permission.MODIFY_AUDIO_SETTINGS",
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.READ_PHONE_STATE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
             "android.permission.ACCESS_COARSE_LOCATION",
+            "android.permission.MODIFY_AUDIO_SETTINGS",
         ],
     );
     mod_perms.extend([
-        "android.permission.MODIFY_AUDIO_SETTINGS".to_string(),
+        "android.permission.INTERNET".to_string(),
+        "android.permission.ACCESS_NETWORK_STATE".to_string(),
+        "android.permission.ACCESS_WIFI_STATE".to_string(),
+        "android.permission.READ_PHONE_STATE".to_string(),
+        "android.permission.WRITE_EXTERNAL_STORAGE".to_string(),
         "android.permission.ACCESS_COARSE_LOCATION".to_string(),
+        "android.permission.MODIFY_AUDIO_SETTINGS".to_string(),
     ]);
 
     if has_report_value(module, "WX_APPID") {

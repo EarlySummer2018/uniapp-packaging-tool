@@ -1,15 +1,15 @@
 //! 基于 quick-xml 的 AndroidManifest.xml 结构感知编辑器。
 
-use regex::Regex;
+use super::gradle::replace_range;
+use super::manifest::{
+    android_attr_value, can_be_child_of, count_tag_open_occurrences, escape_xml_attr,
+    find_xml_start_tag_with_attr, indent_xml_fragment, is_bare_data_element,
+    route_data_to_activity_intent_filter, ManifestComponent,
+};
+use super::types::{ChildIdentity, EntryIdentity};
 use quick_xml::events::Event;
 use quick_xml::Reader;
-use super::types::{EntryIdentity, ChildIdentity};
-use super::manifest::{
-    ManifestComponent, can_be_child_of, android_attr_value, escape_xml_attr,
-    indent_xml_fragment, is_bare_data_element, route_data_to_activity_intent_filter,
-    find_xml_start_tag_with_attr, count_tag_open_occurrences,
-};
-use super::gradle::replace_range;
+use regex::Regex;
 
 // ============================================================================
 // XmlManifestEditor — 基于 quick-xml 的 AndroidManifest.xml 安全编辑器

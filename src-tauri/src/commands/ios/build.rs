@@ -157,7 +157,6 @@ pub async fn build_ios_ipa(
     manifest_info: Option<crate::commands::resource::UniappManifestInfo>,
     window: tauri::Window,
 ) -> Result<crate::commands::build_android::BuildArtifact, String> {
-    let _ = manifest_info;
     if !cfg!(target_os = "macos") {
         return Err("iOS 打包仅支持 macOS".to_string());
     }
@@ -209,7 +208,7 @@ pub async fn build_ios_ipa(
     import_ios_resource(&project_root, &app_resource_dir, &scan.app_id)?;
     patch_ios_control(&project_root, &scan.app_id)?;
     copy_uts_ios_frameworks(&project_root, &scan)?;
-    generate_ios_icons(&project_root, &config)?;
+    generate_ios_icons(&project_root, &config, manifest_info.as_ref())?;
     install_mobileprovision(&config.ios.provisioning_profile)?;
     import_p12_certificate(&config)?;
     emit_ios_log(&window, "success", "iOS 工程配置已完成", Some(45));
@@ -635,60 +634,237 @@ fn copy_sdk_uts_frameworks(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct IosAppIconSlot {
+    manifest_key: &'static str,
+    filename: &'static str,
+    idiom: &'static str,
+    size: &'static str,
+    scale: &'static str,
+    pixels: u32,
+}
+
+const IOS_APP_ICON_SLOTS: &[IosAppIconSlot] = &[
+    IosAppIconSlot {
+        manifest_key: "iphone.notification@2x",
+        filename: "Icon-iphone-20@2x.png",
+        idiom: "iphone",
+        size: "20x20",
+        scale: "2x",
+        pixels: 40,
+    },
+    IosAppIconSlot {
+        manifest_key: "iphone.notification@3x",
+        filename: "Icon-iphone-20@3x.png",
+        idiom: "iphone",
+        size: "20x20",
+        scale: "3x",
+        pixels: 60,
+    },
+    IosAppIconSlot {
+        manifest_key: "iphone.settings@2x",
+        filename: "Icon-iphone-29@2x.png",
+        idiom: "iphone",
+        size: "29x29",
+        scale: "2x",
+        pixels: 58,
+    },
+    IosAppIconSlot {
+        manifest_key: "iphone.settings@3x",
+        filename: "Icon-iphone-29@3x.png",
+        idiom: "iphone",
+        size: "29x29",
+        scale: "3x",
+        pixels: 87,
+    },
+    IosAppIconSlot {
+        manifest_key: "iphone.spotlight@2x",
+        filename: "Icon-iphone-40@2x.png",
+        idiom: "iphone",
+        size: "40x40",
+        scale: "2x",
+        pixels: 80,
+    },
+    IosAppIconSlot {
+        manifest_key: "iphone.spotlight@3x",
+        filename: "Icon-iphone-40@3x.png",
+        idiom: "iphone",
+        size: "40x40",
+        scale: "3x",
+        pixels: 120,
+    },
+    IosAppIconSlot {
+        manifest_key: "iphone.app@2x",
+        filename: "Icon-iphone-60@2x.png",
+        idiom: "iphone",
+        size: "60x60",
+        scale: "2x",
+        pixels: 120,
+    },
+    IosAppIconSlot {
+        manifest_key: "iphone.app@3x",
+        filename: "Icon-iphone-60@3x.png",
+        idiom: "iphone",
+        size: "60x60",
+        scale: "3x",
+        pixels: 180,
+    },
+    IosAppIconSlot {
+        manifest_key: "ipad.notification",
+        filename: "Icon-ipad-20.png",
+        idiom: "ipad",
+        size: "20x20",
+        scale: "1x",
+        pixels: 20,
+    },
+    IosAppIconSlot {
+        manifest_key: "ipad.notification@2x",
+        filename: "Icon-ipad-20@2x.png",
+        idiom: "ipad",
+        size: "20x20",
+        scale: "2x",
+        pixels: 40,
+    },
+    IosAppIconSlot {
+        manifest_key: "ipad.settings",
+        filename: "Icon-ipad-29.png",
+        idiom: "ipad",
+        size: "29x29",
+        scale: "1x",
+        pixels: 29,
+    },
+    IosAppIconSlot {
+        manifest_key: "ipad.settings@2x",
+        filename: "Icon-ipad-29@2x.png",
+        idiom: "ipad",
+        size: "29x29",
+        scale: "2x",
+        pixels: 58,
+    },
+    IosAppIconSlot {
+        manifest_key: "ipad.spotlight",
+        filename: "Icon-ipad-40.png",
+        idiom: "ipad",
+        size: "40x40",
+        scale: "1x",
+        pixels: 40,
+    },
+    IosAppIconSlot {
+        manifest_key: "ipad.spotlight@2x",
+        filename: "Icon-ipad-40@2x.png",
+        idiom: "ipad",
+        size: "40x40",
+        scale: "2x",
+        pixels: 80,
+    },
+    IosAppIconSlot {
+        manifest_key: "ipad.app",
+        filename: "Icon-ipad-76.png",
+        idiom: "ipad",
+        size: "76x76",
+        scale: "1x",
+        pixels: 76,
+    },
+    IosAppIconSlot {
+        manifest_key: "ipad.app@2x",
+        filename: "Icon-ipad-76@2x.png",
+        idiom: "ipad",
+        size: "76x76",
+        scale: "2x",
+        pixels: 152,
+    },
+    IosAppIconSlot {
+        manifest_key: "ipad.proapp@2x",
+        filename: "Icon-ipad-83.5@2x.png",
+        idiom: "ipad",
+        size: "83.5x83.5",
+        scale: "2x",
+        pixels: 167,
+    },
+    IosAppIconSlot {
+        manifest_key: "appstore",
+        filename: "Icon-1024.png",
+        idiom: "ios-marketing",
+        size: "1024x1024",
+        scale: "1x",
+        pixels: 1024,
+    },
+];
+
 fn generate_ios_icons(
     project_root: &Path,
     config: &crate::commands::project::ProjectConfig,
+    manifest_info: Option<&crate::commands::resource::UniappManifestInfo>,
 ) -> Result<(), String> {
-    if config.app.icon1024.trim().is_empty() {
-        return Ok(());
-    }
-    let source = PathBuf::from(&config.app.icon1024);
-    if !source.exists() {
+    let manifest_icons = manifest_info.and_then(|info| info.ios_icons.as_ref());
+    let fallback_source = ios_fallback_icon_source(config, manifest_icons);
+    if manifest_icons.is_none() && fallback_source.is_none() {
         return Ok(());
     }
     let appicon = find_dir_named(project_root, "AppIcon.appiconset")
         .unwrap_or_else(|| project_root.join("Assets.xcassets/AppIcon.appiconset"));
     crate::utils::fs::ensure_directory(&appicon).map_err(|e| e.to_string())?;
-    let img = image::open(&source).map_err(|e| e.to_string())?.to_rgba8();
-    let sizes = [
-        ("Icon-20@2x.png", 40),
-        ("Icon-20@3x.png", 60),
-        ("Icon-29@2x.png", 58),
-        ("Icon-29@3x.png", 87),
-        ("Icon-40@2x.png", 80),
-        ("Icon-40@3x.png", 120),
-        ("Icon-60@2x.png", 120),
-        ("Icon-60@3x.png", 180),
-        ("Icon-76.png", 76),
-        ("Icon-76@2x.png", 152),
-        ("Icon-83.5@2x.png", 167),
-        ("Icon-1024.png", 1024),
-    ];
-    for (name, size) in sizes {
-        let resized = image::imageops::resize(&img, size, size, image::imageops::Lanczos3);
+
+    let fallback_image = fallback_source
+        .as_ref()
+        .map(|source| image::open(source).map(|image| image.to_rgba8()))
+        .transpose()
+        .map_err(|e| e.to_string())?;
+
+    for slot in IOS_APP_ICON_SLOTS {
+        if let Some(source) = manifest_icons
+            .and_then(|icons| icons.ios.get(slot.manifest_key))
+            .map(PathBuf::from)
+            .filter(|source| source.exists())
+        {
+            std::fs::copy(&source, appicon.join(slot.filename))
+                .map_err(|e| format!("复制 iOS 图标失败 {}: {}", source.display(), e))?;
+            continue;
+        }
+
+        let Some(img) = fallback_image.as_ref() else {
+            continue;
+        };
+        let resized =
+            image::imageops::resize(img, slot.pixels, slot.pixels, image::imageops::Lanczos3);
         resized
-            .save(appicon.join(name))
+            .save(appicon.join(slot.filename))
             .map_err(|e| e.to_string())?;
     }
     write_appicon_contents(&appicon)?;
     Ok(())
 }
 
+fn ios_fallback_icon_source(
+    config: &crate::commands::project::ProjectConfig,
+    manifest_icons: Option<&crate::commands::resource::IosIconsConfig>,
+) -> Option<PathBuf> {
+    manifest_icons
+        .and_then(|icons| icons.ios.get("appstore"))
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .or_else(|| {
+            let source = config.app.icon1024.trim();
+            if source.is_empty() {
+                return None;
+            }
+            let source = PathBuf::from(source);
+            source.exists().then_some(source)
+        })
+}
+
 fn write_appicon_contents(appicon: &Path) -> Result<(), String> {
-    let images = serde_json::json!([
-        { "idiom": "iphone", "size": "20x20", "scale": "2x", "filename": "Icon-20@2x.png" },
-        { "idiom": "iphone", "size": "20x20", "scale": "3x", "filename": "Icon-20@3x.png" },
-        { "idiom": "iphone", "size": "29x29", "scale": "2x", "filename": "Icon-29@2x.png" },
-        { "idiom": "iphone", "size": "29x29", "scale": "3x", "filename": "Icon-29@3x.png" },
-        { "idiom": "iphone", "size": "40x40", "scale": "2x", "filename": "Icon-40@2x.png" },
-        { "idiom": "iphone", "size": "40x40", "scale": "3x", "filename": "Icon-40@3x.png" },
-        { "idiom": "iphone", "size": "60x60", "scale": "2x", "filename": "Icon-60@2x.png" },
-        { "idiom": "iphone", "size": "60x60", "scale": "3x", "filename": "Icon-60@3x.png" },
-        { "idiom": "ipad", "size": "76x76", "scale": "1x", "filename": "Icon-76.png" },
-        { "idiom": "ipad", "size": "76x76", "scale": "2x", "filename": "Icon-76@2x.png" },
-        { "idiom": "ipad", "size": "83.5x83.5", "scale": "2x", "filename": "Icon-83.5@2x.png" },
-        { "idiom": "ios-marketing", "size": "1024x1024", "scale": "1x", "filename": "Icon-1024.png" }
-    ]);
+    let images = IOS_APP_ICON_SLOTS
+        .iter()
+        .map(|slot| {
+            serde_json::json!({
+                "idiom": slot.idiom,
+                "size": slot.size,
+                "scale": slot.scale,
+                "filename": slot.filename
+            })
+        })
+        .collect::<Vec<_>>();
     let contents = serde_json::json!({
         "images": images,
         "info": { "author": "unipack-tool", "version": 1 }
@@ -939,6 +1115,48 @@ mod tests {
         assert!(content.contains("Icon-1024.png"));
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ios_icons_use_manifest_appstore_as_fallback_source() {
+        let project_root =
+            std::env::temp_dir().join(format!("unipack-ios-icons-{}", uuid::Uuid::new_v4()));
+        let source_dir = project_root.join("unpackage/res/icons");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let appstore_icon = source_dir.join("1024x1024.png");
+        image::RgbaImage::from_pixel(4, 4, image::Rgba([10, 20, 30, 255]))
+            .save(&appstore_icon)
+            .unwrap();
+
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "icons": {
+                        "ios": {
+                            "appstore": "unpackage/res/icons/1024x1024.png"
+                        }
+                    }
+                }
+            }
+        });
+        let info = crate::commands::shared::resource::parse_uniapp_manifest(
+            &manifest,
+            &project_root.join("manifest.json"),
+            &project_root,
+            None,
+        );
+        let config = crate::commands::project::ProjectConfig::default();
+
+        generate_ios_icons(&project_root, &config, Some(&info)).unwrap();
+
+        let appicon = project_root.join("Assets.xcassets/AppIcon.appiconset");
+        assert!(appicon.join("Icon-1024.png").exists());
+        assert!(appicon.join("Icon-iphone-60@3x.png").exists());
+        let contents = std::fs::read_to_string(appicon.join("Contents.json")).unwrap();
+        assert!(contents.contains("Icon-iphone-60@3x.png"));
+        assert!(contents.contains("Icon-ipad-83.5@2x.png"));
+
+        let _ = std::fs::remove_dir_all(project_root);
     }
 
     #[test]

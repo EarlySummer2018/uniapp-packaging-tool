@@ -1,9 +1,9 @@
 //! AndroidManifest.xml 处理：结构校验修复、组件查找、属性操作、转义工具。
 
+use super::gradle::insert_before_index;
+use super::types::{ChildIdentity, EntryIdentity};
 use regex::Regex;
 use std::path::Path;
-use super::types::{EntryIdentity, ChildIdentity};
-use super::gradle::insert_before_index;
 
 /// 判断 AndroidManifest.xml 中 child 标签是否可以作为 parent 的合法子元素。
 ///
@@ -158,7 +158,11 @@ pub fn validate_and_fix_final_manifest(workspace: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn set_meta_data_value(content: &str, name: &str, value: &str) -> Result<String, String> {
+pub(crate) fn set_meta_data_value(
+    content: &str,
+    name: &str,
+    value: &str,
+) -> Result<String, String> {
     let Some(mat) = find_xml_start_tag_with_attr(content, "meta-data", "android:name", name) else {
         return Ok(content.to_string());
     };
@@ -187,7 +191,11 @@ pub(crate) struct ManifestComponent {
     pub end_close_start: usize,
 }
 
-pub(crate) fn find_manifest_component(content: &str, tag: &str, name: &str) -> Option<ManifestComponent> {
+pub(crate) fn find_manifest_component(
+    content: &str,
+    tag: &str,
+    name: &str,
+) -> Option<ManifestComponent> {
     let start = find_xml_start_tag_with_attr(content, tag, "android:name", name)?;
     let start_tag = &content[start.start..start.end];
     if start_tag.trim_end().ends_with("/>") {
@@ -331,7 +339,10 @@ pub(crate) fn is_bare_data_element(entry: &str) -> bool {
 /// 2. 在 manifest 中查找该 Activity（支持后缀匹配）
 /// 3. 如果 Activity 已有 <intent-filter>，将 <data> 插入其中
 /// 4. 如果没有 intent-filter 但 Activity 存在，创建一个新的并插入 <data>
-pub(crate) fn route_data_to_activity_intent_filter(content: &str, data_entry: &str) -> Result<String, String> {
+pub(crate) fn route_data_to_activity_intent_filter(
+    content: &str,
+    data_entry: &str,
+) -> Result<String, String> {
     let scheme = android_attr_value(data_entry, "android:scheme")
         .ok_or_else(|| "<data> 条目缺少 android:scheme 属性".to_string())?;
 
@@ -502,7 +513,11 @@ pub(crate) fn android_attr_value(fragment: &str, attr: &str) -> Option<String> {
         .map(|value| value.as_str().to_string())
 }
 
-pub(crate) fn set_string_resource(content: &str, name: &str, value: &str) -> Result<String, String> {
+pub(crate) fn set_string_resource(
+    content: &str,
+    name: &str,
+    value: &str,
+) -> Result<String, String> {
     let re = Regex::new(&format!(
         r#"(?s)<string\s+name="{}">.*?</string>"#,
         regex::escape(name)

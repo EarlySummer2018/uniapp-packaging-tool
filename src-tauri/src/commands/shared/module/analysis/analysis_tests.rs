@@ -2,9 +2,16 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::commands::resource::DetectedModule;
-use crate::commands::shared::module::analysis::android_module_config_report_from_value;
+use crate::commands::shared::module::analysis::{
+    analyze_android_module_config_sync, android_module_config_report_from_value,
+};
 use crate::commands::shared::module::parsing::module_config_from_detected_modules;
 use crate::commands::shared::module::properties::generate_dcloud_properties;
+use crate::commands::shared::module::types::{
+    LoginModuleConfig, LoginProvider, ModuleConfigTree, PaymentModuleConfig, PushModuleConfig,
+    ShareModuleConfig, SimpleModuleConfig,
+};
+use crate::commands::shared::resource::parse_uniapp_manifest;
 
 #[test]
 fn manifest_modules_generate_dcloud_properties() {
@@ -35,18 +42,145 @@ fn manifest_modules_generate_dcloud_properties() {
         },
     ];
     let config = module_config_from_detected_modules(&modules);
+    // 测试用：传入空白名单（不限制），验证所有模块都能正确生成
+    let enabled: Vec<String> = vec![];
     let path = temp_file("unipack-dcloud-properties");
 
-    generate_dcloud_properties(&path, &config).unwrap();
+    generate_dcloud_properties(&path, &config, &enabled).unwrap();
     let content = std::fs::read_to_string(&path).unwrap();
 
-    assert!(content.contains(r#"<feature name="Login""#));
-    assert!(content.contains(r#"<module name="WeixinLogin"/>"#));
-    assert!(content.contains(r#"<feature name="Payment">"#));
-    assert!(content.contains(r#"<module name="Alipay"/>"#));
+    assert!(content
+        .contains(r#"<feature name="OAuth" value="io.dcloud.feature.oauth.OAuthFeatureImpl""#));
+    assert!(content.contains(
+        r#"<module name="OAuth-Weixin" value="io.dcloud.feature.oauth.weixin.WeiXinOAuthService"/>"#
+    ));
+    assert!(content.contains(
+        r#"<feature name="Payment" value="io.dcloud.feature.payment.PaymentFeatureImpl">"#
+    ));
+    assert!(content
+        .contains(r#"<module name="AliPay" value="io.dcloud.feature.payment.alipay.AliPay"/>"#));
     assert!(content.contains(r#"<feature name="Share""#));
     assert_eq!(content.matches("<features>").count(), 1);
     assert_eq!(content.matches("</features>").count(), 1);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn dcloud_properties_camera_only_does_not_add_disabled_features() {
+    let path = temp_file("unipack-camera-only-properties");
+    let config = module_config_with_camera_share_oauth_payment();
+    let enabled = vec!["Camera".to_string()];
+
+    generate_dcloud_properties(&path, &config, &enabled).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+
+    assert!(content
+        .contains(r#"<feature name="Camera" value="io.dcloud.js.camera.CameraFeatureImpl"/>"#));
+    assert!(!content.contains(r#"<feature name="Share""#));
+    assert!(!content.contains(r#"<feature name="OAuth""#));
+    assert!(!content.contains(r#"<feature name="Login""#));
+    assert!(!content.contains(r#"<feature name="Payment""#));
+    assert!(!content.contains(r#"<feature name="Ad""#));
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn dcloud_properties_push_adds_feature_and_service() {
+    let path = temp_file("unipack-push-properties");
+    let mut config = ModuleConfigTree::default();
+    config.push = Some(PushModuleConfig {
+        enabled: true,
+        unipush_appid: Some("demo-appid".to_string()),
+        unipush_appkey: Some("demo-appkey".to_string()),
+        unipush_appsecret: Some("demo-secret".to_string()),
+        vendors: Vec::new(),
+    });
+    let enabled = vec!["Push".to_string()];
+
+    generate_dcloud_properties(&path, &config, &enabled).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+
+    assert!(
+        content.contains(r#"<feature name="Push" value="io.dcloud.feature.aps.APSFeatureImpl">"#)
+    );
+    assert!(content
+        .contains(r#"<module name="unipush" value="io.dcloud.feature.unipush.GTPushService"/>"#));
+    assert!(
+        content.contains(r#"<service name="push" value="io.dcloud.feature.aps.APSFeatureImpl"/>"#)
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn dcloud_properties_adds_canonical_oauth_and_share_features() {
+    let path = temp_file("unipack-oauth-share-properties");
+    let mut config = ModuleConfigTree::default();
+    config.login = Some(LoginModuleConfig {
+        enabled: true,
+        providers: vec![LoginProvider {
+            name: "weixin".to_string(),
+            enabled: true,
+            config: HashMap::new(),
+        }],
+    });
+    config.share = Some(ShareModuleConfig {
+        enabled: true,
+        weixin: Some(HashMap::new()),
+        qq: Some(HashMap::new()),
+        sina: None,
+    });
+    let enabled = vec!["OAuth".to_string(), "Share".to_string()];
+
+    generate_dcloud_properties(&path, &config, &enabled).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+
+    assert!(content
+        .contains(r#"<feature name="OAuth" value="io.dcloud.feature.oauth.OAuthFeatureImpl""#));
+    assert!(content.contains(
+        r#"<module name="OAuth-Weixin" value="io.dcloud.feature.oauth.weixin.WeiXinOAuthService"/>"#
+    ));
+    assert!(!content.contains(r#"<feature name="Login""#));
+    assert!(content.contains(r#"<feature name="Share" value="io.dcloud.share.ShareFeatureImpl""#));
+    assert!(
+        content.contains(r#"<module name="Weixin" value="io.dcloud.share.mm.WeiXinApiManager"/>"#)
+    );
+    assert!(content.contains(r#"<module name="QQ" value="io.dcloud.share.qq.QQApiManager"/>"#));
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn dcloud_properties_generation_is_idempotent_and_treats_login_as_oauth() {
+    let path = temp_file("unipack-idempotent-properties");
+    std::fs::write(
+        &path,
+        r#"<properties>
+	<features>
+		<feature name="Login" value="io.dcloud.feature.login.LoginFeatureImpl"/>
+	</features>
+</properties>"#,
+    )
+    .unwrap();
+    let mut config = ModuleConfigTree::default();
+    config.login = Some(LoginModuleConfig {
+        enabled: true,
+        providers: vec![LoginProvider {
+            name: "weixin".to_string(),
+            enabled: true,
+            config: HashMap::new(),
+        }],
+    });
+    let enabled = vec!["OAuth".to_string()];
+
+    generate_dcloud_properties(&path, &config, &enabled).unwrap();
+    generate_dcloud_properties(&path, &config, &enabled).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+
+    assert_eq!(content.matches(r#"feature name="Login""#).count(), 1);
+    assert_eq!(content.matches(r#"feature name="OAuth""#).count(), 0);
 
     let _ = std::fs::remove_file(path);
 }
@@ -134,6 +268,56 @@ fn android_config_report_prefers_manifest_over_cached_values() {
 
     assert_eq!(field.value.as_deref(), Some("manifest-key"));
     assert_eq!(field.value_source.as_deref(), Some("manifest"));
+    assert!(report.all_configured);
+}
+
+#[test]
+fn android_config_analysis_uses_cached_manifest_value_when_manifest_path_is_missing() {
+    let project_root =
+        std::env::temp_dir().join(format!("unipack-missing-manifest-{}", uuid::Uuid::new_v4()));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Share": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "share": {
+                        "weixin": {
+                            "appid": "wx-cached",
+                            "appSecret": "wx-secret"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let mut info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+    info.manifest_path = project_root
+        .join("manifest-was-not-read-again.json")
+        .to_string_lossy()
+        .to_string();
+
+    let report = analyze_android_module_config_sync(&info, None);
+    let share = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "share")
+        .expect("Share config should be produced from cached manifestValue");
+
+    assert_eq!(
+        share
+            .fields
+            .iter()
+            .find(|field| field.key == "WX_APPID")
+            .and_then(|field| field.value.as_deref()),
+        Some("wx-cached")
+    );
     assert!(report.all_configured);
 }
 
@@ -371,4 +555,36 @@ fn android_config_report_requires_enabled_push_vendor_fields() {
 
 fn temp_file(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{}-{}.xml", name, uuid::Uuid::new_v4()))
+}
+
+fn module_config_with_camera_share_oauth_payment() -> ModuleConfigTree {
+    let mut config = ModuleConfigTree::default();
+    config.camera = Some(SimpleModuleConfig { enabled: true });
+    config.share = Some(ShareModuleConfig {
+        enabled: true,
+        weixin: Some(HashMap::new()),
+        qq: Some(HashMap::new()),
+        sina: Some(HashMap::new()),
+    });
+    config.login = Some(LoginModuleConfig {
+        enabled: true,
+        providers: vec![
+            LoginProvider {
+                name: "weixin".to_string(),
+                enabled: true,
+                config: HashMap::new(),
+            },
+            LoginProvider {
+                name: "qq".to_string(),
+                enabled: true,
+                config: HashMap::new(),
+            },
+        ],
+    });
+    config.payment = Some(PaymentModuleConfig {
+        enabled: true,
+        weixin: Some(HashMap::new()),
+        alipay: Some(HashMap::new()),
+    });
+    config
 }

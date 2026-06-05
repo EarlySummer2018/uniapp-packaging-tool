@@ -6,8 +6,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::commands::shared::module::types::AndroidModuleConfigModule;
 use crate::commands::android::project_mod::ManifestPatchGroup;
+use crate::commands::shared::module::types::AndroidModuleConfigModule;
 
 use super::helpers::*;
 

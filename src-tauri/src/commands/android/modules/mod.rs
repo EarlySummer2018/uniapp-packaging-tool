@@ -44,8 +44,10 @@ pub fn render_all_patches(
     let mut permissions = BTreeSet::new();
     let mut application_entries = BTreeSet::new();
     let mut pandora_entry_intent_filters = BTreeSet::new();
-    let mut groups_map: BTreeMap<String, crate::commands::android::project_mod::ManifestPatchGroup> =
-        BTreeMap::new();
+    let mut groups_map: BTreeMap<
+        String,
+        crate::commands::android::project_mod::ManifestPatchGroup,
+    > = BTreeMap::new();
 
     for module in &report.modules {
         let placeholders = module_placeholders(module);

@@ -1,23 +1,25 @@
 //! AndroidProjectModifier 核心实现：对 Android 工程工作区执行所有构建修改。
 
-use regex::Regex;
-use std::path::{Path, PathBuf};
-use super::types::{BuildModificationContext, ManifestPatchGroup, MODULE_NAME, EntryIdentity, InsertAndroidPosition};
 use super::gradle::{
-    ensure_plugin_management_block, ensure_repositories_in_drm, set_or_insert_root_project_name,
-    ensure_gradle_statement, replace_or_insert_android_assignment, replace_or_insert_default_config_assignment,
-    set_manifest_placeholders, ensure_signing_configs_block, ensure_build_type_signing_config,
-    ensure_android_block_content, ensure_top_level_block_content, ensure_dependencies_block_content,
-    validate_base_gradle_dependencies, ensure_repositories_in_allprojects,
-    escape_gradle_single_quoted, escape_gradle_double_quoted,
-    render_signing_configs, render_packaging_options, render_source_sets, render_aapt_options,
+    ensure_android_block_content, ensure_apply_plugin_after_android_application,
+    ensure_build_type_signing_config, ensure_buildscript_dependency, ensure_buildscript_repository,
+    ensure_dependencies_block_content, ensure_gradle_statement, ensure_plugin_management_block,
+    ensure_repositories_in_allprojects, ensure_repositories_in_drm, ensure_signing_configs_block,
+    ensure_top_level_block_content, escape_gradle_double_quoted, escape_gradle_single_quoted,
+    render_aapt_options, render_packaging_options, render_signing_configs, render_source_sets,
+    replace_or_insert_android_assignment, replace_or_insert_default_config_assignment,
+    set_manifest_placeholders, set_or_insert_root_project_name, validate_base_gradle_dependencies,
 };
 use super::manifest::{
-    fix_manifest_xml_structure, set_meta_data_value, set_string_resource,
-    entry_identity, format_entry_description, child_identity,
-    escape_xml_attr,
+    child_identity, entry_identity, escape_xml_attr, fix_manifest_xml_structure,
+    format_entry_description, set_meta_data_value, set_string_resource,
+};
+use super::types::{
+    BuildModificationContext, EntryIdentity, InsertAndroidPosition, ManifestPatchGroup, MODULE_NAME,
 };
 use super::xml_editor::XmlManifestEditor;
+use regex::Regex;
+use std::path::{Path, PathBuf};
 
 pub struct AndroidProjectModifier {
     workspace_dir: PathBuf,
@@ -59,7 +61,8 @@ impl AndroidProjectModifier {
         // 将额外仓库注入到 dependencyResolutionManagement.repositories
         // （PREFER_SETTINGS 模式下，build.gradle 的 allprojects 声明会被忽略）
         if !ctx.extra_repositories.is_empty() {
-            content = ensure_repositories_in_drm(&content, &ctx.extra_repositories);
+            let repositories = dependency_repositories_with_defaults(ctx);
+            content = ensure_repositories_in_drm(&content, &repositories);
         }
 
         content = set_or_insert_root_project_name(&content, &ctx.project_name);
@@ -79,7 +82,18 @@ impl AndroidProjectModifier {
 
         let mut content = self.read_file(&path)?;
         if !ctx.extra_repositories.is_empty() {
-            content = ensure_repositories_in_allprojects(&content, &ctx.extra_repositories);
+            let repositories = dependency_repositories_with_defaults(ctx);
+            content = ensure_repositories_in_allprojects(&content, &repositories);
+        }
+        if uses_huawei_agconnect(ctx) {
+            content = ensure_buildscript_repository(
+                &content,
+                "maven { url 'https://developer.huawei.com/repo/' }",
+            );
+            content = ensure_buildscript_dependency(
+                &content,
+                "classpath 'com.huawei.agconnect:agcp:1.9.1.301'",
+            );
         }
 
         self.validate_gradle_syntax(&content, &path)?;
@@ -90,6 +104,11 @@ impl AndroidProjectModifier {
         let path = self.workspace_dir.join(MODULE_NAME).join("build.gradle");
         let original_content = self.read_file(&path)?;
         let mut content = original_content.clone();
+
+        if uses_huawei_agconnect(ctx) {
+            content =
+                ensure_apply_plugin_after_android_application(&content, "com.huawei.agconnect");
+        }
 
         content = replace_or_insert_android_assignment(
             &content,
@@ -262,38 +281,6 @@ impl AndroidProjectModifier {
         let current = editor.as_str().to_string();
         if let Ok(updated) = set_meta_data_value(&current, "dcloud_appkey", &ctx.dcloud_appkey) {
             editor.replace_content(updated);
-        }
-
-        // 校验 Application 类是否继承自 DCloudApplication（文档 4.3 节要求）
-        {
-            let manifest_content = editor.as_str().to_string();
-            let app_re = regex::Regex::new(r#"(?s)<application\b[^>]*?android:name="([^"]*)""#)
-                .map_err(|e| format!("编译 application name 正则失败: {}", e))?;
-            match app_re.captures(&manifest_content) {
-                Some(caps) => {
-                    let app_class = &caps[1];
-                    // SDK 模板通常使用 io.dcloud.Application 或自定义子类
-                    // 只要不是显式的非 DCloudApplication 子类就通过
-                    if app_class.is_empty()
-                        || app_class == "android.app.Application"
-                        || (!app_class.contains("DCloud")
-                            && !app_class.contains("dcloud")
-                            && !app_class.contains(".Application"))
-                    {
-                        eprintln!(
-                            "[WARN] AndroidManifest.xml 的 android.name=\"{}\" 可能未继承 DCloudApplication，\
-                             UniApp SDK 要求 Application 必须继承自 DCloudApplication（文档 4.3 节）",
-                            app_class
-                        );
-                    }
-                }
-                None => {
-                    eprintln!(
-                        "[WARN] AndroidManifest.xml 的 <application> 标签缺少 android.name 属性，\
-                         UniApp SDK 要求必须指定继承自 DCloudApplication 的 Application 类（文档 4.3 节）"
-                    );
-                }
-            }
         }
 
         // === Phase 1-N: 逐模块插入（核心改动：一个模块完全插入成功后再处理下一个）===
@@ -584,4 +571,28 @@ impl AndroidProjectModifier {
         }
         std::fs::write(path, content).map_err(|e| format!("写入文件失败 {}: {}", path.display(), e))
     }
+}
+
+fn uses_huawei_agconnect(ctx: &BuildModificationContext) -> bool {
+    ctx.extra_dependencies.iter().any(|dependency| {
+        dependency.contains("com.huawei.hms:push") || dependency.contains("com.getui.opt:hwp")
+    })
+}
+
+fn dependency_repositories_with_defaults(ctx: &BuildModificationContext) -> Vec<String> {
+    let mut repositories = vec!["google()".to_string(), "mavenCentral()".to_string()];
+    for repository in &ctx.extra_repositories {
+        let repository = repository.trim();
+        if repository.is_empty() {
+            continue;
+        }
+        if repositories
+            .iter()
+            .any(|existing| existing.trim() == repository)
+        {
+            continue;
+        }
+        repositories.push(repository.to_string());
+    }
+    repositories
 }

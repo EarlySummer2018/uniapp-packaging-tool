@@ -80,7 +80,9 @@ interface UniappManifestInfo {
   versionCode?: number | null
   hbuilderxVersion?: string | null
   androidIcons?: { android: Record<string, string> } | null
+  iosIcons?: { ios: Record<string, string> } | null
   splashscreen?: SplashscreenConfig | null
+  manifestValue?: Record<string, any> | null
   manifestPath: string
   projectRoot: string
   android: AndroidManifestConfig
@@ -404,17 +406,22 @@ const canGenerateAndroid = computed(() => {
 })
 const androidModulesReady = computed(() => {
   if (!selectedNeedsAndroidConfig.value) return true
+  if (!latestManifestInfo.value) return !!currentProject.value?.localPath
+  if (androidModuleConfigLoading.value) return false
   const report = androidModuleConfigReport.value
-  return !!latestManifestInfo.value && !!report && androidMissingRequired.value.length === 0
+  if (!report) return true
+  return androidMissingRequired.value.length === 0
 })
 const buildDisabledReason = computed(() => {
   if (!scanResult.value) return '请先导入 UniApp 资源'
   if (!selectedPlatforms.value.length) return '请选择至少一个平台'
   if (isBuilding.value) return '正在构建中'
   if (selectedNeedsAndroidConfig.value) {
-    if (!latestManifestInfo.value) return manifestReadWarning.value || '请先读取本地 manifest.json'
+    if (!latestManifestInfo.value && !currentProject.value?.localPath) {
+      return manifestReadWarning.value || '请先在项目配置中选择包含 manifest.json 的本地项目路径'
+    }
+    if (!latestManifestInfo.value) return ''
     if (androidModuleConfigLoading.value) return '正在分析 Android 模块配置'
-    if (!androidModuleConfigReport.value) return '请等待 Android 模块配置分析完成'
     if (androidMissingRequired.value.length) return `还有 ${androidMissingRequired.value.length} 个 Android 必填配置未填写`
   }
   return ''
@@ -578,18 +585,19 @@ function togglePlatform(platform: Platform) {
 }
 
 async function startBuild() {
-  if (!scanResult.value || !canBuild.value) return
+  if (!scanResult.value || selectedPlatforms.value.length === 0 || isBuilding.value) return
   // 重置全局日志去重集合（每次构建独立）
   emittedLogLines.clear()
-  if (!latestManifestInfo.value) {
-    message.error(manifestReadWarning.value || '请先导入资源，并确保已从本地项目路径读取 manifest.json')
+  let manifestInfo: UniappManifestInfo
+  try {
+    manifestInfo = await ensureManifestInfoLoaded({ persist: true })
+  } catch (e: any) {
+    message.error(String(e))
     return
   }
-  if (selectedNeedsAndroidConfig.value && androidMissingRequired.value.length) {
-    message.error(`请先填写 Android 模块配置: ${androidMissingRequired.value.map(item => `${item.moduleName}-${item.label}`).join('、')}`)
+  if (!(await ensureAndroidModuleConfigReadyForBuild())) {
     return
   }
-  const manifestInfo = latestManifestInfo.value
   const importedResourcePath = scanResult.value.importedPath
   const androidModuleConfig = buildAndroidModuleConfigPayload()
   await persistAndroidModuleConfigCache()
@@ -649,16 +657,17 @@ async function startBuild() {
 }
 
 async function generateAndroidProject() {
-  if (!scanResult.value || !canGenerateAndroid.value) return
-  if (!latestManifestInfo.value) {
-    message.error(manifestReadWarning.value || '请先导入资源，并确保已从本地项目路径读取 manifest.json')
+  if (!scanResult.value || !selectedPlatforms.value.includes('android') || isBuilding.value || isGenerating.value) return
+  let manifestInfo: UniappManifestInfo
+  try {
+    manifestInfo = await ensureManifestInfoLoaded({ persist: true })
+  } catch (e: any) {
+    message.error(String(e))
     return
   }
-  if (selectedNeedsAndroidConfig.value && androidMissingRequired.value.length) {
-    message.error(`请先填写 Android 模块配置: ${androidMissingRequired.value.map(item => `${item.moduleName}-${item.label}`).join('、')}`)
+  if (!(await ensureAndroidModuleConfigReadyForBuild())) {
     return
   }
-  const manifestInfo = latestManifestInfo.value
   const androidModuleConfig = buildAndroidModuleConfigPayload()
   await persistAndroidModuleConfigCache()
   isGenerating.value = true
@@ -802,6 +811,32 @@ async function refreshAndroidModuleConfig() {
   } finally {
     androidModuleConfigLoading.value = false
   }
+}
+
+async function ensureManifestInfoLoaded(options: { persist: boolean } = { persist: true }): Promise<UniappManifestInfo> {
+  if (latestManifestInfo.value) return latestManifestInfo.value
+  const info = await refreshManifestFromLocalProject({ required: true, persist: options.persist })
+  if (!info) {
+    const warning = manifestReadWarning.value || '请先导入资源，并确保已从本地项目路径读取 manifest.json'
+    throw new Error(warning)
+  }
+  return info
+}
+
+async function ensureAndroidModuleConfigReadyForBuild() {
+  if (!selectedNeedsAndroidConfig.value) return true
+  if (!androidModuleConfigReport.value) {
+    await refreshAndroidModuleConfig()
+  }
+  if (!androidModuleConfigReport.value) {
+    message.error(manifestReadWarning.value || 'Android 模块配置分析失败')
+    return false
+  }
+  if (androidMissingRequired.value.length) {
+    message.error(`请先填写 Android 模块配置: ${androidMissingRequired.value.map(item => `${item.moduleName}-${item.label}`).join('、')}`)
+    return false
+  }
+  return true
 }
 
 function mergeAndroidModuleConfigDefaults(report: AndroidModuleConfigReport) {

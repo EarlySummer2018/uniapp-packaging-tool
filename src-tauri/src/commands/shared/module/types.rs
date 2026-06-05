@@ -16,6 +16,7 @@ pub struct ModuleConfigTree {
     pub uni_ad: Option<UniAdModuleConfig>,
     pub x5_tbs: Option<SimpleModuleConfig>,
     pub livepusher: Option<LivePusherModuleConfig>,
+    pub camera: Option<SimpleModuleConfig>,
     pub ui_webview: Option<SimpleModuleConfig>,
     pub uts_plugins: Option<Vec<String>>,
 }

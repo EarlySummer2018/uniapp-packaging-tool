@@ -28,10 +28,7 @@ pub fn analyze_android_module_config_sync(
     manifest_info: &UniappManifestInfo,
     user_config: Option<&HashMap<String, String>>,
 ) -> AndroidModuleConfigReport {
-    let manifest_value = std::fs::read_to_string(&manifest_info.manifest_path)
-        .ok()
-        .and_then(|content| json5::from_str::<serde_json::Value>(&content).ok())
-        .or_else(|| manifest_info_to_value(manifest_info));
+    let manifest_value = manifest_value_from_info(manifest_info);
     android_module_config_report_from_value(
         &manifest_info.detected_modules,
         manifest_value.as_ref(),
@@ -659,8 +656,12 @@ fn push_provider_enabled(manifest: &serde_json::Value, provider_keys: &[&str]) -
     )
 }
 
-fn manifest_info_to_value(manifest_info: &UniappManifestInfo) -> Option<serde_json::Value> {
-    serde_json::to_value(manifest_info).ok()
+pub fn manifest_value_from_info(manifest_info: &UniappManifestInfo) -> Option<serde_json::Value> {
+    manifest_info.manifest_value.clone().or_else(|| {
+        std::fs::read_to_string(&manifest_info.manifest_path)
+            .ok()
+            .and_then(|content| json5::from_str::<serde_json::Value>(&content).ok())
+    })
 }
 
 fn find_manifest_config_value(

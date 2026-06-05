@@ -20,6 +20,9 @@ pub fn render_android_module_manifest_placeholders(
                 has_push_module = true;
             }
             for field in &module.fields {
+                if field.field_type == "file" {
+                    continue;
+                }
                 if let Some(value) = field
                     .value
                     .as_deref()
@@ -81,16 +84,6 @@ fn insert_push_manifest_placeholder_defaults(
         ("plus.unipush.appsecret", ""),
         ("PUSH_APPSECRET", ""),
         ("apk.applicationId", package_name),
-        ("XIAOMI_APP_ID", ""),
-        ("XIAOMI_APP_KEY", ""),
-        ("MEIZU_APP_ID", ""),
-        ("MEIZU_APP_KEY", ""),
-        ("HUAWEI_APP_ID", ""),
-        ("OPPO_APP_KEY", ""),
-        ("OPPO_APP_SECRET", ""),
-        ("VIVO_APP_ID", ""),
-        ("VIVO_APP_KEY", ""),
-        ("HONOR_APP_ID", ""),
     ] {
         target
             .entry(placeholder.to_string())
@@ -109,5 +102,81 @@ pub fn manifest_placeholder_aliases(key: &str) -> Vec<&'static str> {
         "plus.unipush.appkey" => vec!["plus.unipush.appkey", "PUSH_APPKEY"],
         "plus.unipush.appsecret" => vec!["plus.unipush.appsecret", "PUSH_APPSECRET"],
         _ => vec![Box::leak(key.to_owned().into_boxed_str())],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::shared::module::types::{
+        AndroidModuleConfigField, AndroidModuleConfigModule, AndroidModuleConfigReport,
+    };
+
+    fn push_report(fields: Vec<AndroidModuleConfigField>) -> AndroidModuleConfigReport {
+        AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "Push".to_string(),
+                template_key: "push".to_string(),
+                category: "push".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "test".to_string(),
+                fields,
+            }],
+            missing_required: Vec::new(),
+            all_configured: true,
+        }
+    }
+
+    fn text_field(key: &str, value: &str) -> AndroidModuleConfigField {
+        AndroidModuleConfigField {
+            key: key.to_string(),
+            label: key.to_string(),
+            required: false,
+            secret: false,
+            value: Some(value.to_string()),
+            value_source: Some("test".to_string()),
+            placeholder: String::new(),
+            field_type: "text".to_string(),
+        }
+    }
+
+    fn file_field(key: &str, value: &str) -> AndroidModuleConfigField {
+        AndroidModuleConfigField {
+            field_type: "file".to_string(),
+            ..text_field(key, value)
+        }
+    }
+
+    #[test]
+    fn push_defaults_do_not_include_unselected_vendor_placeholders() {
+        let report = push_report(vec![
+            text_field("GETUI_APPID", "getui-appid"),
+            text_field("plus.unipush.appkey", "getui-key"),
+            text_field("plus.unipush.appsecret", "getui-secret"),
+        ]);
+
+        let rendered =
+            render_android_module_manifest_placeholders(Some(&report), &[], "com.example.app");
+
+        assert!(rendered.contains("\"GETUI_APPID\": \"getui-appid\""));
+        assert!(rendered.contains("\"apk.applicationId\": \"com.example.app\""));
+        assert!(!rendered.contains("XIAOMI_APP_ID"));
+        assert!(!rendered.contains("MEIZU_APP_ID"));
+    }
+
+    #[test]
+    fn push_placeholders_keep_selected_vendor_values_and_skip_file_fields() {
+        let report = push_report(vec![
+            text_field("GETUI_APPID", "getui-appid"),
+            text_field("OPPO_APP_KEY", "oppo-key"),
+            file_field("HUAWEI_AGCONNECT_JSON", "{\"client\":{}}"),
+        ]);
+
+        let rendered =
+            render_android_module_manifest_placeholders(Some(&report), &[], "com.example.app");
+
+        assert!(rendered.contains("\"OPPO_APP_KEY\": \"oppo-key\""));
+        assert!(!rendered.contains("HUAWEI_AGCONNECT_JSON"));
+        assert!(!rendered.contains("{\\\"client\\\""));
     }
 }
