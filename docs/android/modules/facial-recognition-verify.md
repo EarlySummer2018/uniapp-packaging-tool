@@ -16,9 +16,9 @@
 
 | 路径 | 文件列表 |
 |---|---|
-| **SDK\libs** | `uni-facialVerify-release.aar`<br>`aliyun-base-XXX.aar`<br>`aliyun-facade-XXX.aar`<br>`aliyun-face-XXX.aar`<br>`aliyun-faceaudio-XXX.aar`<br>`aliyun-facelanguage-XXX.aar`<br>`aliyun-photinus-XXX.aar`<br>`aliyun-wishverify-XXX.aar`<br>`APSecuritySDK-DeepSec-*.jiagu.aar`<br>`Android-AliyunFaceGuard-10042.aar`<br>`APSecuritySDK-DeepSec-7.0.1.20230914.jiagu.aar`<br>`facialRecognitionVerify-support-release.aar` |
+| **SDK\libs** | `uni-facialVerify-release.aar`<br>`aliyun-base-*.aar`<br>`aliyun-facade-*.aar`<br>`aliyun-face-*.aar`<br>`aliyun-faceaudio-*.aar`<br>`aliyun-facelanguage-*.aar`<br>`aliyun-photinus-*.aar`<br>`aliyun-wishverify-*.aar`<br>`Android-AliyunFaceGuard-*.aar`<br>`APSecuritySDK-DeepSec-*.jiagu.aar`<br>`facialRecognitionVerify-support-release.aar` |
 
-> **注意**：`XXX` 为版本号，具体版本号以下载的 SDK 中的为准
+> **注意**：`*` 为版本通配，实际文件名以下载的 SDK 中为准
 >
 > **X86 设备支持说明**：HBuilderX 新增了 `facialRecognitionVerify-support-release.aar` 库，作用是应用可以在 X86 设备上正常运行，但调用 `uni.startFacialRecognitionVerify()` 会触发错误回调。如果不支持 X86 设备，可以不用引入。
 

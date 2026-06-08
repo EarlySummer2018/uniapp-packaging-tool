@@ -353,7 +353,7 @@ fn versionless_artifact_parts_match(
 }
 
 fn first_wildcard_marker(stem: &str) -> Option<(usize, &'static str)> {
-    ["XXX", "xxx", "x.x", "vx", "Vx", "+"]
+    ["*", "XXX", "xxx", "x.x", "vx", "Vx", "+"]
         .iter()
         .filter_map(|marker| stem.find(marker).map(|index| (index, *marker)))
         .min_by_key(|(index, _)| *index)
@@ -617,6 +617,30 @@ mod tests {
         assert!(!android_artifact_name_matches(
             "gtc-3.2.16.0.aar",
             "gtsdk-3.5.1.0.aar"
+        ));
+    }
+
+    #[test]
+    fn android_artifact_name_matching_supports_wildcard_versions() {
+        assert!(android_artifact_name_matches(
+            "open_sdk_*_lite.jar",
+            "open_sdk_3.5.12.2_r97423a8_lite.jar"
+        ));
+        assert!(android_artifact_name_matches(
+            "openDefault-*.aar",
+            "openDefault-12.5.0.aar"
+        ));
+        assert!(android_artifact_name_matches(
+            "aliyun-base-*.aar",
+            "aliyun-base-2.3.4.aar"
+        ));
+        assert!(android_artifact_name_matches(
+            "Android-*.jiagu.aar",
+            "Android-7.0.1.20230914.jiagu.aar"
+        ));
+        assert!(!android_artifact_name_matches(
+            "open_sdk_*_lite.jar",
+            "open_sdk_3.5.12.2_r97423a8_full.jar"
         ));
     }
 

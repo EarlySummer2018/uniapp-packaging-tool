@@ -1398,9 +1398,9 @@ dependencies {
 
 | 路径 | 文件列表 |
 |---|---|
-| **SDK\libs** | `uni-facialVerify-release.aar`<br>`aliyun-base-XXX.aar`<br>`aliyun-facade-XXX.aar`<br>`aliyun-face-XXX.aar`<br>`aliyun-faceaudio-XXX.aar`<br>`aliyun-facelanguage-XXX.aar`<br>`aliyun-photoinus-XXX.aar`<br>`aliyun-wishverify-XXX.aar`<br>`Android-7.0.1.20230914.jiagu.ar`<br>`10042.aar`<br>`APSecuritySDK-DeepSec...aar`<br>`facialRecognitionVerify-support-release.aar` |
+| **SDK\libs** | `uni-facialVerify-release.aar`<br>`aliyun-base-*.aar`<br>`aliyun-facade-*.aar`<br>`aliyun-face-*.aar`<br>`aliyun-faceaudio-*.aar`<br>`aliyun-facelanguage-*.aar`<br>`aliyun-photinus-*.aar`<br>`aliyun-wishverify-*.aar`<br>`Android-AliyunFaceGuard-*.aar`<br>`APSecuritySDK-DeepSec-*.jiagu.aar`<br>`facialRecognitionVerify-support-release.aar` |
 
-> **注意**：`XXX` 为版本号，具体版本号以下载的 SDK 中的为准
+> **注意**：`*` 为版本通配，实际文件名以下载的 SDK 中为准
 >
 > **X86 设备支持说明**：HBuilderX 新增了 `facialRecognitionVerify-support-release.aar` 库，作用是应用可以在 X86 设备上正常运行，但调用 `uni.startFacialRecognitionVerify()` 会触发错误回调。如果不支持 X86 设备，可以不用引入。
 
@@ -1643,7 +1643,7 @@ implementation 'com.huawei.hms:ads-omsdk:1.3.35'
 
 | 广告平台 | 所需文件 |
 |---|---|
-| **章鱼** | `ads-release.aar`, `octopus_ad_sdk_XXXX.aar`, `uniad-zy-release.aar` |
+| **章鱼** | `ads-release.aar`, `octopus_ad_sdk_*.aar`, `uniad-zy-release.aar` |
 | **倍孜** | `ads-release.aar`, `uniad_bz_adapter_5.2.2.0.aar`, `beizi_fusion_sdk_5.2.3.2.aar` |
 | **聚力阅盟** | `YmDCloudymSdk20240617.aar` |
 | **泛连** | （见原文档） |

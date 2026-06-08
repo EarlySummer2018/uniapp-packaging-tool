@@ -197,7 +197,7 @@ implementation 'com.huawei.hms:ads-omsdk:1.3.35'
 
 | 广告平台 | 所需文件 |
 |---|---|
-| **章鱼** | `ads-release.aar`, `octopus_ad_sdk_XXXX.aar`, `uniad-zy-release.aar` |
+| **章鱼** | `ads-release.aar`, `octopus_ad_sdk_*.aar`, `uniad-zy-release.aar` |
 | **倍孜** | `ads-release.aar`, `uniad_bz_adapter_5.2.2.0.aar`, `beizi_fusion_sdk_5.2.3.2.aar` |
 | **聚力阅盟** | `YmDCloudymSdk20240617.aar` |
 | **泛连** | （见原文档） |
