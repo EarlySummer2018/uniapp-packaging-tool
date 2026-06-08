@@ -48,6 +48,10 @@ pub fn render_all_patches(
         String,
         crate::commands::android::project_mod::ManifestPatchGroup,
     > = BTreeMap::new();
+    let has_univerify = report
+        .modules
+        .iter()
+        .any(|module| module.template_key == "login" && has_report_value(module, "GY_APP_ID"));
 
     for module in &report.modules {
         let placeholders = module_placeholders(module);
@@ -60,6 +64,7 @@ pub fn render_all_patches(
                 &mut pandora_entry_intent_filters,
                 &placeholders,
                 package_name,
+                has_univerify,
                 &mut groups_map,
             ),
             "geolocation" => geolocation::render_patches(

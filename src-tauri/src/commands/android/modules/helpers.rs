@@ -34,20 +34,28 @@ pub(crate) fn has_report_value(module: &AndroidModuleConfigModule, key: &str) ->
         .unwrap_or(false)
 }
 
-/// 从模块字段构建 placeholder 映射（key → "${key}"）
+/// 从模块字段构建 placeholder 映射（包含 AAR Manifest 使用的别名）
 pub(crate) fn module_placeholders(module: &AndroidModuleConfigModule) -> HashMap<String, String> {
-    module
-        .fields
-        .iter()
-        .filter_map(|field| {
-            field
-                .value
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|_| (field.key.clone(), format!("${{{}}}", field.key)))
-        })
-        .collect()
+    let mut placeholders = HashMap::new();
+    for field in &module.fields {
+        let Some(_) = field
+            .value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        for placeholder in
+            crate::commands::android::manifest_placeholders::manifest_placeholder_aliases(
+                &module.template_key,
+                &field.key,
+            )
+        {
+            placeholders.insert(placeholder.to_string(), format!("${{{}}}", placeholder));
+        }
+    }
+    placeholders
 }
 
 /// 从 placeholders 中取值，缺失时返回空字符串
@@ -59,7 +67,7 @@ pub(crate) fn placeholder_value(placeholders: &HashMap<String, String>, key: &st
 pub(crate) fn meta_data(name: &str, value: &str) -> String {
     indent_manifest_fragment(
         &format!(
-            r#"<meta-data android:name="{}" android:value="{}" />"#,
+            r#"<meta-data android:name="{}" android:value="{}" tools:replace="android:value" />"#,
             name, value
         ),
         8,

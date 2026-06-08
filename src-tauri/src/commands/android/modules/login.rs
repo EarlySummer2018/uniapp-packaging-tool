@@ -56,12 +56,10 @@ pub fn render_patches(
         mod_entries.extend(qq_login_entries.iter().cloned());
     }
     if has_report_value(module, "GY_APP_ID") {
+        let gy_app_id = placeholder_value(placeholders, "GY_APP_ID");
         let gy_entries = [
-            meta_data(
-                "GETUI_APPID",
-                &placeholder_value(placeholders, "GETUI_APPID"),
-            ),
-            meta_data("GY_APP_ID", &placeholder_value(placeholders, "GY_APP_ID")),
+            meta_data("GETUI_APPID", &gy_app_id),
+            meta_data("GY_APP_ID", &gy_app_id),
         ];
         add_application_entries(application_entries, &gy_entries);
         mod_entries.extend(gy_entries.iter().cloned());

@@ -3,7 +3,10 @@
 #[cfg(test)]
 mod tests {
     use crate::commands::android::project_mod::gradle::ensure_android_gradle_plugin_supports_kotlin_22;
-    use crate::commands::android::project_mod::manifest::fix_manifest_xml_structure;
+    use crate::commands::android::project_mod::manifest::{
+        entry_identity, fix_manifest_xml_structure,
+    };
+    use crate::commands::android::project_mod::xml_editor::XmlManifestEditor;
     use crate::commands::android::project_mod::*;
     use std::path::{Path, PathBuf};
 
@@ -428,5 +431,30 @@ dependencies {
 "#;
         let result = fix_manifest_xml_structure(xml).unwrap();
         assert_eq!(result, xml, "含自闭合标签的正确 XML 不应被修改");
+    }
+
+    #[test]
+    fn manifest_editor_updates_existing_metadata_with_tools_replace() {
+        let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <meta-data android:name="GETUI_APPID" android:value="" />
+    </application>
+</manifest>
+"#;
+        let mut editor = XmlManifestEditor::from_str(xml);
+        let entry = r#"<meta-data android:name="GETUI_APPID" android:value="${GY_APP_ID}" tools:replace="android:value" />"#;
+
+        let inserted = editor
+            .add_application_entry(entry, &entry_identity(entry))
+            .unwrap();
+
+        assert!(!inserted, "已有同名 meta-data 时应更新而不是重复插入");
+        let manifest = editor.as_str();
+        assert_eq!(manifest.matches(r#"android:name="GETUI_APPID""#).count(), 1);
+        assert!(manifest.contains(r#"android:value="${GY_APP_ID}""#));
+        assert!(manifest.contains(r#"tools:replace="android:value""#));
+        assert!(manifest.contains(r#"xmlns:tools="http://schemas.android.com/tools""#));
+        editor.validate_structure().unwrap();
     }
 }

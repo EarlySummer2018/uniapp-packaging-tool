@@ -51,9 +51,6 @@ impl XmlManifestEditor {
             return Ok(());
         }
 
-        let manifest_end = Self::find_tag_end(&self.content, "manifest")
-            .ok_or_else(|| "AndroidManifest.xml 缺少 <manifest> 标签".to_string())?;
-
         let mut insertion = String::new();
         for perm in permissions {
             let perm = perm.trim();
@@ -77,11 +74,14 @@ impl XmlManifestEditor {
             } else if self.content.contains(&formatted) {
                 continue;
             }
+            self.ensure_tools_namespace_if_needed(&formatted)?;
             insertion.push_str("\n    ");
             insertion.push_str(&formatted);
         }
 
         if !insertion.is_empty() {
+            let manifest_end = Self::find_tag_end(&self.content, "manifest")
+                .ok_or_else(|| "AndroidManifest.xml 缺少 <manifest> 标签".to_string())?;
             self.content.insert_str(manifest_end + 1, &insertion);
         }
         Ok(())
@@ -158,6 +158,7 @@ impl XmlManifestEditor {
     ) -> Result<bool, String> {
         // 检查是否已存在
         if Self::entry_exists_in_application(&self.content, identity) {
+            self.update_existing_application_entry(entry, identity)?;
             return Ok(false);
         }
 
@@ -171,6 +172,8 @@ impl XmlManifestEditor {
                 Err(_) => {} // 路由失败，回退到普通插入路径
             }
         }
+
+        self.ensure_tools_namespace_if_needed(entry)?;
 
         // 定位 </application> 的位置
         let close_pos = Self::find_application_close(&self.content)
@@ -196,7 +199,7 @@ impl XmlManifestEditor {
             return Ok(false);
         }
 
-        // 查找目标 Activity（优先精确匹配，再尝试后缀匹配）
+        self.ensure_tools_namespace_if_needed(child)?;
         let activity = Self::find_activity_range(&self.content, activity_name)
             .or_else(|| Self::find_activity_range_suffix(&self.content, activity_name))
             .ok_or_else(|| format!("AndroidManifest.xml 缺少 Activity: {}", activity_name))?;
@@ -279,6 +282,61 @@ impl XmlManifestEditor {
         let start = content.find(&target)?;
         // 从 start 开始找 '>'
         content[start..].find('>').map(|p| start + p)
+    }
+
+    fn ensure_tools_namespace_if_needed(&mut self, fragment: &str) -> Result<(), String> {
+        if !fragment.contains("tools:") || self.content.contains("xmlns:tools=") {
+            return Ok(());
+        }
+
+        let manifest_end = Self::find_tag_end(&self.content, "manifest")
+            .ok_or_else(|| "AndroidManifest.xml 缺少 <manifest> 标签".to_string())?;
+        self.content.insert_str(
+            manifest_end,
+            "\n    xmlns:tools=\"http://schemas.android.com/tools\"",
+        );
+        Ok(())
+    }
+
+    fn update_existing_application_entry(
+        &mut self,
+        entry: &str,
+        identity: &EntryIdentity,
+    ) -> Result<(), String> {
+        let EntryIdentity::MetaData(name) = identity else {
+            return Ok(());
+        };
+
+        let Some(mat) =
+            find_xml_start_tag_with_attr(&self.content, "meta-data", "android:name", name)
+        else {
+            return Ok(());
+        };
+
+        let mut tag = self.content[mat.start..mat.end].to_string();
+        let mut changed = false;
+
+        for attr in ["android:value", "android:resource", "tools:replace"] {
+            if let Some(value) = android_attr_value(entry, attr) {
+                let updated = set_or_insert_xml_attr(&tag, attr, &value)?;
+                if updated != tag {
+                    tag = updated;
+                    changed = true;
+                }
+            }
+        }
+
+        if !changed {
+            return Ok(());
+        }
+
+        self.ensure_tools_namespace_if_needed(&tag)?;
+        if let Some(current) =
+            find_xml_start_tag_with_attr(&self.content, "meta-data", "android:name", name)
+        {
+            self.content = replace_range(&self.content, current.start, current.end, &tag);
+        }
+        Ok(())
     }
 
     /// 从后向前查找最后一个不在注释内的 </application>
@@ -435,3 +493,35 @@ impl XmlManifestEditor {
 
 /// XML 标签的范围信息（复用 ManifestComponent）
 type XmlTagRange = ManifestComponent;
+
+fn set_or_insert_xml_attr(tag: &str, attr_name: &str, attr_value: &str) -> Result<String, String> {
+    let attr_re = Regex::new(&format!(r#"\s+{}\s*=\s*"[^"]*""#, regex::escape(attr_name)))
+        .map_err(|e| format!("编译 XML 属性正则失败: {}", e))?;
+    let escaped_value = escape_xml_attr(attr_value);
+    if let Some(mat) = attr_re.find(tag) {
+        Ok(replace_range(
+            tag,
+            mat.start(),
+            mat.end(),
+            &format!(r#" {}="{}""#, attr_name, escaped_value),
+        ))
+    } else if tag.trim_end().ends_with("/>") {
+        let insert_at = tag
+            .rfind("/>")
+            .ok_or_else(|| "自闭合 XML 标签格式异常".to_string())?;
+        Ok(replace_range(
+            tag,
+            insert_at,
+            insert_at,
+            &format!(r#" {}="{}""#, attr_name, escaped_value),
+        ))
+    } else {
+        let insert_at = tag.rfind('>').ok_or_else(|| "XML 标签缺少 >".to_string())?;
+        Ok(replace_range(
+            tag,
+            insert_at,
+            insert_at,
+            &format!(r#" {}="{}""#, attr_name, escaped_value),
+        ))
+    }
+}

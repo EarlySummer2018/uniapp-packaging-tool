@@ -17,7 +17,7 @@ pub fn render_patches(
     application_entries: &mut BTreeSet<String>,
     _pandora_filters: &mut BTreeSet<String>,
     placeholders: &HashMap<String, String>,
-    package_name: &str,
+    _package_name: &str,
     patch_groups: &mut BTreeMap<String, ManifestPatchGroup>,
 ) {
     let mut mod_entries: Vec<String> = Vec::new();
@@ -34,21 +34,6 @@ pub fn render_patches(
     ];
     add_application_entries(application_entries, &uni_ad_entries);
     mod_entries.extend(uni_ad_entries.iter().cloned());
-
-    if has_report_value(module, "DCLOUD_STREAMAPP_CHANNEL") {
-        let provider_xml = crate::commands::android::types::indent_manifest_fragment(
-            &format!(
-                r#"<provider android:name="com.bytedance.sdk.openadsdk.TTFileProvider" android:authorities="{}.TTFileProvider" android:exported="false" android:grantUriPermissions="true">
-    <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
-</provider>
-<provider android:name="com.bytedance.sdk.openadsdk.multipro.TTMultiProvider" android:authorities="{}.TTMultiProvider" android:exported="false" />"#,
-                package_name, package_name
-            ),
-            8,
-        );
-        application_entries.insert(provider_xml.clone());
-        mod_entries.push(provider_xml);
-    }
 
     // 写入 patch group
     let group_name = module.template_key.clone();

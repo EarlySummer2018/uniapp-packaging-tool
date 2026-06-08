@@ -29,7 +29,12 @@ pub fn render_android_module_manifest_placeholders(
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                 {
-                    insert_manifest_placeholder_entries(&mut entries, &field.key, value);
+                    insert_manifest_placeholder_entries(
+                        &mut entries,
+                        &module.template_key,
+                        &field.key,
+                        value,
+                    );
                 }
             }
         }
@@ -37,6 +42,9 @@ pub fn render_android_module_manifest_placeholders(
 
     if has_push_module {
         insert_push_manifest_placeholder_defaults(&mut entries, package_name);
+    }
+    if let Some(report) = report {
+        insert_univerify_manifest_placeholder_overrides(&mut entries, report);
     }
 
     if entries.is_empty() {
@@ -61,10 +69,11 @@ pub fn render_android_module_manifest_placeholders(
 
 fn insert_manifest_placeholder_entries(
     target: &mut BTreeMap<String, String>,
+    template_key: &str,
     key: &str,
     value: &str,
 ) {
-    for placeholder in manifest_placeholder_aliases(key) {
+    for placeholder in manifest_placeholder_aliases(template_key, key) {
         target.insert(placeholder.to_string(), value.to_string());
     }
 }
@@ -75,7 +84,6 @@ fn insert_push_manifest_placeholder_defaults(
 ) {
     for (placeholder, value) in [
         ("GETUI_APPID", ""),
-        ("GY_APP_ID", ""),
         ("GT_INSTALL_CHANNEL", "HBuilder"),
         ("PUSH_APPID", ""),
         ("plus.unipush.appid", ""),
@@ -91,17 +99,55 @@ fn insert_push_manifest_placeholder_defaults(
     }
 }
 
-pub fn manifest_placeholder_aliases(key: &str) -> Vec<&'static str> {
-    match key {
-        "GETUI_APPID" => vec![
-            "GETUI_APPID",
-            "GY_APP_ID",
-            "PUSH_APPID",
-            "plus.unipush.appid",
-        ],
-        "plus.unipush.appkey" => vec!["plus.unipush.appkey", "PUSH_APPKEY"],
-        "plus.unipush.appsecret" => vec!["plus.unipush.appsecret", "PUSH_APPSECRET"],
-        _ => vec![Box::leak(key.to_owned().into_boxed_str())],
+fn insert_univerify_manifest_placeholder_overrides(
+    target: &mut BTreeMap<String, String>,
+    report: &crate::commands::module::AndroidModuleConfigReport,
+) {
+    let Some(value) = report_field_value(report, "login", "GY_APP_ID") else {
+        return;
+    };
+    target.insert("GETUI_APPID".to_string(), value.clone());
+    target.insert("GY_APP_ID".to_string(), value);
+    target
+        .entry("GT_INSTALL_CHANNEL".to_string())
+        .or_insert_with(|| "HBuilder".to_string());
+}
+
+fn report_field_value(
+    report: &crate::commands::module::AndroidModuleConfigReport,
+    template_key: &str,
+    field_key: &str,
+) -> Option<String> {
+    report
+        .modules
+        .iter()
+        .find(|module| module.template_key == template_key)
+        .and_then(|module| {
+            module
+                .fields
+                .iter()
+                .find(|field| field.key == field_key)
+                .and_then(|field| field.value.as_deref())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
+}
+
+pub fn manifest_placeholder_aliases<'a>(template_key: &'a str, key: &'a str) -> Vec<&'a str> {
+    match (template_key, key) {
+        ("push", "GETUI_APPID") => vec!["GETUI_APPID", "PUSH_APPID", "plus.unipush.appid"],
+        ("push", "plus.unipush.appkey") => vec!["plus.unipush.appkey", "PUSH_APPKEY"],
+        ("push", "plus.unipush.appsecret") => vec!["plus.unipush.appsecret", "PUSH_APPSECRET"],
+        ("login", "GY_APP_ID") => vec!["GY_APP_ID", "GETUI_APPID"],
+        ("login", "WX_APPID") | ("share", "WX_APPID") => vec!["WX_APPID", "plus.weixin.appid"],
+        ("map", "GOOGLE_MAPS_API_KEY") => {
+            vec!["GOOGLE_MAPS_API_KEY", "plus.google_map.APIKey_android"]
+        }
+        ("payment", "PAYPAL_RETURN_SCHEME") => {
+            vec!["PAYPAL_RETURN_SCHEME", "plus.paypal.returnUrl", "returnUrl"]
+        }
+        _ => vec![key],
     }
 }
 
@@ -178,5 +224,44 @@ mod tests {
         assert!(rendered.contains("\"OPPO_APP_KEY\": \"oppo-key\""));
         assert!(!rendered.contains("HUAWEI_AGCONNECT_JSON"));
         assert!(!rendered.contains("{\\\"client\\\""));
+    }
+
+    #[test]
+    fn push_and_univerify_placeholders_do_not_leave_empty_getui_appid() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![
+                AndroidModuleConfigModule {
+                    name: "Push".to_string(),
+                    template_key: "push".to_string(),
+                    category: "push".to_string(),
+                    platforms: vec!["android".to_string()],
+                    source: "test".to_string(),
+                    fields: vec![
+                        text_field("GETUI_APPID", "push-appid"),
+                        text_field("plus.unipush.appkey", "push-appkey"),
+                        text_field("plus.unipush.appsecret", "push-secret"),
+                    ],
+                },
+                AndroidModuleConfigModule {
+                    name: "OAuth".to_string(),
+                    template_key: "login".to_string(),
+                    category: "oauth".to_string(),
+                    platforms: vec!["android".to_string()],
+                    source: "test".to_string(),
+                    fields: vec![text_field("GY_APP_ID", "univerify-appid")],
+                },
+            ],
+            missing_required: Vec::new(),
+            all_configured: true,
+        };
+
+        let rendered =
+            render_android_module_manifest_placeholders(Some(&report), &[], "com.example.app");
+
+        assert!(rendered.contains("\"GETUI_APPID\": \"univerify-appid\""));
+        assert!(rendered.contains("\"GY_APP_ID\": \"univerify-appid\""));
+        assert!(rendered.contains("\"plus.unipush.appid\": \"push-appid\""));
+        assert!(rendered.contains("\"PUSH_APPID\": \"push-appid\""));
+        assert!(!rendered.contains("\"GETUI_APPID\": \"\""));
     }
 }

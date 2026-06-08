@@ -44,6 +44,10 @@ pub fn render_android_module_manifest_patches_impl(
         String,
         crate::commands::android::project_mod::ManifestPatchGroup,
     > = std::collections::BTreeMap::new();
+    let has_univerify = report
+        .modules
+        .iter()
+        .any(|module| module.template_key == "login" && has_report_value(module, "GY_APP_ID"));
 
     for module in &report.modules {
         let placeholders = module_placeholders(module);
@@ -53,11 +57,13 @@ pub fn render_android_module_manifest_patches_impl(
 
         match module.template_key.as_str() {
             "push" => {
+                let getui_appid = if has_univerify {
+                    "${GY_APP_ID}".to_string()
+                } else {
+                    placeholder_value(&placeholders, "GETUI_APPID")
+                };
                 let push_entries = [
-                    meta_data(
-                        "GETUI_APPID",
-                        &placeholder_value(&placeholders, "GETUI_APPID"),
-                    ),
+                    meta_data("GETUI_APPID", &getui_appid),
                     meta_data(
                         "plus.unipush.appid",
                         &placeholder_value(&placeholders, "plus.unipush.appid"),
@@ -245,12 +251,10 @@ pub fn render_android_module_manifest_patches_impl(
                     mod_entries.extend(qq_login_entries.iter().cloned());
                 }
                 if has_report_value(module, "GY_APP_ID") {
+                    let gy_app_id = placeholder_value(&placeholders, "GY_APP_ID");
                     let gy_entries = [
-                        meta_data(
-                            "GETUI_APPID",
-                            &placeholder_value(&placeholders, "GETUI_APPID"),
-                        ),
-                        meta_data("GY_APP_ID", &placeholder_value(&placeholders, "GY_APP_ID")),
+                        meta_data("GETUI_APPID", &gy_app_id),
+                        meta_data("GY_APP_ID", &gy_app_id),
                     ];
                     add_application_entries(&mut application_entries, &gy_entries);
                     mod_entries.extend(gy_entries.iter().cloned());
@@ -461,15 +465,6 @@ pub fn render_android_module_manifest_patches_impl(
                 ];
                 add_application_entries(&mut application_entries, &uni_ad_entries);
                 mod_entries.extend(uni_ad_entries.iter().cloned());
-                if has_report_value(module, "DCLOUD_STREAMAPP_CHANNEL") {
-                    application_entries.insert(indent_manifest_fragment(
-                        &format!(r#"<provider android:name="com.bytedance.sdk.openadsdk.TTFileProvider" android:authorities="{}.TTFileProvider" android:exported="false" android:grantUriPermissions="true">
-    <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
-</provider>
-<provider android:name="com.bytedance.sdk.openadsdk.multipro.TTMultiProvider" android:authorities="{}.TTMultiProvider" android:exported="false" />"#, package_name, package_name),
-                        8,
-                    ));
-                }
             }
             "livepusher" => {
                 add_permissions(
@@ -600,18 +595,26 @@ fn has_report_value(
 fn module_placeholders(
     module: &crate::commands::module::AndroidModuleConfigModule,
 ) -> HashMap<String, String> {
-    module
-        .fields
-        .iter()
-        .filter_map(|field| {
-            field
-                .value
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|_| (field.key.clone(), format!("${{{}}}", field.key)))
-        })
-        .collect()
+    let mut placeholders = HashMap::new();
+    for field in &module.fields {
+        let Some(_) = field
+            .value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        for placeholder in
+            crate::commands::android::manifest_placeholders::manifest_placeholder_aliases(
+                &module.template_key,
+                &field.key,
+            )
+        {
+            placeholders.insert(placeholder.to_string(), format!("${{{}}}", placeholder));
+        }
+    }
+    placeholders
 }
 
 fn placeholder_value(placeholders: &HashMap<String, String>, key: &str) -> String {
@@ -622,7 +625,7 @@ fn meta_data(name: &str, value: &str) -> String {
     use crate::commands::android::types::indent_manifest_fragment;
     indent_manifest_fragment(
         &format!(
-            r#"<meta-data android:name="{}" android:value="{}" />"#,
+            r#"<meta-data android:name="{}" android:value="{}" tools:replace="android:value" />"#,
             name, value
         ),
         8,
@@ -793,5 +796,74 @@ mod tests {
         assert!(patches
             .pandora_entry_intent_filters
             .contains("android.intent.action.oppopush"));
+    }
+
+    #[test]
+    fn push_manifest_entries_use_alias_placeholders() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "Push".to_string(),
+                template_key: "push".to_string(),
+                category: "push".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: vec![AndroidModuleConfigField {
+                    key: "GETUI_APPID".to_string(),
+                    value: Some("push-appid".to_string()),
+                    ..Default::default()
+                }],
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, _) =
+            render_android_module_manifest_patches_impl(Some(&report), "com.example.demo", "");
+
+        assert!(patches.application_entries.contains(
+            r#"<meta-data android:name="plus.unipush.appid" android:value="${plus.unipush.appid}" tools:replace="android:value" />"#
+        ));
+        assert!(!patches.application_entries.contains(
+            r#"android:name="plus.unipush.appid" android:value="" tools:replace="android:value" />"#
+        ));
+    }
+
+    #[test]
+    fn univerify_getui_metadata_uses_gy_placeholder_and_replaces_aar_value() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "OAuth".to_string(),
+                template_key: "login".to_string(),
+                category: "oauth".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: vec![AndroidModuleConfigField {
+                    key: "GY_APP_ID".to_string(),
+                    value: Some("univerify-appid".to_string()),
+                    ..Default::default()
+                }],
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, groups) =
+            render_android_module_manifest_patches_impl(Some(&report), "com.example.demo", "");
+
+        assert!(patches.application_entries.contains(
+            r#"<meta-data android:name="GETUI_APPID" android:value="${GY_APP_ID}" tools:replace="android:value" />"#
+        ));
+        assert!(!patches.application_entries.contains(
+            r#"android:name="GETUI_APPID" android:value="" tools:replace="android:value" />"#
+        ));
+        let login_group = groups
+            .iter()
+            .find(|group| group.module_name == "login")
+            .expect("login manifest patch group should exist");
+        assert!(login_group.application_entries.iter().any(|entry| {
+            entry.contains(r#"android:name="GETUI_APPID""#)
+                && entry.contains(r#"android:value="${GY_APP_ID}""#)
+                && entry.contains(r#"tools:replace="android:value""#)
+        }));
     }
 }

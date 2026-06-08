@@ -16,13 +16,16 @@ pub fn render_patches(
     pandora_filters: &mut BTreeSet<String>,
     placeholders: &HashMap<String, String>,
     _package_name: &str,
+    has_univerify: bool,
     patch_groups: &mut BTreeMap<String, ManifestPatchGroup>,
 ) {
+    let getui_appid = if has_univerify {
+        "${GY_APP_ID}".to_string()
+    } else {
+        placeholder_value(placeholders, "GETUI_APPID")
+    };
     let push_entries = [
-        meta_data(
-            "GETUI_APPID",
-            &placeholder_value(placeholders, "GETUI_APPID"),
-        ),
+        meta_data("GETUI_APPID", &getui_appid),
         meta_data(
             "plus.unipush.appid",
             &placeholder_value(placeholders, "plus.unipush.appid"),
