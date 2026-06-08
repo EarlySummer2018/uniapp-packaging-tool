@@ -22,55 +22,96 @@ pub fn android_module_template_key(module_name: &str) -> Option<&'static str> {
         | "FacialRecognitionVerify"
         | "facialRecognitionVerify" => Some("face_recognition"),
         "UniAD" | "uni-ad" | "uniAD" | "ad" | "Ad" => Some("uni_ad"),
-        "X5Webview" | "X5TBS" | "Android X5 Webview" | "x5" | "x5_tbs" => Some("x5_tbs"),
-        "LivePusher" | "livepusher" => Some("livepusher"),
+        "X5Webview" | "X5TBS" | "Webview-x5" | "webview-x5" | "Android X5 Webview" | "x5"
+        | "x5_tbs" => Some("x5_tbs"),
+        "LivePusher" | "livepusher" | "livePusher" => Some("livepusher"),
         "Camera" | "camera" => Some("camera"),
+        "VideoPlayer" | "videoplayer" | "videoPlayer" => Some("video_player"),
+        "Barcode" | "barcode" => Some("barcode"),
+        "Bluetooth" | "bluetooth" => Some("bluetooth"),
+        "iBeacon" | "IBeacon" | "ibeacon" => Some("ibeacon"),
+        "Contacts" | "Contact" | "contacts" | "contact" => Some("contacts"),
+        "Fingerprint" | "fingerprint" => Some("fingerprint"),
+        "Messaging" | "messaging" => Some("messaging"),
+        "Record" | "record" => Some("record"),
+        "SQLite" | "Sqlite" | "sqlite" => Some("sqlite"),
+        "GCanvas" | "gcanvas" => Some("gcanvas"),
         _ => None,
     }
 }
 
 pub fn apply_module_name_to_tree(tree: &mut ModuleConfigTree, name: &str) {
-    match name {
-        "Push" => {
+    match android_module_template_key(name) {
+        Some("push") => {
             tree.push = Some(push_manifest_config());
         }
-        "Geolocation" => {
+        Some("geolocation") => {
             tree.geolocation = Some(location_manifest_config());
         }
-        "Share" => {
+        Some("share") => {
             tree.share = Some(share_manifest_config());
         }
-        "Login" | "OAuth" => {
+        Some("login") => {
             tree.login = Some(login_manifest_config());
         }
-        "Payment" => {
+        Some("payment") => {
             tree.payment = Some(payment_manifest_config());
         }
-        "Map" | "Maps" => {
+        Some("map") => {
             tree.map = Some(map_manifest_config());
         }
-        "Speech" => {
+        Some("speech") => {
             tree.speech = Some(speech_manifest_config());
         }
-        "Statistic" | "Statistics" => {
+        Some("statistic") => {
             tree.statistic = Some(statistic_manifest_config());
         }
-        "FaceRecognition" | "FaceRecognitionVerify" | "FacialRecognitionVerify" => {
+        Some("face_recognition") => {
             tree.face_recognition = Some(face_recognition_manifest_config());
         }
-        "UniAD" | "uni-ad" => {
+        Some("uni_ad") => {
             tree.uni_ad = Some(uni_ad_manifest_config());
         }
-        "X5Webview" | "X5TBS" | "Android X5 Webview" => {
+        Some("x5_tbs") => {
             tree.x5_tbs = Some(SimpleModuleConfig { enabled: true });
         }
-        "LivePusher" => {
+        Some("livepusher") => {
             tree.livepusher = Some(livepusher_manifest_config());
         }
-        "Camera" => {
+        Some("camera") => {
             tree.camera = Some(SimpleModuleConfig { enabled: true });
         }
-        "UIWebview" | "UIWebView" => {
+        Some("video_player") => {
+            tree.video_player = Some(SimpleModuleConfig { enabled: true });
+        }
+        Some("barcode") => {
+            tree.barcode = Some(SimpleModuleConfig { enabled: true });
+        }
+        Some("bluetooth") => {
+            tree.bluetooth = Some(SimpleModuleConfig { enabled: true });
+        }
+        Some("ibeacon") => {
+            tree.ibeacon = Some(SimpleModuleConfig { enabled: true });
+        }
+        Some("contacts") => {
+            tree.contacts = Some(SimpleModuleConfig { enabled: true });
+        }
+        Some("fingerprint") => {
+            tree.fingerprint = Some(SimpleModuleConfig { enabled: true });
+        }
+        Some("messaging") => {
+            tree.messaging = Some(SimpleModuleConfig { enabled: true });
+        }
+        Some("record") => {
+            tree.record = Some(SimpleModuleConfig { enabled: true });
+        }
+        Some("sqlite") => {
+            tree.sqlite = Some(SimpleModuleConfig { enabled: true });
+        }
+        Some("gcanvas") => {
+            tree.gcanvas = Some(SimpleModuleConfig { enabled: true });
+        }
+        Some("ui_webview") => {
             tree.ui_webview = Some(SimpleModuleConfig { enabled: true });
         }
         _ => {}
@@ -229,6 +270,16 @@ pub fn get_module_template_sync(module_name: &str) -> Result<ModuleTemplate, Str
         "x5_tbs" => Ok(get_x5_template()),
         "livepusher" => Ok(get_livepusher_template()),
         "camera" => Ok(get_camera_template()),
+        "video_player" => Ok(get_videoplayer_template()),
+        "barcode" => Ok(get_barcode_template()),
+        "bluetooth" => Ok(get_bluetooth_template()),
+        "ibeacon" => Ok(get_ibeacon_template()),
+        "contacts" => Ok(get_contacts_template()),
+        "fingerprint" => Ok(get_fingerprint_template()),
+        "messaging" => Ok(get_messaging_template()),
+        "record" => Ok(get_record_template()),
+        "sqlite" => Ok(get_sqlite_template()),
+        "gcanvas" => Ok(get_gcanvas_template()),
         _ => Err(format!("Unknown module: {}", module_name)),
     }
 }
@@ -317,8 +368,8 @@ fn get_share_template() -> ModuleTemplate {
                 "share-weixin-release.aar (微信)".to_string(),
                 "share-qq-release.aar (QQ)".to_string(),
                 "share-sina-release.aar (微博)".to_string(),
-                "open_sdk_XXX_lite.jar (QQ SDK)".to_string(),
-                "openDefault-XXX.aar (微博 SDK)".to_string(),
+                "open_sdk_*_lite.jar (QQ SDK)".to_string(),
+                "openDefault-*.aar (微博 SDK)".to_string(),
             ],
             vendor_aars: vec![],
             gradle_dependencies: vec![
@@ -469,8 +520,8 @@ fn get_login_template() -> ModuleTemplate {
                 "oauth-univerify-release.aar (一键登录)".to_string(),
                 "oauth-weixin-release.aar (微信登录)".to_string(),
                 "oauth-qq-release.aar (QQ登录)".to_string(),
-                "open_sdk_XXX_lite.jar (QQ SDK)".to_string(),
-                "openDefault-XXX.aar (微博 SDK)".to_string(),
+                "open_sdk_*_lite.jar (QQ SDK)".to_string(),
+                "openDefault-*.aar (微博 SDK)".to_string(),
                 "oauth-sina-release.aar (微博登录)".to_string(),
                 "oauth-miui-release.aar (小米登录)".to_string(),
                 "oauth-google-release.aar (Google登录)".to_string(),
@@ -662,17 +713,16 @@ fn get_face_recognition_template() -> ModuleTemplate {
         description: "实人认证模块（DCloud/百度/阿里云）— 仅 Android".to_string(),
         android_config: AndroidModuleTemplate {
             required_aars: vec![
-                "uni-facialRecognitionVerify-release.aar".to_string(),
-                "aliyun-base-XXX.aar".to_string(),
-                "aliyun-facade-XXX.aar".to_string(),
-                "aliyun-face-XXX.aar".to_string(),
-                "aliyun-faceaudio-XXX.aar".to_string(),
-                "aliyun-facelanguage-XXX.aar".to_string(),
-                "aliyun-photoinus-XXX.aar".to_string(),
-                "aliyun-wishverify-XXX.aar".to_string(),
-                "Android-XXX.jiagu.aar".to_string(),
-                "10042.aar".to_string(),
-                "APSecuritySDK-DeepSec.aar".to_string(),
+                "uni-facialVerify-release.aar".to_string(),
+                "aliyun-base-*.aar".to_string(),
+                "aliyun-facade-*.aar".to_string(),
+                "aliyun-face-*.aar".to_string(),
+                "aliyun-faceaudio-*.aar".to_string(),
+                "aliyun-facelanguage-*.aar".to_string(),
+                "aliyun-photinus-*.aar".to_string(),
+                "aliyun-wishverify-*.aar".to_string(),
+                "Android-AliyunFaceGuard-*.aar".to_string(),
+                "APSecuritySDK-DeepSec-*.jiagu.aar".to_string(),
                 "facialRecognitionVerify-support-release.aar".to_string(),
             ],
             vendor_aars: vec![],
@@ -822,7 +872,9 @@ fn get_livepusher_template() -> ModuleTemplate {
             activities: vec![
                 "com.tencent.liteav.activity.TCActivity (腾讯直播容器)".to_string(),
             ],
-            properties_xml: "<feature name=\"LivePusher\"/>".to_string(),
+            properties_xml:
+                "<feature name=\"LivePusher\" value=\"io.dcloud.media.live.LiveMediaFeatureImpl\"/>"
+                    .to_string(),
         },
         ios_config: IosModuleTemplate {
             required_frameworks: vec![
@@ -873,6 +925,122 @@ fn get_camera_template() -> ModuleTemplate {
             plist_entry: "iOS 相机/相册模块：需配置 NSCameraUsageDescription 和 NSPhotoLibraryUsageDescription 权限描述".to_string(),
         },
     }
+}
+
+fn simple_android_module_template(
+    module_name: &str,
+    description: &str,
+    required_aars: &[&str],
+    properties_xml: &str,
+) -> ModuleTemplate {
+    ModuleTemplate {
+        module_name: module_name.to_string(),
+        description: description.to_string(),
+        android_config: AndroidModuleTemplate {
+            required_aars: required_aars
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+            vendor_aars: vec![],
+            gradle_dependencies: vec![],
+            manifest_placeholders: vec![],
+            manifest_meta_data: vec![],
+            activities: vec![],
+            properties_xml: properties_xml.to_string(),
+        },
+        ios_config: IosModuleTemplate {
+            required_frameworks: vec![],
+            required_libraries: vec![],
+            info_plist_keys: HashMap::new(),
+            url_schemes: vec![],
+            plist_entry: "Android 平台模块".to_string(),
+        },
+    }
+}
+
+fn get_videoplayer_template() -> ModuleTemplate {
+    simple_android_module_template(
+        "VideoPlayer",
+        "视频播放模块",
+        &["media-release.aar", "weex_videoplayer-release.aar"],
+        "<feature name=\"VideoPlayer\" value=\"io.dcloud.media.MediaFeatureImpl\"/>",
+    )
+}
+
+fn get_barcode_template() -> ModuleTemplate {
+    simple_android_module_template(
+        "Barcode",
+        "扫码模块",
+        &[],
+        "<feature name=\"Barcode\" value=\"io.dcloud.feature.barcode2.BarcodeFeatureImpl\"/>",
+    )
+}
+
+fn get_bluetooth_template() -> ModuleTemplate {
+    simple_android_module_template(
+        "Bluetooth",
+        "低功耗蓝牙模块",
+        &["Bluetooth-release.aar"],
+        "<feature name=\"Bluetooth\" value=\"io.dcloud.feature.bluetooth.BluetoothFeature\"/>",
+    )
+}
+
+fn get_ibeacon_template() -> ModuleTemplate {
+    simple_android_module_template(
+        "iBeacon",
+        "iBeacon 模块",
+        &["iBeacon-release.aar"],
+        "<feature name=\"iBeacon\" value=\"io.dcloud.feature.iBeacon.WxBluetoothFeatureImpl\"/>",
+    )
+}
+
+fn get_contacts_template() -> ModuleTemplate {
+    simple_android_module_template(
+        "Contacts",
+        "通讯录模块",
+        &["contacts-release.aar"],
+        "<feature name=\"Contacts\" value=\"io.dcloud.feature.contacts.ContactsFeatureImpl\"/>",
+    )
+}
+
+fn get_fingerprint_template() -> ModuleTemplate {
+    simple_android_module_template(
+        "Fingerprint",
+        "指纹识别模块",
+        &["fingerprint-release.aar"],
+        "<feature name=\"Fingerprint\" value=\"io.dcloud.feature.fingerprint.FingerPrintsImpl\"/>",
+    )
+}
+
+fn get_messaging_template() -> ModuleTemplate {
+    simple_android_module_template(
+        "Messaging",
+        "短彩邮件消息模块",
+        &["messaging-release.aar"],
+        "<feature name=\"Messaging\" value=\"io.dcloud.adapter.messaging.MessagingPluginImpl\"/>",
+    )
+}
+
+fn get_record_template() -> ModuleTemplate {
+    simple_android_module_template("Record", "录音模块", &[], "")
+}
+
+fn get_sqlite_template() -> ModuleTemplate {
+    simple_android_module_template(
+        "SQLite",
+        "数据库模块",
+        &["sqlite-release.aar"],
+        "<feature name=\"Sqlite\" value=\"io.dcloud.feature.sqlite.DataBaseFeature\"/>",
+    )
+}
+
+fn get_gcanvas_template() -> ModuleTemplate {
+    simple_android_module_template(
+        "gcanvas",
+        "gcanvas 画布模块",
+        &["weex_gcanvas-release.aar"],
+        "",
+    )
 }
 
 #[cfg(test)]

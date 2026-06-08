@@ -515,7 +515,7 @@ const utsPluginLabels = computed(() => {
 const androidModuleConfigSummary = computed(() => {
   const report = androidModuleConfigReport.value
   if (!report) return []
-  return report.modules.map(mod => `${mod.name} · ${mod.fields.length} 项配置`)
+  return report.modules.map(mod => `${mod.name} · ${mod.fields.length ? `${mod.fields.length} 项配置` : '无需配置'}`)
 })
 const androidConfiguredModuleNames = computed(() => androidModuleConfigReport.value?.modules.map(mod => mod.name) || [])
 
@@ -1215,13 +1215,13 @@ function goBack() {
         <n-alert v-else :type="androidMissingRequired.length ? 'warning' : 'success'">
           <n-space vertical :size="6">
             <n-text>
-              已检测到 {{ androidModuleConfigReport.modules.length }} 个需要配置项的 Android 模块：
+              已检测到 {{ androidModuleConfigReport.modules.length }} 个 Android 模块将参与打包：
               {{ androidConfiguredModuleNames.join('、') }}
             </n-text>
             <n-text v-if="androidMissingRequired.length">
               还有 {{ androidMissingRequired.length }} 个必填项未填写，填写完成后才能开始打包。
             </n-text>
-            <n-text v-else>必填配置已齐，可以开始 Android 打包。</n-text>
+            <n-text v-else>模块配置已就绪，可以开始 Android 打包。</n-text>
           </n-space>
         </n-alert>
 
@@ -1233,7 +1233,7 @@ function goBack() {
                 <n-tag size="small" type="info">{{ mod.category }}</n-tag>
                 <n-tag size="small" :type="mod.platforms.includes('android') ? 'success' : 'default'">{{ formatPlatforms(mod.platforms) }}</n-tag>
               </n-space>
-              <n-text depth="3">{{ mod.fields.length }} 项配置</n-text>
+              <n-text depth="3">{{ mod.fields.length ? `${mod.fields.length} 项配置` : '无需配置' }}</n-text>
             </div>
             <n-grid :cols="2" :x-gap="14" :y-gap="10" responsive="screen">
               <n-gi v-for="field in mod.fields" :key="mod.templateKey + field.key">

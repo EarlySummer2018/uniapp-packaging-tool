@@ -27,6 +27,10 @@ pub fn copy_module_activity_sources(
         .join("src/main/java");
 
     for module in modules {
+        if !crate::commands::shared::module::templates::module_applies_to_android(&module.platforms)
+        {
+            continue;
+        }
         let template_key = match super::artifacts::android_module_template_key(&module.name) {
             Some(k) => k,
             None => continue,

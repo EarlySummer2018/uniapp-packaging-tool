@@ -212,47 +212,21 @@
 
 ---
 
-### 拓展模块
+### manifest.json 勾选说明
 
-- `audio-mp3aac-release.aar` — 录制音频时需要录制MP3格式时使用，拷贝到libs即可，不需额外配置。
+这些模块的勾选状态主要来自 `manifest.json` 的 `app-plus.modules`，不能只读取 `app-plus.distribute.sdkConfigs`。完整结构可参考 DCloud 文档：[App manifest.json 完整配置](https://uniapp.dcloud.net.cn/collocation/manifest-app.html#full-manifest)。
 
----
-
-### 隐私与政策提示框配置
-
-#### 一级弹窗
-
-| 字符串键名 | 字符串键值 |
+| manifest 模块名 | 打包处理 |
 |---|---|
-| dcloud_privacy_prompt_title | 提示框标题，默认"服务协议和隐私政策" |
-| dcloud_privacy_prompt_accept_button_text | 接受按钮文本，默认"同意" |
-| dcloud_privacy_prompt_refuse_button_text | 拒绝按钮文本，默认不显示 |
-| dcloud_privacy_prompt_message | 提示框内容，支持richtext |
-
-#### 二级弹窗
-
-| 字符串键名 | 字符串键值 |
-|---|---|
-| dcloud_second_privacy_prompt_title | 二级弹窗标题，默认不显示 |
-| dcloud_second_privacy_prompt_accept_button_text | 确认按钮，默认"确定" |
-| dcloud_second_privacy_prompt_refuse_button_text | 拒绝按钮，默认不显示 |
-| dcloud_second_privacy_prompt_message | 内容，支持richtext |
-
-> 默认不显示二级弹窗，配置后点击一级弹窗拒绝按钮时才会弹出。
-
----
-
-### 国际化配置字符串
-
-详见原文档，包括：
-- html input(type=file) 选择页面国际化
-- 图片选择器国际化字符串（多图）
-- 应用启动时引导用户允许权限的提示语
-
----
-
-### 相关模块
-
-- [第三方 SDK 依赖说明](third-party-dependencies.md) — 默认集成依赖库信息
-- [Speech 语音输入](speech.md) — audio-mp3aac拓展模块用于录制MP3
-- [FAQ](../faq.md) — FAQ包含各类适配注意事项
+| `VideoPlayer` | 复制 `media-release.aar`、`weex_videoplayer-release.aar`，注册 `VideoPlayer` feature |
+| `LivePusher` | 复制 `weex_livepusher-release.aar`，注册 `LivePusher` feature，追加相机/录音/网络等权限 |
+| `Barcode` | 注册 `Barcode` feature，追加扫码所需相机/震动/闪光灯权限 |
+| `Bluetooth` | 复制 `Bluetooth-release.aar`，注册 `Bluetooth` feature，追加蓝牙权限 |
+| `iBeacon` | 复制 `iBeacon-release.aar`，注册 `iBeacon` feature，追加蓝牙权限 |
+| `Contacts` / `Contact` | 复制 `contacts-release.aar`，注册 `Contacts` feature，追加通讯录权限 |
+| `Fingerprint` | 复制 `fingerprint-release.aar`，注册 `Fingerprint` feature，追加指纹权限 |
+| `Messaging` | 复制 `messaging-release.aar`，注册 `Messaging` feature，追加短信权限 |
+| `Record` | 追加录音权限 |
+| `SQLite` / `Sqlite` | 复制 `sqlite-release.aar`，注册 `Sqlite` feature |
+| `gcanvas` / `GCanvas` | 复制 `weex_gcanvas-release.aar` |
+| `Webview-x5` / `X5Webview` | 复制 X5 WebView AAR，注册 `X5Webview` feature |

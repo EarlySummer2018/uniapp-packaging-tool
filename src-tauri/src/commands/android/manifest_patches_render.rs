@@ -470,17 +470,34 @@ pub fn render_android_module_manifest_patches_impl(
                 add_permissions(
                     &mut permissions,
                     &[
+                        "android.permission.INTERNET",
+                        "android.permission.ACCESS_NETWORK_STATE",
+                        "android.permission.ACCESS_WIFI_STATE",
+                        "android.permission.WRITE_EXTERNAL_STORAGE",
+                        "android.permission.READ_EXTERNAL_STORAGE",
                         "android.permission.BLUETOOTH",
                         "android.permission.CAMERA",
                         "android.permission.RECORD_AUDIO",
                         "android.permission.MODIFY_AUDIO_SETTINGS",
+                        "android.permission.READ_PHONE_STATE",
+                        r#"<uses-feature android:name="android.hardware.Camera" />"#,
+                        r#"<uses-feature android:name="android.hardware.camera.autofocus" />"#,
                     ],
                 );
                 mod_perms.extend([
+                    "android.permission.INTERNET".to_string(),
+                    "android.permission.ACCESS_NETWORK_STATE".to_string(),
+                    "android.permission.ACCESS_WIFI_STATE".to_string(),
+                    "android.permission.WRITE_EXTERNAL_STORAGE".to_string(),
+                    "android.permission.READ_EXTERNAL_STORAGE".to_string(),
                     "android.permission.BLUETOOTH".to_string(),
                     "android.permission.CAMERA".to_string(),
                     "android.permission.RECORD_AUDIO".to_string(),
                     "android.permission.MODIFY_AUDIO_SETTINGS".to_string(),
+                    "android.permission.READ_PHONE_STATE".to_string(),
+                    r#"<uses-feature android:name="android.hardware.Camera" />"#.to_string(),
+                    r#"<uses-feature android:name="android.hardware.camera.autofocus" />"#
+                        .to_string(),
                 ]);
                 if has_report_value(module, "LIVEPUSH_LICENSE_URL") {
                     let livepush_entries = [
@@ -508,6 +525,96 @@ pub fn render_android_module_manifest_patches_impl(
             "camera" => {
                 add_permissions(&mut permissions, &["android.permission.CAMERA"]);
                 mod_perms.push("android.permission.CAMERA".to_string());
+            }
+            "barcode" => {
+                add_permissions(
+                    &mut permissions,
+                    &[
+                        "android.permission.CAMERA",
+                        "android.permission.VIBRATE",
+                        "android.permission.FLASHLIGHT",
+                        r#"<uses-feature android:name="android.hardware.camera" />"#,
+                        r#"<uses-feature android:name="android.hardware.camera.autofocus" />"#,
+                    ],
+                );
+                mod_perms.extend([
+                    "android.permission.CAMERA".to_string(),
+                    "android.permission.VIBRATE".to_string(),
+                    "android.permission.FLASHLIGHT".to_string(),
+                    r#"<uses-feature android:name="android.hardware.camera" />"#.to_string(),
+                    r#"<uses-feature android:name="android.hardware.camera.autofocus" />"#
+                        .to_string(),
+                ]);
+            }
+            "bluetooth" | "ibeacon" => {
+                add_permissions(
+                    &mut permissions,
+                    &[
+                        "android.permission.ACCESS_COARSE_LOCATION",
+                        "android.permission.ACCESS_FINE_LOCATION",
+                        "android.permission.BLUETOOTH_ADMIN",
+                        "android.permission.BLUETOOTH",
+                        "android.permission.BLUETOOTH_SCAN",
+                        "android.permission.BLUETOOTH_CONNECT",
+                    ],
+                );
+                mod_perms.extend([
+                    "android.permission.ACCESS_COARSE_LOCATION".to_string(),
+                    "android.permission.ACCESS_FINE_LOCATION".to_string(),
+                    "android.permission.BLUETOOTH_ADMIN".to_string(),
+                    "android.permission.BLUETOOTH".to_string(),
+                    "android.permission.BLUETOOTH_SCAN".to_string(),
+                    "android.permission.BLUETOOTH_CONNECT".to_string(),
+                ]);
+            }
+            "contacts" => {
+                add_permissions(
+                    &mut permissions,
+                    &[
+                        "android.permission.GET_ACCOUNTS",
+                        "android.permission.WRITE_CONTACTS",
+                        "android.permission.READ_CONTACTS",
+                    ],
+                );
+                mod_perms.extend([
+                    "android.permission.GET_ACCOUNTS".to_string(),
+                    "android.permission.WRITE_CONTACTS".to_string(),
+                    "android.permission.READ_CONTACTS".to_string(),
+                ]);
+            }
+            "fingerprint" => {
+                add_permissions(&mut permissions, &["android.permission.USE_FINGERPRINT"]);
+                mod_perms.push("android.permission.USE_FINGERPRINT".to_string());
+            }
+            "messaging" => {
+                add_permissions(
+                    &mut permissions,
+                    &[
+                        "android.permission.RECEIVE_SMS",
+                        "android.permission.SEND_SMS",
+                        "android.permission.WRITE_SMS",
+                        "android.permission.READ_SMS",
+                    ],
+                );
+                mod_perms.extend([
+                    "android.permission.RECEIVE_SMS".to_string(),
+                    "android.permission.SEND_SMS".to_string(),
+                    "android.permission.WRITE_SMS".to_string(),
+                    "android.permission.READ_SMS".to_string(),
+                ]);
+            }
+            "record" => {
+                add_permissions(
+                    &mut permissions,
+                    &[
+                        "android.permission.RECORD_AUDIO",
+                        "android.permission.MODIFY_AUDIO_SETTINGS",
+                    ],
+                );
+                mod_perms.extend([
+                    "android.permission.RECORD_AUDIO".to_string(),
+                    "android.permission.MODIFY_AUDIO_SETTINGS".to_string(),
+                ]);
             }
             _ => {}
         }
@@ -543,7 +650,13 @@ pub fn render_android_module_manifest_patches_impl(
 
     let permissions_str = permissions
         .into_iter()
-        .map(|permission| format!("    <uses-permission android:name=\"{}\" />", permission))
+        .map(|permission| {
+            if permission.trim_start().starts_with('<') {
+                format!("    {}", permission)
+            } else {
+                format!("    <uses-permission android:name=\"{}\" />", permission)
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let application_entries_str = application_entries
@@ -749,6 +862,58 @@ mod tests {
             .activities
             .iter()
             .any(|activity| activity.starts_with(".wxapi.WXPayActivity")));
+    }
+
+    #[test]
+    fn other_modules_manifest_patches_include_required_permissions() {
+        let report = AndroidModuleConfigReport {
+            modules: [
+                ("Barcode", "barcode"),
+                ("Bluetooth", "bluetooth"),
+                ("iBeacon", "ibeacon"),
+                ("Contacts", "contacts"),
+                ("Fingerprint", "fingerprint"),
+                ("Messaging", "messaging"),
+                ("Record", "record"),
+                ("LivePusher", "livepusher"),
+            ]
+            .into_iter()
+            .map(|(name, template_key)| AndroidModuleConfigModule {
+                name: name.to_string(),
+                template_key: template_key.to_string(),
+                category: template_key.to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: Vec::new(),
+            })
+            .collect(),
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, groups) =
+            render_android_module_manifest_patches_impl(Some(&report), "com.example.demo", "");
+
+        for permission in [
+            "android.permission.CAMERA",
+            "android.permission.VIBRATE",
+            "android.permission.FLASHLIGHT",
+            "android.permission.ACCESS_FINE_LOCATION",
+            "android.permission.BLUETOOTH_CONNECT",
+            "android.permission.READ_CONTACTS",
+            "android.permission.USE_FINGERPRINT",
+            "android.permission.RECEIVE_SMS",
+            "android.permission.RECORD_AUDIO",
+            "android.permission.INTERNET",
+        ] {
+            assert!(patches.permissions.contains(permission));
+        }
+        assert!(patches
+            .permissions
+            .contains(r#"<uses-feature android:name="android.hardware.camera.autofocus" />"#));
+        assert!(groups.iter().any(|group| group.module_name == "barcode"));
+        assert!(groups.iter().any(|group| group.module_name == "bluetooth"));
+        assert!(groups.iter().any(|group| group.module_name == "livepusher"));
     }
 
     #[test]

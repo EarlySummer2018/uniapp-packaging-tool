@@ -122,7 +122,10 @@ pub(crate) fn apply_android_manifest_modules_internal(
 ) -> Result<(), String> {
     let supported = modules
         .iter()
-        .filter(|module| android_module_template_key(&module.name).is_some())
+        .filter(|module| {
+            crate::commands::shared::module::templates::module_applies_to_android(&module.platforms)
+                && android_module_template_key(&module.name).is_some()
+        })
         .collect::<Vec<_>>();
     if supported.is_empty() {
         emit_log(

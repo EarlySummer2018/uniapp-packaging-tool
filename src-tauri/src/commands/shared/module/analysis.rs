@@ -97,16 +97,14 @@ pub fn android_module_config_report_from_value(
             fields.push(field);
         }
 
-        if !fields.is_empty() {
-            report.modules.push(AndroidModuleConfigModule {
-                name: module.name.clone(),
-                template_key: template_key.to_string(),
-                category: module.category.clone(),
-                platforms: module.platforms.clone(),
-                source: module.source.clone(),
-                fields,
-            });
-        }
+        report.modules.push(AndroidModuleConfigModule {
+            name: module.name.clone(),
+            template_key: template_key.to_string(),
+            category: module.category.clone(),
+            platforms: module.platforms.clone(),
+            source: module.source.clone(),
+            fields,
+        });
     }
 
     report.all_configured = report.missing_required.is_empty();

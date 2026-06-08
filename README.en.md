@@ -67,6 +67,50 @@ npm run tauri build
 5. Fill in required module parameters, choose target platforms, and start the build.
 6. Review build results, logs, and artifact paths in Build History.
 
+## Supported Packaging Modules
+
+The following modules have been **tested and verified on Android** and are ready for offline packaging configuration:
+
+### Core Features
+
+- **Barcode / QR Scanner** — scan QR codes and barcodes
+- **Bluetooth Low Energy (BLE)** — connect and exchange data with BLE devices
+- **Camera & Gallery** — take photos and pick images from the gallery
+- **Contacts** — read and write address book entries
+- **Fingerprint Recognition** — device fingerprint biometric authentication
+- **iBeacon** — iBeacon device scanning and proximity detection
+- **Video Player** — play local and online video content
+
+### Authentication & Security
+
+- **Face Recognition / Real-person Verification** — face-based identity verification (DCloud / Baidu / Aliyun providers supported)
+
+### Communication
+
+- **Live Pusher** — audio/video live streaming push (Tencent Cloud LiteAVSDK)
+- **Messaging (SMS / MMS / Email)** — send SMS, MMS, and email messages
+- **Push Notifications** — uniPush push notifications (supports Xiaomi, Meizu, Huawei, OPPO, vivo, Honor, and other vendor channels)
+
+### Social & Sharing
+
+- **Sharing** — share to WeChat (text, images, links, mini-programs, etc.)
+
+### Login & Authentication
+
+- **One-click Login** — carrier-based one-click login (一键登录)
+- **WeChat Login** — WeChat Open Platform OAuth login
+
+### Payment
+
+- **Alipay Payment** — Alipay mobile payment
+- **WeChat Pay** — WeChat mobile payment
+
+> **Notes:**
+>
+> - All modules listed above have been verified through actual Android offline build processes.
+> - Other modules (e.g., Maps, Geolocation, Speech Recognition, Analytics, Advertising, etc.) have template definitions in the codebase but are **untested** and may have uncertainties.
+> - **iOS and HarmonyOS module-level packaging configuration is not yet supported**; support will be added in future releases.
+
 ## Repository Layout
 
 ```text

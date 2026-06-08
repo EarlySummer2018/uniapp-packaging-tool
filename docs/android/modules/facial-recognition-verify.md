@@ -16,7 +16,7 @@
 
 | 路径 | 文件列表 |
 |---|---|
-| **SDK\libs** | `uni-facialRecognitionVerify-release.aar`<br>`aliyun-base-XXX.aar`<br>`aliyun-facade-XXX.aar`<br>`aliyun-face-XXX.aar`<br>`aliyun-faceaudio-XXX.aar`<br>`aliyun-facelanguage-XXX.aar`<br>`aliyun-photoinus-XXX.aar`<br>`aliyun-wishverify-XXX.aar`<br>`Android-7.0.1.20230914.jiagu.ar`<br>`10042.aar`<br>`APSecuritySDK-DeepSec...aar`<br>`facialRecognitionVerify-support-release.aar` |
+| **SDK\libs** | `uni-facialVerify-release.aar`<br>`aliyun-base-XXX.aar`<br>`aliyun-facade-XXX.aar`<br>`aliyun-face-XXX.aar`<br>`aliyun-faceaudio-XXX.aar`<br>`aliyun-facelanguage-XXX.aar`<br>`aliyun-photinus-XXX.aar`<br>`aliyun-wishverify-XXX.aar`<br>`APSecuritySDK-DeepSec-*.jiagu.aar`<br>`Android-AliyunFaceGuard-10042.aar`<br>`APSecuritySDK-DeepSec-7.0.1.20230914.jiagu.aar`<br>`facialRecognitionVerify-support-release.aar` |
 
 > **注意**：`XXX` 为版本号，具体版本号以下载的 SDK 中的为准
 >

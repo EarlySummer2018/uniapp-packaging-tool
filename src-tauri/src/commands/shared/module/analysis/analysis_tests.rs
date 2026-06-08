@@ -87,6 +87,90 @@ fn dcloud_properties_camera_only_does_not_add_disabled_features() {
 }
 
 #[test]
+fn app_plus_other_modules_are_reported_and_generate_properties() {
+    let project_root =
+        std::env::temp_dir().join(format!("unipack-other-modules-{}", uuid::Uuid::new_v4()));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "VideoPlayer": {},
+                "Barcode": {},
+                "Bluetooth": {},
+                "iBeacon": {},
+                "Contacts": {},
+                "Fingerprint": {},
+                "Messaging": {},
+                "Record": {},
+                "SQLite": {},
+                "gcanvas": {},
+                "Webview-x5": {}
+            }
+        }
+    });
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+    let report =
+        android_module_config_report_from_value(&info.detected_modules, Some(&manifest), None);
+    let template_keys = report
+        .modules
+        .iter()
+        .map(|module| module.template_key.as_str())
+        .collect::<Vec<_>>();
+
+    for key in [
+        "video_player",
+        "barcode",
+        "bluetooth",
+        "ibeacon",
+        "contacts",
+        "fingerprint",
+        "messaging",
+        "record",
+        "sqlite",
+        "gcanvas",
+        "x5_tbs",
+    ] {
+        assert!(template_keys.contains(&key), "{key} should be reported");
+    }
+    assert!(report
+        .modules
+        .iter()
+        .filter(|module| module.template_key != "livepusher")
+        .all(|module| module.fields.is_empty()));
+
+    let config = module_config_from_detected_modules(&info.detected_modules);
+    let enabled = info
+        .detected_modules
+        .iter()
+        .map(|module| module.name.clone())
+        .collect::<Vec<_>>();
+    let path = temp_file("unipack-other-modules-properties");
+
+    generate_dcloud_properties(&path, &config, &enabled).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+
+    for feature in [
+        r#"<feature name="VideoPlayer" value="io.dcloud.media.MediaFeatureImpl"/>"#,
+        r#"<feature name="Barcode" value="io.dcloud.feature.barcode2.BarcodeFeatureImpl"/>"#,
+        r#"<feature name="Bluetooth" value="io.dcloud.feature.bluetooth.BluetoothFeature"/>"#,
+        r#"<feature name="iBeacon" value="io.dcloud.feature.iBeacon.WxBluetoothFeatureImpl"/>"#,
+        r#"<feature name="Contacts" value="io.dcloud.feature.contacts.ContactsFeatureImpl"/>"#,
+        r#"<feature name="Fingerprint" value="io.dcloud.feature.fingerprint.FingerPrintsImpl"/>"#,
+        r#"<feature name="Messaging" value="io.dcloud.adapter.messaging.MessagingPluginImpl"/>"#,
+        r#"<feature name="Sqlite" value="io.dcloud.feature.sqlite.DataBaseFeature"/>"#,
+        r#"<feature name="X5Webview" value="io.dcloud.feature.X5Webview.X5WebViewService"/>"#,
+    ] {
+        assert!(content.contains(feature), "{feature} should be generated");
+    }
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn dcloud_properties_push_adds_feature_and_service() {
     let path = temp_file("unipack-push-properties");
     let mut config = ModuleConfigTree::default();

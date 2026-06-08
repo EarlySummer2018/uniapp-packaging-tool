@@ -11,6 +11,8 @@ import { RefreshOutline, TrashOutline,
   CopyOutline, CheckmarkOutline } from '@vicons/ionicons5'
 import { invoke } from '@tauri-apps/api/core'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import LogDisplay from '../components/LogDisplay.vue'
+import type { LogLevel, LogEntry } from '../components/LogDisplay.vue'
 import { useProjectsStore } from '../stores/projects'
 
 const message = useMessage()
@@ -49,6 +51,7 @@ const currentPage = ref(1)
 
 const showLogModal = ref(false)
 const currentLogContent = ref('')
+const currentLogEntries = ref<LogEntry[]>([])
 const currentLogRecord = ref<BuildRecord | null>(null)
 const historyCopied = ref(false)
 let historyCopyTimer: ReturnType<typeof setTimeout> | null = null
@@ -325,15 +328,40 @@ const columns = [
   }
 ]
 
+function parseLogFile(raw: string): LogEntry[] {
+  const entries: LogEntry[] = []
+  const lines = raw.split('\n')
+  // Pattern: [info] msg, [warn] msg, [error] msg, [success] msg
+  // Also plain lines: timestamp + message
+  for (const line of lines) {
+    if (!line.trim()) continue
+    const match = line.match(/^\[(info|warn|error|success)\]\s*(.+)$/i)
+    if (match) {
+      entries.push({ level: match[1].toLowerCase() as LogLevel, message: match[2] })
+    } else {
+      // Try to extract timestamp from beginning
+      const tsMatch = line.match(/^(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+(.+)$/i)
+      if (tsMatch) {
+        entries.push({ level: 'info' as LogLevel, message: tsMatch[2], timestamp: tsMatch[1] })
+      } else {
+        entries.push({ level: 'info' as LogLevel, message: line })
+      }
+    }
+  }
+  return entries
+}
+
 async function viewLog(record: BuildRecord) {
   currentLogRecord.value = record
   currentLogContent.value = ''
+  currentLogEntries.value = []
   showLogModal.value = true
 
   if (record.log_path) {
     try {
       const content = await invoke<string>('read_text_file', { path: record.log_path })
       currentLogContent.value = content
+      currentLogEntries.value = parseLogFile(content)
     } catch {
       currentLogContent.value = '无法读取日志文件'
     }
@@ -559,8 +587,8 @@ onUnmounted(() => {
       <template #action>
         <n-space align="center" justify="space-between" style="width: 100%;">
           <n-text depth="3" style="font-size: 12px;">
-            <template v-if="currentLogContent && !currentLogContent.includes('无法读取') && !currentLogContent.includes('没有关联')">
-              共 {{ currentLogContent.split('\n').length }} 行 · {{ formatLogSize(currentLogContent.length) }}
+            <template v-if="currentLogEntries.length">
+              共 {{ currentLogEntries.length }} 行 · {{ formatLogSize(currentLogContent.length) }}
             </template>
           </n-text>
           <n-button
@@ -579,7 +607,12 @@ onUnmounted(() => {
       </template>
 
       <n-alert v-if="!currentLogContent" type="info">日志加载中...</n-alert>
-      <pre v-else class="log-content">{{ currentLogContent }}</pre>
+      <LogDisplay
+        v-else
+        :logs="currentLogEntries"
+        :height="'450px'"
+        :show-toolbar="false"
+      />
     </n-modal>
   </div>
 </template>
@@ -606,19 +639,5 @@ onUnmounted(() => {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid #f0f0f0;
-}
-
-.log-content {
-  background: #1e1e1e;
-  color: #d4d4d4;
-  padding: 16px;
-  border-radius: 6px;
-  font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  max-height: 450px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
 }
 </style>

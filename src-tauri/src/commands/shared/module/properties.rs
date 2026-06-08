@@ -531,7 +531,9 @@ fn collect_features_to_add(
             if lp.enabled {
                 features.push(DCloudPropertyFeature {
                     name: "LivePusher".to_string(),
-                    xml_fragment: "<feature name=\"LivePusher\"/>".to_string(),
+                    xml_fragment:
+                        "<feature name=\"LivePusher\" value=\"io.dcloud.media.live.LiveMediaFeatureImpl\"/>"
+                            .to_string(),
                 });
             }
         }
@@ -544,6 +546,110 @@ fn collect_features_to_add(
                     name: "Camera".to_string(),
                     xml_fragment:
                         "<feature name=\"Camera\" value=\"io.dcloud.js.camera.CameraFeatureImpl\"/>"
+                            .to_string(),
+                });
+            }
+        }
+    }
+
+    if module_is_enabled(enabled_modules, "video_player") {
+        if let Some(ref video_player) = config.video_player {
+            if video_player.enabled {
+                features.push(DCloudPropertyFeature {
+                    name: "VideoPlayer".to_string(),
+                    xml_fragment:
+                        "<feature name=\"VideoPlayer\" value=\"io.dcloud.media.MediaFeatureImpl\"/>"
+                            .to_string(),
+                });
+            }
+        }
+    }
+
+    if module_is_enabled(enabled_modules, "barcode") {
+        if let Some(ref barcode) = config.barcode {
+            if barcode.enabled {
+                features.push(DCloudPropertyFeature {
+                    name: "Barcode".to_string(),
+                    xml_fragment:
+                        "<feature name=\"Barcode\" value=\"io.dcloud.feature.barcode2.BarcodeFeatureImpl\"/>"
+                            .to_string(),
+                });
+            }
+        }
+    }
+
+    if module_is_enabled(enabled_modules, "bluetooth") {
+        if let Some(ref bluetooth) = config.bluetooth {
+            if bluetooth.enabled {
+                features.push(DCloudPropertyFeature {
+                    name: "Bluetooth".to_string(),
+                    xml_fragment:
+                        "<feature name=\"Bluetooth\" value=\"io.dcloud.feature.bluetooth.BluetoothFeature\"/>"
+                            .to_string(),
+                });
+            }
+        }
+    }
+
+    if module_is_enabled(enabled_modules, "ibeacon") {
+        if let Some(ref ibeacon) = config.ibeacon {
+            if ibeacon.enabled {
+                features.push(DCloudPropertyFeature {
+                    name: "iBeacon".to_string(),
+                    xml_fragment:
+                        "<feature name=\"iBeacon\" value=\"io.dcloud.feature.iBeacon.WxBluetoothFeatureImpl\"/>"
+                            .to_string(),
+                });
+            }
+        }
+    }
+
+    if module_is_enabled(enabled_modules, "contacts") {
+        if let Some(ref contacts) = config.contacts {
+            if contacts.enabled {
+                features.push(DCloudPropertyFeature {
+                    name: "Contacts".to_string(),
+                    xml_fragment:
+                        "<feature name=\"Contacts\" value=\"io.dcloud.feature.contacts.ContactsFeatureImpl\"/>"
+                            .to_string(),
+                });
+            }
+        }
+    }
+
+    if module_is_enabled(enabled_modules, "fingerprint") {
+        if let Some(ref fingerprint) = config.fingerprint {
+            if fingerprint.enabled {
+                features.push(DCloudPropertyFeature {
+                    name: "Fingerprint".to_string(),
+                    xml_fragment:
+                        "<feature name=\"Fingerprint\" value=\"io.dcloud.feature.fingerprint.FingerPrintsImpl\"/>"
+                            .to_string(),
+                });
+            }
+        }
+    }
+
+    if module_is_enabled(enabled_modules, "messaging") {
+        if let Some(ref messaging) = config.messaging {
+            if messaging.enabled {
+                features.push(DCloudPropertyFeature {
+                    name: "Messaging".to_string(),
+                    xml_fragment:
+                        "<feature name=\"Messaging\" value=\"io.dcloud.adapter.messaging.MessagingPluginImpl\"/>"
+                            .to_string(),
+                });
+            }
+        }
+    }
+
+    if module_is_enabled(enabled_modules, "sqlite") {
+        if let Some(ref sqlite) = config.sqlite {
+            if sqlite.enabled {
+                features.push(DCloudPropertyFeature {
+                    name: "Sqlite".to_string(),
+                    xml_fragment:
+                        "<feature name=\"Sqlite\" value=\"io.dcloud.feature.sqlite.DataBaseFeature\"/>"
                             .to_string(),
                 });
             }

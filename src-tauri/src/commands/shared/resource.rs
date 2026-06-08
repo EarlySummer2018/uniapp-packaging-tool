@@ -474,6 +474,112 @@ fn match_module_to_category(module_name: &str) -> DetectedModule {
             required_keys: vec![],
             source: String::new(),
         },
+        "X5Webview" | "X5TBS" | "Webview-x5" | "webview-x5" | "Android X5 Webview" => {
+            DetectedModule {
+                name: "X5Webview".to_string(),
+                category: "x5_tbs".to_string(),
+                platforms: vec![],
+                configured: false,
+                required_keys: vec![],
+                source: String::new(),
+            }
+        }
+        "LivePusher" | "livepusher" | "livePusher" => DetectedModule {
+            name: "LivePusher".to_string(),
+            category: "livepusher".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
+        "Camera" | "camera" => DetectedModule {
+            name: "Camera".to_string(),
+            category: "camera".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
+        "VideoPlayer" | "videoplayer" | "videoPlayer" => DetectedModule {
+            name: "VideoPlayer".to_string(),
+            category: "video_player".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
+        "Barcode" | "barcode" => DetectedModule {
+            name: "Barcode".to_string(),
+            category: "barcode".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
+        "Bluetooth" | "bluetooth" => DetectedModule {
+            name: "Bluetooth".to_string(),
+            category: "bluetooth".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
+        "iBeacon" | "IBeacon" | "ibeacon" => DetectedModule {
+            name: "iBeacon".to_string(),
+            category: "ibeacon".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
+        "Contacts" | "Contact" | "contacts" | "contact" => DetectedModule {
+            name: "Contacts".to_string(),
+            category: "contacts".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
+        "Fingerprint" | "fingerprint" => DetectedModule {
+            name: "Fingerprint".to_string(),
+            category: "fingerprint".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
+        "Messaging" | "messaging" => DetectedModule {
+            name: "Messaging".to_string(),
+            category: "messaging".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
+        "Record" | "record" => DetectedModule {
+            name: "Record".to_string(),
+            category: "record".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
+        "SQLite" | "Sqlite" | "sqlite" => DetectedModule {
+            name: "SQLite".to_string(),
+            category: "sqlite".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
+        "GCanvas" | "gcanvas" => DetectedModule {
+            name: "gcanvas".to_string(),
+            category: "gcanvas".to_string(),
+            platforms: vec![],
+            configured: false,
+            required_keys: vec![],
+            source: String::new(),
+        },
         _ => DetectedModule {
             name: module_name.to_string(),
             category: "manifest".to_string(),
@@ -498,6 +604,25 @@ fn check_module_configured_in_props(module_name: &str, props_content: &str) -> b
         "Map" | "Maps" => {
             props_content.contains("Mapp") || props_content.contains(r#"feature name="Map""#)
         }
+        "X5Webview" | "X5TBS" | "Webview-x5" | "webview-x5" => {
+            props_content.contains(r#"feature name="X5Webview""#)
+        }
+        "LivePusher" | "livepusher" | "livePusher" => {
+            props_content.contains(r#"feature name="LivePusher""#)
+        }
+        "Camera" | "camera" => props_content.contains(r#"feature name="Camera""#),
+        "VideoPlayer" | "videoplayer" | "videoPlayer" => {
+            props_content.contains(r#"feature name="VideoPlayer""#)
+        }
+        "Barcode" | "barcode" => props_content.contains(r#"feature name="Barcode""#),
+        "Bluetooth" | "bluetooth" => props_content.contains(r#"feature name="Bluetooth""#),
+        "iBeacon" | "IBeacon" | "ibeacon" => props_content.contains(r#"feature name="iBeacon""#),
+        "Contacts" | "Contact" | "contacts" | "contact" => {
+            props_content.contains(r#"feature name="Contacts""#)
+        }
+        "Fingerprint" | "fingerprint" => props_content.contains(r#"feature name="Fingerprint""#),
+        "Messaging" | "messaging" => props_content.contains(r#"feature name="Messaging""#),
+        "SQLite" | "Sqlite" | "sqlite" => props_content.contains(r#"feature name="Sqlite""#),
         _ => false,
     }
 }
@@ -733,8 +858,19 @@ fn sdk_config_key_to_module_name(key: &str) -> Option<&'static str> {
         "facialRecognitionVerify" | "faceRecognition" | "face_recognition" => {
             Some("FacialRecognitionVerify")
         }
-        "x5" | "x5Webview" | "x5_webview" => Some("X5Webview"),
+        "x5" | "x5Webview" | "x5_webview" | "webview-x5" | "Webview-x5" => Some("X5Webview"),
         "livepusher" | "livePusher" => Some("LivePusher"),
+        "camera" => Some("Camera"),
+        "videoPlayer" | "videoplayer" => Some("VideoPlayer"),
+        "barcode" => Some("Barcode"),
+        "bluetooth" => Some("Bluetooth"),
+        "iBeacon" | "ibeacon" => Some("iBeacon"),
+        "contacts" | "contact" => Some("Contacts"),
+        "fingerprint" => Some("Fingerprint"),
+        "messaging" => Some("Messaging"),
+        "record" => Some("Record"),
+        "sqlite" | "SQLite" => Some("SQLite"),
+        "gcanvas" | "GCanvas" => Some("gcanvas"),
         _ => None,
     }
 }
