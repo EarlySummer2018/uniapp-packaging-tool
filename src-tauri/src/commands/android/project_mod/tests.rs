@@ -40,6 +40,10 @@ mod tests {
                 "implementation project(':demo-plugin')".to_string(),
             ],
             uts_abi_filters: vec!["armeabi-v7a".to_string(), "arm64-v8a".to_string()],
+            android_abi_filters: vec![],
+            android_permissions: vec![],
+            android_exclude_permissions: vec![],
+            android_schemes: vec![],
             uts_hooks_classes: vec!["uts.sdk.modules.demo.DemoHook".to_string()],
             module_permissions: vec![
                 r#"<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />"#
@@ -291,6 +295,55 @@ dependencies {
             std::fs::read_to_string(workspace.join(MODULE_NAME).join("build.gradle")).unwrap();
         assert!(app_gradle.contains("apply plugin: 'com.huawei.agconnect'"));
         assert!(app_gradle.contains("implementation 'com.huawei.hms:push:6.11.0.300'"));
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn manifest_android_distribute_fields_are_applied_with_excludes_taking_priority() {
+        let workspace = std::env::temp_dir().join(format!(
+            "unipack-android-distribute-{}",
+            uuid::Uuid::new_v4()
+        ));
+        write_official_like_project(&workspace);
+        let modifier = AndroidProjectModifier::new(workspace.clone()).unwrap();
+        let mut ctx = test_context();
+        ctx.android_abi_filters = vec!["arm64-v8a".to_string()];
+        ctx.android_permissions = vec![
+            r#"<uses-permission android:name="android.permission.INTERNET" />"#.to_string(),
+            r#"<uses-feature android:name="android.hardware.camera" />"#.to_string(),
+        ];
+        ctx.android_exclude_permissions = vec![
+            r#"<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />"#
+                .to_string(),
+            "android.hardware.camera".to_string(),
+        ];
+        ctx.android_schemes = vec!["comchatvivaus".to_string()];
+
+        modifier.apply_all_modifications(&ctx).unwrap();
+        modifier.apply_all_modifications(&ctx).unwrap();
+
+        let build_gradle =
+            std::fs::read_to_string(workspace.join(MODULE_NAME).join("build.gradle")).unwrap();
+        assert!(build_gradle.contains("abiFilters 'arm64-v8a'"));
+        assert!(!build_gradle.contains("armeabi-v7a"));
+
+        let manifest = std::fs::read_to_string(
+            workspace
+                .join(MODULE_NAME)
+                .join("src/main/AndroidManifest.xml"),
+        )
+        .unwrap();
+        assert_eq!(manifest.matches("android.permission.INTERNET").count(), 1);
+        assert!(!manifest.contains("android.permission.ACCESS_BACKGROUND_LOCATION"));
+        assert!(!manifest.contains("android.hardware.camera"));
+        assert_eq!(
+            manifest
+                .matches(r#"android:scheme="comchatvivaus""#)
+                .count(),
+            1
+        );
+        assert!(manifest.contains(r#"android.intent.category.BROWSABLE"#));
 
         let _ = std::fs::remove_dir_all(workspace);
     }

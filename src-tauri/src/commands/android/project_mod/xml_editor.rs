@@ -87,6 +87,34 @@ impl XmlManifestEditor {
         Ok(())
     }
 
+    /// 从顶层 Manifest 中删除指定权限/feature 声明。
+    ///
+    /// 匹配规则使用 `android:name`，因此调用方既可以传完整 XML 片段，
+    /// 也可以传裸权限名（如 `android.permission.CAMERA`）。
+    pub fn remove_permissions(&mut self, permissions: &[String]) {
+        let names = normalize_permission_names(permissions);
+        if names.is_empty() {
+            return;
+        }
+        self.content = remove_manifest_permission_entries(&self.content, &names);
+    }
+
+    /// 将 app UrlSchemes 添加到入口 Activity。
+    pub fn add_app_url_schemes(&mut self, schemes: &[String]) -> Result<(), String> {
+        for scheme in normalize_scheme_values(schemes) {
+            if manifest_contains_data_scheme(&self.content, &scheme) {
+                continue;
+            }
+            let filter = app_url_scheme_intent_filter(&scheme);
+            let identity = ChildIdentity::IntentFilterDataScheme(scheme);
+            self.add_activity_child("io.dcloud.PandoraEntryActivity", &filter, &identity)
+                .or_else(|_| {
+                    self.add_activity_child("io.dcloud.PandoraEntry", &filter, &identity)
+                })?;
+        }
+        Ok(())
+    }
+
     /// 设置/更新 <application> 标签的属性值。
     ///
     /// 使用正则精确匹配并替换属性值，不重写整个文档，
@@ -524,4 +552,123 @@ fn set_or_insert_xml_attr(tag: &str, attr_name: &str, attr_value: &str) -> Resul
             &format!(r#" {}="{}""#, attr_name, escaped_value),
         ))
     }
+}
+
+fn normalize_permission_names(permissions: &[String]) -> Vec<String> {
+    let mut names = Vec::new();
+    for permission in permissions {
+        let permission = permission.trim();
+        if permission.is_empty() {
+            continue;
+        }
+        let name = if permission.starts_with('<') {
+            android_attr_value(permission, "android:name")
+        } else {
+            Some(permission.to_string())
+        };
+        let Some(name) = name.map(|name| name.trim().to_string()) else {
+            continue;
+        };
+        if !name.is_empty() && !names.iter().any(|existing| existing == &name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+fn normalize_scheme_values(schemes: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    for scheme in schemes {
+        for value in scheme.split(',') {
+            let value = value.trim();
+            if !value.is_empty() && !result.iter().any(|existing| existing == value) {
+                result.push(value.to_string());
+            }
+        }
+    }
+    result
+}
+
+fn app_url_scheme_intent_filter(scheme: &str) -> String {
+    format!(
+        r#"<intent-filter>
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data android:scheme="{}" />
+</intent-filter>"#,
+        escape_xml_attr(scheme)
+    )
+}
+
+fn manifest_contains_data_scheme(content: &str, scheme: &str) -> bool {
+    let re = Regex::new(r#"(?s)<data\b[^>]*android:scheme\s*=\s*"([^"]*)"[^>]*/?>"#).unwrap();
+    let exists = re
+        .captures_iter(content)
+        .filter_map(|captures| captures.get(1))
+        .any(|value| value.as_str() == scheme);
+    exists
+}
+
+fn remove_manifest_permission_entries(content: &str, names: &[String]) -> String {
+    let re = Regex::new(r#"(?s)<(uses-permission(?:-sdk-\d+)?|uses-feature|permission)\b[^>]*>"#)
+        .unwrap();
+    let mut ranges = Vec::new();
+
+    for mat in re.find_iter(content) {
+        let tag = mat.as_str();
+        let Some(name) = android_attr_value(tag, "android:name") else {
+            continue;
+        };
+        if !names.iter().any(|excluded| excluded == &name) {
+            continue;
+        }
+
+        let tag_name = re
+            .captures(tag)
+            .and_then(|captures| captures.get(1))
+            .map(|value| value.as_str())
+            .unwrap_or("uses-permission");
+        let end = if tag.trim_end().ends_with("/>") {
+            mat.end()
+        } else {
+            let close = format!("</{}>", tag_name);
+            content[mat.end()..]
+                .find(&close)
+                .map(|offset| mat.end() + offset + close.len())
+                .unwrap_or(mat.end())
+        };
+        ranges.push(expand_manifest_entry_removal_range(
+            content,
+            mat.start(),
+            end,
+        ));
+    }
+
+    if ranges.is_empty() {
+        return content.to_string();
+    }
+
+    ranges.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut result = content.to_string();
+    for (start, end) in ranges {
+        result.replace_range(start..end, "");
+    }
+    result
+}
+
+fn expand_manifest_entry_removal_range(content: &str, start: usize, end: usize) -> (usize, usize) {
+    let line_start = content[..start].rfind('\n').map(|pos| pos + 1).unwrap_or(0);
+    if content[line_start..start]
+        .chars()
+        .all(|ch| ch == ' ' || ch == '\t')
+    {
+        let range_start = if line_start > 0 {
+            line_start - 1
+        } else {
+            line_start
+        };
+        return (range_start, end);
+    }
+    (start, end)
 }

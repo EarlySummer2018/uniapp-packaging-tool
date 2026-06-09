@@ -29,6 +29,8 @@ pub(crate) fn can_be_child_of(child: &str, parent: &str) -> bool {
             "application"
                 | "permission"
                 | "uses-permission"
+                | "uses-permission-sdk-23"
+                | "uses-feature"
                 | "uses-sdk"
                 | "query"
                 | "supports-screens"

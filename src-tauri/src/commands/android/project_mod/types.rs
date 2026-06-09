@@ -40,6 +40,10 @@ pub struct BuildModificationContext {
     pub plugin_includes: Vec<String>,
     pub plugin_project_dependencies: Vec<String>,
     pub uts_abi_filters: Vec<String>,
+    pub android_abi_filters: Vec<String>,
+    pub android_permissions: Vec<String>,
+    pub android_exclude_permissions: Vec<String>,
+    pub android_schemes: Vec<String>,
     pub uts_hooks_classes: Vec<String>,
     /// 旧字段（扁平化），保留向后兼容
     pub module_permissions: Vec<String>,

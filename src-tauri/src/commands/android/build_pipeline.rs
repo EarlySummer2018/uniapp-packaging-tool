@@ -472,6 +472,26 @@ impl BuildContext {
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),
+            android_abi_filters: self
+                .manifest_info
+                .as_ref()
+                .map(|info| info.android.abi_filters.clone())
+                .unwrap_or_default(),
+            android_permissions: self
+                .manifest_info
+                .as_ref()
+                .map(|info| info.android.permissions.clone())
+                .unwrap_or_default(),
+            android_exclude_permissions: self
+                .manifest_info
+                .as_ref()
+                .map(|info| info.android.exclude_permissions.clone())
+                .unwrap_or_default(),
+            android_schemes: self
+                .manifest_info
+                .as_ref()
+                .map(|info| info.android.schemes.clone())
+                .unwrap_or_default(),
             uts_hooks_classes: self
                 .scan
                 .uts

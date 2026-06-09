@@ -34,6 +34,14 @@ pub struct AndroidManifestConfig {
     pub min_sdk_version: Option<u32>,
     pub target_sdk_version: Option<u32>,
     pub compile_sdk_version: Option<u32>,
+    #[serde(default)]
+    pub permissions: Vec<String>,
+    #[serde(default)]
+    pub exclude_permissions: Vec<String>,
+    #[serde(default)]
+    pub schemes: Vec<String>,
+    #[serde(default)]
+    pub abi_filters: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -742,6 +750,18 @@ pub fn parse_uniapp_manifest(
                 .and_then(|v| number_field(v, &["targetSdkVersion", "targetSdk", "target_sdk"])),
             compile_sdk_version: android_value
                 .and_then(|v| number_field(v, &["compileSdkVersion", "compileSdk", "compile_sdk"])),
+            permissions: android_value
+                .and_then(|v| string_list_field(v, &["permissions"]))
+                .unwrap_or_default(),
+            exclude_permissions: android_value
+                .and_then(|v| string_list_field(v, &["excludePermissions", "exclude_permissions"]))
+                .unwrap_or_default(),
+            schemes: android_value
+                .and_then(|v| string_list_field(v, &["schemes", "urlSchemes", "url_schemes"]))
+                .unwrap_or_default(),
+            abi_filters: android_value
+                .and_then(|v| string_list_field(v, &["abiFilters", "abi_filters"]))
+                .unwrap_or_default(),
         },
         package_names: PlatformPackages {
             android_package: android_value
@@ -765,6 +785,48 @@ fn string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
             .filter(|v| !v.is_empty())
             .map(String::from)
     })
+}
+
+fn string_list_field(value: &serde_json::Value, keys: &[&str]) -> Option<Vec<String>> {
+    keys.iter().find_map(|key| {
+        let value = value.get(*key)?;
+        let mut items = Vec::new();
+        collect_string_list_values(value, &mut items);
+        if items.is_empty() {
+            None
+        } else {
+            Some(dedup_strings(items))
+        }
+    })
+}
+
+fn collect_string_list_values(value: &serde_json::Value, items: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(raw) => {
+            for item in raw.split(',') {
+                let item = item.trim();
+                if !item.is_empty() {
+                    items.push(item.to_string());
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_string_list_values(value, items);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn dedup_strings(items: Vec<String>) -> Vec<String> {
+    let mut result = Vec::new();
+    for item in items {
+        if !result.iter().any(|existing| existing == &item) {
+            result.push(item);
+        }
+    }
+    result
 }
 
 fn bool_field(value: &serde_json::Value, keys: &[&str]) -> Option<bool> {
@@ -1314,6 +1376,91 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(project_root);
+    }
+
+    #[test]
+    fn parse_manifest_reads_android_distribute_build_fields() {
+        let project_root =
+            std::env::temp_dir().join(format!("unipack-android-fields-{}", uuid::Uuid::new_v4()));
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "android": {
+                        "permissions": [
+                            "<uses-permission android:name=\"android.permission.INTERNET\" />",
+                            "android.permission.CAMERA"
+                        ],
+                        "excludePermissions": [
+                            "<uses-permission android:name=\"android.permission.READ_LOGS\" />"
+                        ],
+                        "schemes": "comchatvivaus, demoapp",
+                        "abiFilters": ["arm64-v8a"],
+                        "minSdkVersion": 23
+                    }
+                }
+            }
+        });
+
+        let info = parse_uniapp_manifest(
+            &manifest,
+            &project_root.join("manifest.json"),
+            &project_root,
+            None,
+        );
+
+        assert_eq!(
+            info.android.permissions,
+            vec![
+                r#"<uses-permission android:name="android.permission.INTERNET" />"#.to_string(),
+                "android.permission.CAMERA".to_string()
+            ]
+        );
+        assert_eq!(
+            info.android.exclude_permissions,
+            vec![r#"<uses-permission android:name="android.permission.READ_LOGS" />"#.to_string()]
+        );
+        assert_eq!(
+            info.android.schemes,
+            vec!["comchatvivaus".to_string(), "demoapp".to_string()]
+        );
+        assert_eq!(info.android.abi_filters, vec!["arm64-v8a".to_string()]);
+        assert_eq!(info.android.min_sdk_version, Some(23));
+    }
+
+    #[test]
+    fn parse_manifest_ignores_empty_android_distribute_build_fields() {
+        let project_root = std::env::temp_dir().join(format!(
+            "unipack-empty-android-fields-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "android": {
+                        "permissions": "",
+                        "excludePermissions": [],
+                        "schemes": "",
+                        "abiFilters": [],
+                        "minSdkVersion": "",
+                        "targetSdkVersion": ""
+                    }
+                }
+            }
+        });
+
+        let info = parse_uniapp_manifest(
+            &manifest,
+            &project_root.join("manifest.json"),
+            &project_root,
+            None,
+        );
+
+        assert_eq!(info.android.min_sdk_version, Some(21));
+        assert_eq!(info.android.target_sdk_version, None);
+        assert!(info.android.permissions.is_empty());
+        assert!(info.android.exclude_permissions.is_empty());
+        assert!(info.android.schemes.is_empty());
+        assert!(info.android.abi_filters.is_empty());
     }
 
     #[test]

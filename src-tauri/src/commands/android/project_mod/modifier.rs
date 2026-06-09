@@ -173,7 +173,12 @@ impl AndroidProjectModifier {
             ),
         )?;
 
-        content = ensure_default_config_ndk_abi_filters(&content, &ctx.uts_abi_filters)?;
+        let abi_filters = if ctx.android_abi_filters.is_empty() {
+            &ctx.uts_abi_filters
+        } else {
+            &ctx.android_abi_filters
+        };
+        content = ensure_default_config_ndk_abi_filters(&content, abi_filters)?;
         content = ensure_uts_hooks_class_array(&content, &ctx.uts_hooks_classes)?;
         content = set_manifest_placeholders(&content, &ctx.manifest_placeholders)?;
         content = ensure_signing_configs_block(&content, &render_signing_configs(ctx))?;
@@ -433,6 +438,16 @@ impl AndroidProjectModifier {
             }
 
             eprintln!("[INFO] 模块 {} Manifest 条目插入完成", group.module_name);
+        }
+
+        if !ctx.android_permissions.is_empty() {
+            editor.add_permissions(&ctx.android_permissions)?;
+        }
+        if !ctx.android_schemes.is_empty() {
+            editor.add_app_url_schemes(&ctx.android_schemes)?;
+        }
+        if !ctx.android_exclude_permissions.is_empty() {
+            editor.remove_permissions(&ctx.android_exclude_permissions);
         }
 
         // === Post-processing: 清理模板遗留的无效内容 ===

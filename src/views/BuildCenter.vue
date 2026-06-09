@@ -58,6 +58,10 @@ interface AndroidManifestConfig {
   minSdkVersion?: number | null
   targetSdkVersion?: number | null
   compileSdkVersion?: number | null
+  permissions?: string[]
+  excludePermissions?: string[]
+  schemes?: string[]
+  abiFilters?: string[]
 }
 
 interface PlatformPackages {
