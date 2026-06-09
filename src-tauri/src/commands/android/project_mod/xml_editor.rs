@@ -173,6 +173,39 @@ impl XmlManifestEditor {
         }
     }
 
+    /// 将属性名合并到 <application> 的 tools:replace 列表中。
+    ///
+    /// 第三方 SDK 可能在其 Manifest 中声明与主工程不同的 application 属性值。
+    /// 主工程设置明确值后，需要通过 tools:replace 告知 Manifest Merger 以主工程为准。
+    pub fn add_application_tools_replace(&mut self, attr_name: &str) -> Result<(), String> {
+        let attr_name = attr_name.trim();
+        if attr_name.is_empty() {
+            return Ok(());
+        }
+
+        self.ensure_tools_namespace_if_needed("tools:replace")?;
+
+        let re = Regex::new(r#"(?s)<application\b[^>]*>"#)
+            .map_err(|e| format!("编译 application 标签正则失败: {}", e))?;
+        let application_tag = re
+            .find(&self.content)
+            .map(|mat| mat.as_str().to_string())
+            .ok_or_else(|| "AndroidManifest.xml 缺少 <application> 标签".to_string())?;
+
+        let mut attributes: Vec<String> = android_attr_value(&application_tag, "tools:replace")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .collect();
+        if !attributes.iter().any(|value| value == attr_name) {
+            attributes.push(attr_name.to_string());
+        }
+
+        self.set_application_attr("tools:replace", &attributes.join(","))
+    }
+
     /// 在 </application> 闭合标签前插入子元素。
     ///
     /// 先通过 identity 检查是否已存在，不存在则使用 quick-xml Reader

@@ -73,7 +73,7 @@ function handleGoToConfig(projectId: string) {
         <n-text class="page-subtitle">共 {{ projectsStore.projects.length }} 个项目</n-text>
       </div>
       <div class="dashboard-actions">
-        <n-button type="primary" :disabled="buildStore.hasActiveBuilds" @click="handleCreateProject">
+        <n-button data-guide="create-project" type="primary" :disabled="buildStore.hasActiveBuilds" @click="handleCreateProject">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
           </template>
@@ -82,7 +82,7 @@ function handleGoToConfig(projectId: string) {
       </div>
     </div>
 
-    <div class="overview-grid">
+    <div data-guide="project-overview" class="overview-grid">
       <div class="overview-tile primary">
         <n-text depth="3">项目总数</n-text>
         <n-text strong class="overview-value">{{ projectsStore.projects.length }}</n-text>
@@ -100,7 +100,7 @@ function handleGoToConfig(projectId: string) {
       </div>
     </div>
 
-    <div class="projects-section">
+    <div data-guide="recent-projects" class="projects-section">
       <div class="section-heading">
         <n-text class="section-title">最近项目</n-text>
       </div>

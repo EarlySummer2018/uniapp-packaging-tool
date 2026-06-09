@@ -2,7 +2,8 @@
 import { h, ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NAlert, NLayout, NLayoutSider, NLayoutContent, NMenu, NButton, NIcon, NModal, NInput, NSpace, NText, useMessage, useDialog } from 'naive-ui'
-import { AddOutline, FolderOutline, SettingsOutline, TimeOutline, TrashOutline, OptionsOutline } from '@vicons/ionicons5'
+import { AddOutline, FolderOutline, HelpCircleOutline, SettingsOutline, TimeOutline, TrashOutline, OptionsOutline } from '@vicons/ionicons5'
+import AppGuide from '../components/AppGuide.vue'
 import { useProjectsStore } from '../stores/projects'
 import { useBuildStore } from '../stores/build'
 
@@ -17,6 +18,7 @@ const showModal = ref(false)
 const newProjectName = ref('')
 const newProjectDesc = ref('')
 const deletingProjectId = ref<string | null>(null)
+const appGuide = ref<{ start: () => void } | null>(null)
 
 const menuOptions = [
   {
@@ -42,6 +44,85 @@ const menuOptions = [
 ]
 
 const currentMenuKey = computed(() => (route.name as string) || 'Home')
+const guideKey = computed(() => String(route.name || ''))
+const guideSteps = computed(() => {
+  const stepsByRoute: Record<string, Array<{ target: string; title: string; description: string }>> = {
+    Home: [
+      {
+        target: '[data-guide="sidebar-navigation"]',
+        title: '从这里切换工作区',
+        description: '侧边栏集中放置项目列表、SDK 环境、打包历史和设置。'
+      },
+      {
+        target: '[data-guide="create-project"]',
+        title: '先创建一个项目',
+        description: '新项目会进入配置页，设置本地项目路径和各平台签名信息。'
+      },
+      {
+        target: '[data-guide="project-overview"]',
+        title: '快速查看项目概况',
+        description: '这里汇总项目数量，以及已启用 Android、iOS 和鸿蒙的平台数量。'
+      },
+      {
+        target: '[data-guide="recent-projects"]',
+        title: '继续配置或开始构建',
+        description: '在最近项目中可以直接进入配置页，或跳转到构建中心。'
+      }
+    ],
+    ProjectConfig: [
+      {
+        target: '[data-guide="project-path"]',
+        title: '关联本地 UniApp 项目',
+        description: '选择包含 manifest.json 的项目目录，构建中心会读取应用信息和模块配置。'
+      },
+      {
+        target: '[data-guide="config-tabs"]',
+        title: '配置目标平台',
+        description: '按需启用 Android、iOS 或鸿蒙，并补充包名、证书与签名信息。'
+      },
+      {
+        target: '[data-guide="config-actions"]',
+        title: '保存后开始打包',
+        description: '先保存配置，再进入构建中心导入资源并生成安装包。'
+      }
+    ],
+    BuildCenter: [
+      {
+        target: '[data-guide="resource-import"]',
+        title: '导入 UniApp 资源',
+        description: '选择 HBuilderX 导出的 resources 目录，工具会扫描应用信息和依赖模块。'
+      },
+      {
+        target: '[data-guide="platform-select"]',
+        title: '选择平台并开始构建',
+        description: '选择一个或多个目标平台；单选时还可以先生成对应的原生项目。'
+      },
+      {
+        target: '[data-guide="build-log"]',
+        title: '查看构建进度和结果',
+        description: '构建日志会实时更新，成功后可在这里查看产物路径或生成的原生项目。'
+      }
+    ],
+    SdkManager: [
+      {
+        target: '[data-guide="sdk-tabs"]',
+        title: '管理 SDK 与构建环境',
+        description: '在离线 SDK 配置和环境检测之间切换，逐项确认构建依赖。'
+      },
+      {
+        target: '[data-guide="sdk-list"]',
+        title: '配置离线 SDK 路径',
+        description: '为 Android、iOS 和鸿蒙设置已下载并解压的 SDK 或工程模板目录。'
+      },
+      {
+        target: '[data-guide="sdk-refresh"]',
+        title: '重新检测环境',
+        description: '路径或工具安装完成后刷新检测，确认所有必要环境已就绪。'
+      }
+    ]
+  }
+  return stepsByRoute[guideKey.value] || []
+})
 
 onMounted(async () => {
   await projectsStore.initStore()
@@ -146,10 +227,21 @@ async function handleDeleteProject(projectId: string) {
       </div>
 
       <n-menu
+        data-guide="sidebar-navigation"
         :options="menuOptions"
         :value="currentMenuKey"
         @update:value="handleMenuSelect"
       />
+
+      <n-button
+        v-if="guideSteps.length"
+        class="guide-replay-button"
+        quaternary
+        @click="appGuide?.start()"
+      >
+        <template #icon><n-icon><HelpCircleOutline /></n-icon></template>
+        使用引导
+      </n-button>
 
       <div class="project-list">
         <n-text depth="3" class="sidebar-section-title">我的项目</n-text>
@@ -229,6 +321,12 @@ async function handleDeleteProject(projectId: string) {
         </n-space>
       </template>
     </n-modal>
+
+    <AppGuide
+      ref="appGuide"
+      :guide-key="guideKey"
+      :steps="guideSteps"
+    />
   </n-layout>
 </template>
 
@@ -290,6 +388,12 @@ async function handleDeleteProject(projectId: string) {
   padding: 18px 14px;
   flex: 1;
   overflow-y: auto;
+}
+
+.guide-replay-button {
+  justify-content: flex-start;
+  margin: 10px 14px 0;
+  color: var(--text-muted);
 }
 
 .sidebar-section-title {

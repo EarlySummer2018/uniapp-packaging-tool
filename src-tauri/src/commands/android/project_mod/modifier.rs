@@ -291,6 +291,7 @@ impl AndroidProjectModifier {
 
         // === Phase 0: 基础设置（低风险，一次性完成）===
         editor.set_application_attr("android:allowBackup", &ctx.android_allow_backup)?;
+        editor.add_application_tools_replace("android:allowBackup")?;
 
         let appkey_entry = format!(
             r#"<meta-data android:name="dcloud_appkey" android:value="{}" />"#,

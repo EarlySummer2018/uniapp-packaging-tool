@@ -427,7 +427,7 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
     <div class="page-header">
       <n-space align="center" justify="space-between" class="header-row">
         <n-text strong class="page-title">SDK & 环境管理</n-text>
-        <n-button type="primary" @click="refreshAll" :loading="loading">
+        <n-button data-guide="sdk-refresh" type="primary" @click="refreshAll" :loading="loading">
           <template #icon>
             <n-icon><RefreshOutline /></n-icon>
           </template>
@@ -436,13 +436,13 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
       </n-space>
     </div>
 
-    <n-tabs v-model:value="activeTab" type="line" size="large">
+    <n-tabs data-guide="sdk-tabs" v-model:value="activeTab" type="line" size="large">
       <!-- Tab 1: DCloud 离线SDK -->
       <n-tab-pane name="dcloud-sdk" tab="DCloud 离线SDK">
         <div class="tab-content">
           <n-spin v-if="globalSdkLoading" />
 
-          <n-card v-else class="settings-card">
+          <n-card v-else data-guide="sdk-list" class="settings-card">
             <template #header>
               <n-space align="center">
                 <n-icon :size="18"><FolderOpenOutline /></n-icon>

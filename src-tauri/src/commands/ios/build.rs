@@ -156,6 +156,93 @@ pub async fn run_ios_build(
 }
 
 #[tauri::command]
+pub async fn generate_ios_project(
+    project_id: String,
+    resource_path: String,
+    build_id: Option<String>,
+    manifest_info: Option<crate::commands::resource::UniappManifestInfo>,
+    window: tauri::Window,
+) -> Result<String, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("iOS 工程生成仅支持 macOS".to_string());
+    }
+
+    let build_id = build_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| format!("ios-gen-{}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
+    emit_ios_log(
+        &window,
+        &build_id,
+        "info",
+        "开始生成 iOS 工程（不执行打包）",
+        Some(2),
+    );
+    let config = crate::commands::project::load_project_config_sync(&project_id)?;
+    let sdk_config = crate::commands::sdk::load_global_sdk_config_sync()?;
+    validate_ios_config(&config, &sdk_config)?;
+
+    let resource_dir = PathBuf::from(&resource_path);
+    let scan = crate::commands::shared::resource_scan::scan_imported_resource(
+        &resource_dir,
+        &resource_dir,
+        false,
+    )?;
+    let app_resource_dir = PathBuf::from(&scan.app_resource_path);
+    let workspace = crate::utils::fs::get_project_config_dir(&project_id)
+        .join("workspace")
+        .join(safe_file_name(&build_id));
+    crate::utils::fs::ensure_directory(&workspace).map_err(|e| e.to_string())?;
+
+    let sdk_project = crate::commands::sdk::resolve_ios_sdk_project(&PathBuf::from(
+        &sdk_config.dcloud_ios_sdk_path,
+    ))?;
+    if !sdk_project.exists() {
+        return Err(format!("未找到 iOS SDK 工程: {}", sdk_project.display()));
+    }
+    let project_root = workspace.join(
+        sdk_project
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("HBuilder-Hello"),
+    );
+    crate::utils::fs::copy_recursive(&sdk_project, &project_root)
+        .map_err(|e| format!("复制 HBuilder-Hello 失败: {}", e))?;
+    emit_ios_log(
+        &window,
+        &build_id,
+        "success",
+        "HBuilder-Hello 已复制到工作区",
+        Some(18),
+    );
+
+    patch_pbxproj(&project_root, &config.ios.bundle_id)?;
+    patch_info_plist(&project_root, &config)?;
+    import_ios_resource(&project_root, &app_resource_dir, &scan.app_id)?;
+    patch_ios_control(&project_root, &scan.app_id)?;
+    copy_uts_ios_frameworks(&project_root, &scan)?;
+    generate_ios_icons(&project_root, &config, manifest_info.as_ref())?;
+    install_mobileprovision(&config.ios.provisioning_profile)?;
+    import_p12_certificate(&config)?;
+    emit_ios_log(
+        &window,
+        &build_id,
+        "success",
+        "iOS 工程配置已完成",
+        Some(85),
+    );
+
+    let project_display = project_root.to_string_lossy().to_string();
+    emit_ios_log(
+        &window,
+        &build_id,
+        "success",
+        &format!("iOS 工程已生成: {}", project_display),
+        Some(100),
+    );
+    Ok(project_display)
+}
+
+#[tauri::command]
 pub async fn build_ios_ipa(
     project_id: String,
     resource_path: String,
@@ -218,7 +305,13 @@ pub async fn build_ios_ipa(
     generate_ios_icons(&project_root, &config, manifest_info.as_ref())?;
     install_mobileprovision(&config.ios.provisioning_profile)?;
     import_p12_certificate(&config)?;
-    emit_ios_log(&window, &build_id, "success", "iOS 工程配置已完成", Some(45));
+    emit_ios_log(
+        &window,
+        &build_id,
+        "success",
+        "iOS 工程配置已完成",
+        Some(45),
+    );
 
     let archive_path = workspace.join("build/output.xcarchive");
     let project_file = find_xcodeproj(&project_root)
@@ -243,7 +336,13 @@ pub async fn build_ios_ipa(
         format!("PRODUCT_BUNDLE_IDENTIFIER={}", config.ios.bundle_id),
         "CODE_SIGN_STYLE=Manual".to_string(),
     ];
-    emit_ios_log(&window, &build_id, "info", "执行 xcodebuild archive", Some(55));
+    emit_ios_log(
+        &window,
+        &build_id,
+        "info",
+        "执行 xcodebuild archive",
+        Some(55),
+    );
     run_xcodebuild(&archive_args, &project_root, &window, &ios_env, &build_id).await?;
 
     let export_options = workspace.join("ExportOptions.plist");
@@ -258,7 +357,13 @@ pub async fn build_ios_ipa(
         "-exportOptionsPlist".to_string(),
         export_options.to_string_lossy().to_string(),
     ];
-    emit_ios_log(&window, &build_id, "info", "执行 xcodebuild exportArchive", Some(80));
+    emit_ios_log(
+        &window,
+        &build_id,
+        "info",
+        "执行 xcodebuild exportArchive",
+        Some(80),
+    );
     run_xcodebuild(&export_args, &project_root, &window, &ios_env, &build_id).await?;
 
     let ipa = find_file_with_ext(&export_path, "ipa")

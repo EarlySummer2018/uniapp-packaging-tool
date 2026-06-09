@@ -720,6 +720,56 @@ fn system_geolocation_has_no_manual_config_fields() {
 }
 
 #[test]
+fn tencent_geolocation_sdk_version_defaults_and_accepts_user_override() {
+    let modules = vec![DetectedModule {
+        name: "Geolocation".to_string(),
+        category: "geolocation".to_string(),
+        platforms: vec!["android".to_string()],
+        configured: false,
+        required_keys: vec![],
+        source: "manifest.json".to_string(),
+    }];
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "geolocation": {
+                        "tencent": {
+                            "apikey_android": "tencent-demo"
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let default_report = android_module_config_report_from_value(&modules, Some(&manifest), None);
+    let default_version = default_report.modules[0]
+        .fields
+        .iter()
+        .find(|field| field.key == "TENCENT_LOCATION_SDK_VERSION")
+        .unwrap();
+    assert_eq!(default_version.value.as_deref(), Some("7.5.4.8"));
+    assert_eq!(default_version.value_source.as_deref(), Some("default"));
+    assert!(!default_version.required);
+
+    let mut user = HashMap::new();
+    user.insert(
+        "TENCENT_LOCATION_SDK_VERSION".to_string(),
+        "2.3.1".to_string(),
+    );
+    let user_report =
+        android_module_config_report_from_value(&modules, Some(&manifest), Some(&user));
+    let user_version = user_report.modules[0]
+        .fields
+        .iter()
+        .find(|field| field.key == "TENCENT_LOCATION_SDK_VERSION")
+        .unwrap();
+    assert_eq!(user_version.value.as_deref(), Some("2.3.1"));
+    assert_eq!(user_version.value_source.as_deref(), Some("user"));
+}
+
+#[test]
 fn geolocation_artifacts_and_dependencies_follow_enabled_provider() {
     let manifest = serde_json::json!({
         "app-plus": {
@@ -857,7 +907,13 @@ fn map_page_type_defaults_to_vue_and_allows_amap_nvue() {
                 "sdkConfigs": {
                     "maps": {
                         "amap": {
-                            "appkey_android": "amap-demo"
+                            "appkey_android": "amap-demo",
+                            "sdkVersion": "9.9.9"
+                        }
+                    },
+                    "push": {
+                        "unipush": {
+                            "version": "2"
                         }
                     }
                 }
@@ -873,9 +929,60 @@ fn map_page_type_defaults_to_vue_and_allows_amap_nvue() {
         .iter()
         .find(|field| field.key == "MAP_PAGE_TYPE")
         .unwrap();
+    let version_field = report.modules[0]
+        .fields
+        .iter()
+        .find(|field| field.key == "AMAP_SDK_VERSION")
+        .unwrap();
 
     assert_eq!(field.value.as_deref(), Some("nvue"));
     assert_eq!(field.field_type, "select");
+    assert_eq!(
+        version_field.value.as_deref(),
+        Some("10.0.700_loc6.4.5_sea9.7.2")
+    );
+    assert_eq!(version_field.value_source.as_deref(), Some("default"));
+}
+
+#[test]
+fn amap_map_sdk_version_prefers_build_center_value() {
+    let modules = vec![DetectedModule {
+        name: "Maps".to_string(),
+        category: "map".to_string(),
+        platforms: vec!["android".to_string()],
+        configured: false,
+        required_keys: vec![],
+        source: "manifest.json".to_string(),
+    }];
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "maps": {
+                        "amap": {
+                            "appkey_android": "amap-demo",
+                            "sdkVersion": "9.9.9"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let mut user = HashMap::new();
+    user.insert(
+        "AMAP_SDK_VERSION".to_string(),
+        "10.0.700_custom".to_string(),
+    );
+
+    let report = android_module_config_report_from_value(&modules, Some(&manifest), Some(&user));
+    let version_field = report.modules[0]
+        .fields
+        .iter()
+        .find(|field| field.key == "AMAP_SDK_VERSION")
+        .unwrap();
+
+    assert_eq!(version_field.value.as_deref(), Some("10.0.700_custom"));
+    assert_eq!(version_field.value_source.as_deref(), Some("user"));
 }
 
 #[test]

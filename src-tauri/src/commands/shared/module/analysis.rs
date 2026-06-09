@@ -11,6 +11,9 @@ use crate::commands::shared::module::types::{
     AndroidModuleConfigReport, AndroidModuleMissingConfig,
 };
 
+const DEFAULT_AMAP_MAP_SDK_VERSION: &str = "10.0.700_loc6.4.5_sea9.7.2";
+const DEFAULT_TENCENT_LOCATION_SDK_VERSION: &str = "7.5.4.8";
+
 // parse_project_modules 与 module_config_from_detected_modules 已移至 parsing.rs
 
 #[tauri::command]
@@ -59,6 +62,14 @@ pub fn android_module_config_report_from_value(
             let required = android_field_required_for_manifest(template_key, spec, manifest);
             let (value, value_source) = if template_key == "map" && spec.key == "MAP_PAGE_TYPE" {
                 android_map_page_type_field_value(manifest, user_config, spec)
+            } else if template_key == "map" && spec.key == "AMAP_SDK_VERSION" {
+                android_user_defaulted_field_value(user_config, spec, DEFAULT_AMAP_MAP_SDK_VERSION)
+            } else if template_key == "geolocation" && spec.key == "TENCENT_LOCATION_SDK_VERSION" {
+                android_user_defaulted_field_value(
+                    user_config,
+                    spec,
+                    DEFAULT_TENCENT_LOCATION_SDK_VERSION,
+                )
             } else {
                 let user_value = user_config
                     .and_then(|config| config.get(spec.key))
@@ -176,7 +187,7 @@ fn android_field_visible_for_manifest(
                     &["amap", "gaode"],
                 ) && !android_amap_map_enabled(Some(manifest))
             }
-            "TENCENT_MAP_KEY" => manifest_has_enabled_provider(
+            "TENCENT_MAP_KEY" | "TENCENT_LOCATION_SDK_VERSION" => manifest_has_enabled_provider(
                 manifest,
                 &["geolocation", "location", "position"],
                 &["tencent", "qqmap"],
@@ -234,6 +245,9 @@ fn android_field_visible_for_manifest(
                 manifest_has_enabled_provider(manifest, &["maps", "map"], &["baidu", "bd"])
             }
             "AMAP_KEY" => {
+                manifest_has_enabled_provider(manifest, &["maps", "map"], &["amap", "gaode"])
+            }
+            "AMAP_SDK_VERSION" => {
                 manifest_has_enabled_provider(manifest, &["maps", "map"], &["amap", "gaode"])
             }
             "GOOGLE_MAPS_API_KEY" => {
@@ -354,6 +368,23 @@ fn android_map_page_type_field_value(
         {
             return (Some(normalized.to_string()), Some("user".to_string()));
         }
+    }
+
+    (Some(default_value.to_string()), Some("default".to_string()))
+}
+
+fn android_user_defaulted_field_value(
+    user_config: Option<&HashMap<String, String>>,
+    spec: &AndroidConfigFieldSpec,
+    default_value: &str,
+) -> (Option<String>, Option<String>) {
+    let user_value = user_config
+        .and_then(|config| config.get(spec.key))
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    if let Some(value) = user_value {
+        return (Some(value), Some("user".to_string()));
     }
 
     (Some(default_value.to_string()), Some("default".to_string()))

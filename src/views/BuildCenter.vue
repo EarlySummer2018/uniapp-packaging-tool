@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NAlert,
   NButton,
   NCard,
-  NDivider,
+  NCheckbox,
   NFormItem,
   NGi,
   NGrid,
@@ -176,6 +176,8 @@ interface BuildRecord {
   resource_path?: string | null
 }
 
+type ModuleStatusTone = 'default' | 'success' | 'warning' | 'error'
+
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
@@ -192,6 +194,9 @@ const manifestReadWarning = ref('')
 const androidModuleConfigReport = ref<AndroidModuleConfigReport | null>(null)
 const androidModuleConfigValues = ref<Record<string, string>>({})
 const androidModuleConfigLoading = ref(false)
+const selectedManifestModuleKeys = ref<Set<string>>(new Set())
+const manifestModuleSelectionTouched = ref(false)
+const activeAndroidConfigModuleKey = ref<string | null>(null)
 
 let androidModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -210,6 +215,9 @@ const currentBuild = computed(() => {
 })
 const packageBuildLoading = computed(() => currentBuild.value?.status === 'building' && currentBuild.value.kind === 'package')
 const androidGenerateLoading = computed(() => currentBuild.value?.status === 'building' && currentBuild.value.kind === 'generateAndroidProject')
+const iosGenerateLoading = computed(() => currentBuild.value?.status === 'building' && currentBuild.value.kind === 'generateIosProject')
+const harmonyGenerateLoading = computed(() => currentBuild.value?.status === 'building' && currentBuild.value.kind === 'generateHarmonyProject')
+const singleSelectedPlatform = computed<Platform | null>(() => selectedPlatforms.value.length === 1 ? selectedPlatforms.value[0] : null)
 const visibleArtifacts = computed<BuildArtifact[]>(() => {
   const build = currentBuild.value
   if (!build?.artifactPath) return []
@@ -225,9 +233,11 @@ const currentGeneratedProjectPath = computed(() => currentBuild.value?.generated
 const androidMissingRequired = computed(() => {
   const report = androidModuleConfigReport.value
   if (!report) return []
-  return report.modules.flatMap(mod => mod.fields
-    .filter(field => field.required && !androidFieldValue(field).trim())
-    .map(field => ({ moduleName: mod.name, key: field.key, label: field.label })))
+  return report.modules
+    .filter(mod => isAndroidConfigModuleSelected(mod))
+    .flatMap(mod => mod.fields
+      .filter(field => field.required && !androidFieldValue(field).trim())
+      .map(field => ({ moduleName: mod.name, key: field.key, label: field.label })))
 })
 const canBuild = computed(() => {
   if (!scanResult.value || selectedPlatforms.value.length === 0 || isBuildLocked.value) return false
@@ -235,9 +245,15 @@ const canBuild = computed(() => {
   return true
 })
 const canGenerateAndroid = computed(() => {
-  if (!scanResult.value || !selectedPlatforms.value.includes('android') || isBuildLocked.value) return false
+  if (!canGenerateNativeProject('android')) return false
   if (selectedNeedsAndroidConfig.value && !androidModulesReady.value) return false
   return true
+})
+const canGenerateIos = computed(() => canGenerateNativeProject('ios'))
+const canGenerateHarmony = computed(() => canGenerateNativeProject('harmony'))
+const currentGeneratedProjectLabel = computed(() => {
+  const platform = currentBuild.value?.platform
+  return platform ? `${platformProjectName(platform)}项目已生成` : '项目已生成'
 })
 const androidModulesReady = computed(() => {
   if (!selectedNeedsAndroidConfig.value) return true
@@ -275,7 +291,7 @@ const utsDependencyCount = computed(() => {
   return deps.size
 })
 const manifestModules = computed(() => latestManifestInfo.value?.detectedModules || scanResult.value?.detectedModules || [])
-const manifestModuleLabels = computed(() => manifestModules.value.map(mod => `${mod.name} · ${formatPlatforms(mod.platforms)}`))
+const selectedManifestModules = computed(() => manifestModules.value.filter(mod => isManifestModuleSelected(mod)))
 const insightAppName = computed(() => latestManifestInfo.value?.appName || scanResult.value?.appName || currentProject.value?.app.name || scanResult.value?.appId || '-')
 const insightAppId = computed(() => latestManifestInfo.value?.appId || scanResult.value?.appId || currentProject.value?.app.appId || '-')
 const insightVersionName = computed(() => latestManifestInfo.value?.versionName || scanResult.value?.versionName || currentProject.value?.app.version || '-')
@@ -289,11 +305,33 @@ const utsPluginLabels = computed(() => {
     ...result.uts.customPlugins.map(plugin => plugin.id)
   ]
 })
-const androidConfigurableModules = computed(() => androidModuleConfigReport.value?.modules.filter(mod => mod.fields.length > 0) || [])
-const androidModuleConfigSummary = computed(() => {
-  return androidConfigurableModules.value.map(mod => `${mod.name} · ${mod.fields.length} 项配置`)
+const androidConfigModulesByKey = computed(() => {
+  const modules = androidModuleConfigReport.value?.modules || []
+  return new Map(modules.map(mod => [androidConfigModuleKey(mod), mod]))
 })
-const androidConfiguredModuleNames = computed(() => androidConfigurableModules.value.map(mod => mod.name))
+const androidConfigurableModules = computed(() => {
+  const modules = androidModuleConfigReport.value?.modules || []
+  return modules.filter(mod => mod.fields.length > 0 && isAndroidConfigModuleSelected(mod))
+})
+const activeAndroidConfigModule = computed(() => {
+  if (!activeAndroidConfigModuleKey.value) return null
+  return androidConfigurableModules.value.find(mod => androidConfigModuleKey(mod) === activeAndroidConfigModuleKey.value) || null
+})
+
+watch(manifestModules, modules => {
+  selectedManifestModuleKeys.value = new Set(modules.map(mod => manifestModuleKey(mod)))
+  manifestModuleSelectionTouched.value = false
+}, { immediate: true })
+
+watch(androidConfigurableModules, modules => {
+  if (!modules.length) {
+    activeAndroidConfigModuleKey.value = null
+    return
+  }
+  const currentKey = activeAndroidConfigModuleKey.value
+  if (currentKey && modules.some(mod => androidConfigModuleKey(mod) === currentKey)) return
+  activeAndroidConfigModuleKey.value = androidConfigModuleKey(preferredAndroidConfigModule(modules))
+}, { immediate: true })
 
 onMounted(async () => {
   if (!projectsStore.projects.length) await projectsStore.loadProjects()
@@ -358,6 +396,10 @@ function togglePlatform(platform: Platform) {
   else selectedPlatforms.value.push(platform)
 }
 
+function canGenerateNativeProject(platform: Platform) {
+  return !!scanResult.value && singleSelectedPlatform.value === platform && !isBuildLocked.value
+}
+
 async function startBuild() {
   if (!scanResult.value || selectedPlatforms.value.length === 0 || isBuildLocked.value) {
     if (isBuildLocked.value) message.warning('已有构建任务进行中，请等待完成后再开始新的构建')
@@ -376,6 +418,7 @@ async function startBuild() {
   if (!(await ensureAndroidModuleConfigReadyForBuild())) {
     return
   }
+  const buildManifestInfo = selectedManifestInfoForBuild(manifestInfo)
   const androidModuleConfig = buildAndroidModuleConfigPayload()
   await persistAndroidModuleConfigCache()
   let lastBuildId: string | null = null
@@ -388,7 +431,7 @@ async function startBuild() {
     buildStore.setActiveEventBuildId(buildId)
     const startedAt = new Date()
     await createBuildRecord(buildId, platform, startedAt, runProjectId, runProjectName, importedResourcePath)
-    await appendManifestLog(buildId, manifestInfo)
+    await appendManifestLog(buildId, buildManifestInfo)
     try {
       const command = platform === 'android'
         ? 'build_android_apk'
@@ -399,7 +442,7 @@ async function startBuild() {
         projectId: runProjectId,
         resourcePath: importedResourcePath,
         buildId,
-        manifestInfo,
+        manifestInfo: buildManifestInfo,
         moduleConfig: platform === 'android' ? androidModuleConfig : undefined
       })
       await buildStore.flushBuildLogs(buildId)
@@ -434,8 +477,20 @@ async function startBuild() {
 }
 
 async function generateAndroidProject() {
-  if (!scanResult.value || !selectedPlatforms.value.includes('android') || isBuildLocked.value) {
-    if (isBuildLocked.value) message.warning('已有构建任务进行中，请等待完成后再生成安卓工程')
+  await generateNativeProject('android')
+}
+
+async function generateIosProject() {
+  await generateNativeProject('ios')
+}
+
+async function generateHarmonyProject() {
+  await generateNativeProject('harmony')
+}
+
+async function generateNativeProject(platform: Platform) {
+  if (!scanResult.value || singleSelectedPlatform.value !== platform || isBuildLocked.value) {
+    if (isBuildLocked.value) message.warning('已有构建任务进行中，请等待完成后再生成项目')
     return
   }
   const runProjectId = projectId.value
@@ -448,36 +503,38 @@ async function generateAndroidProject() {
     message.error(String(e))
     return
   }
-  if (!(await ensureAndroidModuleConfigReadyForBuild())) {
+  if (platform === 'android' && !(await ensureAndroidModuleConfigReadyForBuild())) {
     return
   }
-  const androidModuleConfig = buildAndroidModuleConfigPayload()
+  const buildManifestInfo = selectedManifestInfoForBuild(manifestInfo)
+  const moduleConfig = platform === 'android' ? buildAndroidModuleConfigPayload() : undefined
   await persistAndroidModuleConfigCache()
-  const buildId = buildStore.startBuild(runProjectId, 'android', 'generateAndroidProject')
+  const buildId = buildStore.startBuild(runProjectId, platform, generateProjectKind(platform))
   currentBuildId.value = buildId
   buildStore.setActiveEventBuildId(buildId)
   const startedAt = new Date()
-  await createBuildRecord(buildId, 'android', startedAt, runProjectId, runProjectName, importedResourcePath)
-  await appendManifestLog(buildId, manifestInfo)
+  await createBuildRecord(buildId, platform, startedAt, runProjectId, runProjectName, importedResourcePath)
+  await appendManifestLog(buildId, buildManifestInfo)
   try {
-    const projectPath = await invoke<string>('generate_android_project', {
+    const payload: Record<string, unknown> = {
       projectId: runProjectId,
       resourcePath: importedResourcePath,
       buildId,
-      manifestInfo,
-      moduleConfig: androidModuleConfig,
-    })
+      manifestInfo: buildManifestInfo
+    }
+    if (moduleConfig) payload.moduleConfig = moduleConfig
+    const projectPath = await invoke<string>(generateProjectCommand(platform), payload)
     await buildStore.flushBuildLogs(buildId)
     await appendFinalLog(buildId, 'success')
     await finalizeBuildRecord(buildId, 'success', startedAt, null)
     buildStore.stopBuild(buildId, true, { generatedProjectPath: projectPath })
-    message.success(`安卓工程已生成: ${projectPath}`)
+    message.success(`${platformProjectName(platform)}项目已生成: ${projectPath}`)
   } catch (e: any) {
     await buildStore.flushBuildLogs(buildId)
     await appendFinalLog(buildId, 'failed', String(e))
     await finalizeBuildRecord(buildId, 'failed', startedAt, null, String(e))
     buildStore.failBuild(buildId, String(e))
-    message.error(`生成安卓工程失败: ${String(e)}`)
+    message.error(`生成${platformProjectName(platform)}项目失败: ${String(e)}`)
   } finally {
     await buildStore.flushBuildLogs(buildId)
     if (buildStore.activeEventBuildId === buildId) buildStore.setActiveEventBuildId(null)
@@ -509,9 +566,146 @@ function getProjectName() {
   return currentProject.value?.name || currentProject.value?.app.name || projectId.value
 }
 
+function platformProjectName(platform: Platform) {
+  if (platform === 'android') return '安卓'
+  if (platform === 'ios') return '苹果'
+  return '鸿蒙'
+}
+
+function generateProjectKind(platform: Platform) {
+  if (platform === 'android') return 'generateAndroidProject' as const
+  if (platform === 'ios') return 'generateIosProject' as const
+  return 'generateHarmonyProject' as const
+}
+
+function generateProjectCommand(platform: Platform) {
+  if (platform === 'android') return 'generate_android_project'
+  if (platform === 'ios') return 'generate_ios_project'
+  return 'generate_harmony_project'
+}
+
 function formatPlatforms(platforms: string[]) {
-  if (!platforms.length) return 'all'
-  return platforms.join(' / ')
+  return platforms.filter(platform => platform && platform !== 'all').join(' / ')
+}
+
+function formatModuleWithPlatforms(mod: { name: string; platforms: string[] }) {
+  const platforms = formatPlatforms(mod.platforms)
+  return platforms ? `${mod.name}(${platforms})` : mod.name
+}
+
+function moduleKeyParts(name: string, category: string, platforms: string[], source: string) {
+  return [name, category, platforms.join('|'), source || 'manifest.json'].join('::')
+}
+
+function manifestModuleKey(mod: DetectedModule) {
+  return moduleKeyParts(mod.name, mod.category, mod.platforms, mod.source)
+}
+
+function androidConfigModuleKey(mod: AndroidModuleConfigModule) {
+  return moduleKeyParts(mod.name, mod.category, mod.platforms, mod.source)
+}
+
+function isManifestModuleSelected(mod: DetectedModule) {
+  return selectedManifestModuleKeys.value.has(manifestModuleKey(mod))
+}
+
+function isAndroidConfigModuleSelected(mod: AndroidModuleConfigModule) {
+  return selectedManifestModuleKeys.value.has(androidConfigModuleKey(mod))
+}
+
+function setManifestModuleSelected(mod: DetectedModule, checked: boolean) {
+  if (isBuildLocked.value) return
+  manifestModuleSelectionTouched.value = true
+  const key = manifestModuleKey(mod)
+  const next = new Set(selectedManifestModuleKeys.value)
+  if (checked) next.add(key)
+  else next.delete(key)
+  selectedManifestModuleKeys.value = next
+
+  const configModule = androidConfigModulesByKey.value.get(key)
+  if (checked && configModule?.fields.length) {
+    activeAndroidConfigModuleKey.value = androidConfigModuleKey(configModule)
+  } else if (!checked && activeAndroidConfigModuleKey.value === key) {
+    activeAndroidConfigModuleKey.value = androidConfigurableModules.value.length
+      ? androidConfigModuleKey(preferredAndroidConfigModule(androidConfigurableModules.value))
+      : null
+  }
+}
+
+function manifestConfigModule(mod: DetectedModule) {
+  return androidConfigModulesByKey.value.get(manifestModuleKey(mod)) || null
+}
+
+function configFieldFilled(field: AndroidModuleConfigField) {
+  return androidFieldValue(field).trim().length > 0
+}
+
+function configModuleMissingRequiredCount(mod: AndroidModuleConfigModule) {
+  return mod.fields.filter(field => field.required && !configFieldFilled(field)).length
+}
+
+function configModuleFilledCount(mod: AndroidModuleConfigModule) {
+  return mod.fields.filter(field => configFieldFilled(field)).length
+}
+
+function configModuleStatusTone(mod: AndroidModuleConfigModule): ModuleStatusTone {
+  if (!mod.fields.length) return 'success'
+  if (configModuleMissingRequiredCount(mod) === 0) return 'success'
+  return configModuleFilledCount(mod) > 0 ? 'warning' : 'error'
+}
+
+function configModuleStatusLabel(mod: AndroidModuleConfigModule) {
+  const missing = configModuleMissingRequiredCount(mod)
+  if (!mod.fields.length) return '已选'
+  if (missing === 0) return '已配置'
+  if (configModuleFilledCount(mod) > 0) return '部分配置'
+  return '需配置'
+}
+
+function preferredAndroidConfigModule(modules: AndroidModuleConfigModule[]) {
+  return modules.find(mod => configModuleStatusTone(mod) === 'error')
+    || modules.find(mod => configModuleStatusTone(mod) === 'warning')
+    || modules[0]
+}
+
+function manifestModuleStatusTone(mod: DetectedModule): ModuleStatusTone {
+  if (!isManifestModuleSelected(mod)) return 'default'
+  const configModule = manifestConfigModule(mod)
+  if (!configModule) return 'success'
+  return configModuleStatusTone(configModule)
+}
+
+function manifestModuleStatusType(mod: DetectedModule) {
+  return manifestModuleStatusTone(mod)
+}
+
+function manifestModuleStatusClass(mod: DetectedModule) {
+  return `module-choice--${manifestModuleStatusTone(mod)}`
+}
+
+function manifestModuleStatusLabel(mod: DetectedModule) {
+  if (!isManifestModuleSelected(mod)) return '未勾选'
+  const configModule = manifestConfigModule(mod)
+  if (!configModule) return '已选'
+  return configModuleStatusLabel(configModule)
+}
+
+function androidConfigModuleStatusType(mod: AndroidModuleConfigModule) {
+  return configModuleStatusTone(mod)
+}
+
+function openAndroidConfigModule(mod: AndroidModuleConfigModule) {
+  activeAndroidConfigModuleKey.value = androidConfigModuleKey(mod)
+}
+
+function selectedManifestInfoForBuild(info: UniappManifestInfo): UniappManifestInfo {
+  if (!manifestModuleSelectionTouched.value && selectedManifestModuleKeys.value.size === 0) {
+    return info
+  }
+  return {
+    ...info,
+    detectedModules: info.detectedModules.filter(mod => isManifestModuleSelected(mod))
+  }
 }
 
 async function refreshManifestFromLocalProject(options: { required: boolean; persist: boolean }) {
@@ -759,7 +953,7 @@ function androidFieldType(field: AndroidModuleConfigField): string {
 }
 
 function manifestLogLines(info: UniappManifestInfo) {
-  const moduleNames = info.detectedModules.map(mod => `${mod.name}(${formatPlatforms(mod.platforms)})`)
+  const moduleNames = info.detectedModules.map(mod => formatModuleWithPlatforms(mod))
   const lines = [
     `[info] 已读取 manifest.json: ${info.manifestPath}`,
     `[info] manifest 应用名称: ${info.appName || '-'}`,
@@ -913,7 +1107,7 @@ function goBack() {
     </div>
     <n-grid cols="1 s:1 m:2" :x-gap="18" :y-gap="18" responsive="screen" class="build-grid">
       <n-gi>
-        <n-card title="1. 导入 UniApp 资源" class="build-step-card import-card">
+        <n-card data-guide="resource-import" title="1. 导入 UniApp 资源" class="build-step-card import-card">
           <n-space>
             <n-button type="primary" :loading="importing" :disabled="isBuildLocked" @click="chooseResource">
               <template #icon><n-icon><FolderOpenOutline /></n-icon></template>
@@ -942,7 +1136,7 @@ function goBack() {
         </n-card>
       </n-gi>
       <n-gi>
-        <n-card title="2. 选择平台" class="build-step-card">
+        <n-card data-guide="platform-select" title="2. 选择平台" class="build-step-card">
           <PlatformCard
             :platforms="platforms"
             :selected-platforms="selectedPlatforms"
@@ -951,9 +1145,17 @@ function goBack() {
           />
           <n-space justify="end" class="build-action-row">
             <n-text v-if="buildDisabledReason && !canBuild" depth="3">{{ buildDisabledReason }}</n-text>
-            <n-button type="primary" :disabled="!canGenerateAndroid" :loading="androidGenerateLoading" @click="generateAndroidProject">
+            <n-button v-if="singleSelectedPlatform === 'android'" type="primary" :disabled="!canGenerateAndroid" :loading="androidGenerateLoading" @click="generateAndroidProject">
               <template #icon><n-icon><LogoAndroid /></n-icon></template>
               生成安卓项目
+            </n-button>
+            <n-button v-if="singleSelectedPlatform === 'ios'" type="primary" :disabled="!canGenerateIos" :loading="iosGenerateLoading" @click="generateIosProject">
+              <template #icon><n-icon><LogoApple /></n-icon></template>
+              生成苹果项目
+            </n-button>
+            <n-button v-if="singleSelectedPlatform === 'harmony'" type="primary" :disabled="!canGenerateHarmony" :loading="harmonyGenerateLoading" @click="generateHarmonyProject">
+              <template #icon><n-icon><PhonePortraitOutline /></n-icon></template>
+              生成鸿蒙项目
             </n-button>
             <n-button type="success" :disabled="!canBuild" :loading="packageBuildLoading" @click="startBuild">
               <template #icon><n-icon><PlayOutline /></n-icon></template>
@@ -963,83 +1165,6 @@ function goBack() {
         </n-card>
       </n-gi>
     </n-grid>
-    <n-card v-if="scanResult && selectedPlatforms.includes('android')" title="Android 模块配置" class="build-section-card">
-      <n-space vertical :size="14">
-        <n-alert v-if="androidModuleConfigLoading" type="info">正在从 manifest 解析 Android 模块配置...</n-alert>
-        <n-alert v-else-if="!latestManifestInfo" type="warning">
-          {{ manifestReadWarning || '请先在项目配置中设置本地项目路径，以便读取 manifest.json' }}
-        </n-alert>
-        <n-alert v-else-if="!androidConfigurableModules.length" type="success">
-          未检测到需要额外配置项的 Android 模块。
-        </n-alert>
-        <n-alert v-else :type="androidMissingRequired.length ? 'warning' : 'success'">
-          <n-space vertical :size="6">
-            <n-text>
-              已检测到 {{ androidConfigurableModules.length }} 个需要填写配置的 Android 模块：
-              {{ androidConfiguredModuleNames.join('、') }}
-            </n-text>
-            <n-text v-if="androidMissingRequired.length">
-              还有 {{ androidMissingRequired.length }} 个必填项未填写，填写完成后才能开始打包。
-            </n-text>
-            <n-text v-else>模块配置已就绪，可以开始 Android 打包。</n-text>
-          </n-space>
-        </n-alert>
-
-        <div v-if="androidConfigurableModules.length" class="android-config-list">
-          <div v-for="mod in androidConfigurableModules" :key="mod.templateKey + mod.name" class="android-config-module">
-            <div class="android-config-head">
-              <n-space align="center" :size="8">
-                <n-text strong>{{ mod.name }}</n-text>
-                <n-tag size="small" type="info">{{ mod.category }}</n-tag>
-                <n-tag size="small" :type="mod.platforms.includes('android') ? 'success' : 'default'">{{ formatPlatforms(mod.platforms) }}</n-tag>
-              </n-space>
-              <n-text depth="3">{{ mod.fields.length }} 项配置</n-text>
-            </div>
-            <n-grid :cols="2" :x-gap="14" :y-gap="10" responsive="screen">
-              <n-gi v-for="field in mod.fields" :key="mod.templateKey + field.key">
-                <n-form-item :label="field.label" :feedback="field.required && !androidFieldValue(field).trim() ? '必填项，未填写时不能开始打包' : undefined">
-                  <template #label>
-                    <n-space align="center" :size="6">
-                      <n-text>{{ field.label }}</n-text>
-                      <n-tag size="tiny" :type="fieldStatusType(field)">{{ fieldStatusLabel(field) }}</n-tag>
-                    </n-space>
-                  </template>
-                  <template v-if="isFileField(field)">
-                    <n-space :size="8" align="center" class="file-field-row">
-                      <n-button size="small" :disabled="isBuildLocked" @click="pickAndroidFileField(field)">选择文件</n-button>
-                      <n-text v-if="androidFieldValue(field)" depth="3" class="file-field-hint">
-                        已选择 ({{ formatFileSize(androidFieldValue(field)) }})
-                      </n-text>
-                      <n-button v-if="androidFieldValue(field)" size="small" quaternary type="error" :disabled="isBuildLocked" @click="clearAndroidFileField(field)">清除</n-button>
-                      <n-text v-else depth="3" class="file-field-hint">{{ field.placeholder }}</n-text>
-                    </n-space>
-                  </template>
-                  <n-select
-                    v-else-if="isSelectField(field)"
-                    :value="androidFieldValue(field)"
-                    :options="selectFieldOptions(mod, field)"
-                    :placeholder="field.placeholder"
-                    :disabled="isBuildLocked"
-                    @update:value="(value: string) => updateAndroidField(field, value)"
-                  />
-                  <n-input
-                    v-else
-                    :value="androidFieldValue(field)"
-                    :placeholder="field.placeholder"
-                    :type="field.secret ? 'password' : 'text'"
-                    :show-password-on="field.secret ? 'click' : undefined"
-                    :disabled="isBuildLocked"
-                    @update:value="(value: string) => updateAndroidField(field, value)"
-                  />
-                </n-form-item>
-              </n-gi>
-            </n-grid>
-            <n-divider class="module-divider" />
-          </div>
-        </div>
-      </n-space>
-    </n-card>
-
     <n-card v-if="scanResult" title="识别到的资源与模块" class="build-section-card">
       <div class="insight-panel">
         <div class="insight-head">
@@ -1052,8 +1177,8 @@ function goBack() {
         <n-grid :cols="4" :x-gap="12" :y-gap="12" responsive="screen" class="insight-grid">
           <n-gi>
             <div class="summary-tile">
-              <n-text depth="3">Manifest 模块</n-text>
-              <n-text strong class="summary-value">{{ manifestModules.length }}</n-text>
+              <n-text depth="3">已选模块</n-text>
+              <n-text strong class="summary-value">{{ selectedManifestModules.length }} / {{ manifestModules.length }}</n-text>
             </div>
           </n-gi>
           <n-gi>
@@ -1076,35 +1201,41 @@ function goBack() {
           </n-gi>
         </n-grid>
 
-        <n-grid :cols="2" :x-gap="14" :y-gap="14" responsive="screen" class="module-grid">
-          <n-gi>
-            <div class="module-box">
+        <div class="module-grid">
+          <div class="module-box module-box--manifest">
+            <div class="module-box-head">
               <n-text strong>Manifest 模块</n-text>
-              <n-space v-if="manifestModuleLabels.length" wrap :size="8" class="tag-row">
-                <n-tag v-for="label in manifestModuleLabels" :key="label" type="info">{{ label }}</n-tag>
-              </n-space>
-              <n-text v-else depth="3" class="module-empty">未声明 App 模块</n-text>
+              <n-text v-if="manifestModules.length" depth="3">{{ selectedManifestModules.length }} / {{ manifestModules.length }} 已选</n-text>
             </div>
-          </n-gi>
-          <n-gi>
-            <div class="module-box">
-              <n-text strong>需配置模块</n-text>
-              <n-space v-if="androidModuleConfigSummary.length" wrap :size="8" class="tag-row">
-                <n-tag v-for="label in androidModuleConfigSummary" :key="label" :type="androidMissingRequired.length ? 'warning' : 'success'">{{ label }}</n-tag>
-              </n-space>
-              <n-text v-else depth="3" class="module-empty">未检测到 Android 配置项</n-text>
+            <div v-if="manifestModules.length" class="module-choice-grid">
+              <n-checkbox
+                v-for="mod in manifestModules"
+                :key="manifestModuleKey(mod)"
+                class="module-choice"
+                :class="manifestModuleStatusClass(mod)"
+                :checked="isManifestModuleSelected(mod)"
+                :disabled="isBuildLocked"
+                @update:checked="(checked: boolean) => setManifestModuleSelected(mod, checked)"
+              >
+                <span class="module-choice-content">
+                  <span class="module-choice-main">{{ mod.name }}</span>
+                  <span v-if="formatPlatforms(mod.platforms)" class="module-choice-platform">{{ formatPlatforms(mod.platforms) }}</span>
+                  <n-tag size="tiny" :type="manifestModuleStatusType(mod)" :bordered="false">
+                    {{ manifestModuleStatusLabel(mod) }}
+                  </n-tag>
+                </span>
+              </n-checkbox>
             </div>
-          </n-gi>
-          <n-gi>
-            <div class="module-box">
-              <n-text strong>UTS 插件</n-text>
-              <n-space v-if="utsPluginLabels.length" wrap :size="8" class="tag-row">
-                <n-tag v-for="label in utsPluginLabels" :key="label" type="success">{{ label }}</n-tag>
-              </n-space>
-              <n-text v-else depth="3" class="module-empty">未检测到 UTS 插件</n-text>
-            </div>
-          </n-gi>
-        </n-grid>
+            <n-text v-else depth="3" class="module-empty">未声明 App 模块</n-text>
+          </div>
+          <div class="module-box">
+            <n-text strong>UTS 插件</n-text>
+            <n-space v-if="utsPluginLabels.length" wrap :size="8" class="tag-row">
+              <n-tag v-for="label in utsPluginLabels" :key="label" type="success">{{ label }}</n-tag>
+            </n-space>
+            <n-text v-else depth="3" class="module-empty">未检测到 UTS 插件</n-text>
+          </div>
+        </div>
         <div class="path-summary">
           <n-text depth="3">manifest 路径</n-text>
           <n-text code>{{ insightManifestPath }}</n-text>
@@ -1125,7 +1256,96 @@ function goBack() {
       </div>
     </n-card>
 
-    <n-card title="构建日志" class="build-section-card log-section-card">
+    <n-card v-if="scanResult && selectedPlatforms.includes('android')" title="Android 模块配置" class="build-section-card">
+      <n-space vertical :size="14">
+        <n-alert v-if="androidModuleConfigLoading" type="info">正在从 manifest 解析 Android 模块配置...</n-alert>
+        <n-alert v-else-if="!latestManifestInfo" type="warning">
+          {{ manifestReadWarning || '请先在项目配置中设置本地项目路径，以便读取 manifest.json' }}
+        </n-alert>
+        <n-alert v-else-if="!androidConfigurableModules.length" type="success">
+          已选模块暂无需要额外配置项的 Android 模块。
+        </n-alert>
+        <n-alert v-else :type="androidMissingRequired.length ? 'warning' : 'success'">
+          <n-space vertical :size="6">
+            <n-text>
+              已选 {{ selectedManifestModules.length }} 个 Manifest 模块，其中 {{ androidConfigurableModules.length }} 个需要 Android 配置。
+            </n-text>
+            <n-text v-if="androidMissingRequired.length">
+              还有 {{ androidMissingRequired.length }} 个必填项未填写，填写完成后才能开始打包。
+            </n-text>
+            <n-text v-else>模块配置已就绪，可以开始 Android 打包。</n-text>
+          </n-space>
+        </n-alert>
+
+        <div v-if="androidConfigurableModules.length" class="android-config-list">
+          <n-space wrap :size="8" class="android-config-switcher">
+            <n-tag
+              v-for="mod in androidConfigurableModules"
+              :key="androidConfigModuleKey(mod)"
+              class="android-config-chip"
+              :class="{ 'android-config-chip--active': activeAndroidConfigModuleKey === androidConfigModuleKey(mod) }"
+              :type="androidConfigModuleStatusType(mod)"
+              :bordered="activeAndroidConfigModuleKey !== androidConfigModuleKey(mod)"
+              @click="openAndroidConfigModule(mod)"
+            >
+              {{ mod.name }} · {{ configModuleStatusLabel(mod) }}
+            </n-tag>
+          </n-space>
+
+          <div v-if="activeAndroidConfigModule" class="android-config-module">
+            <div class="android-config-head">
+              <n-space align="center" :size="8">
+                <n-text strong>{{ activeAndroidConfigModule.name }}</n-text>
+                <n-tag size="small" type="info">{{ activeAndroidConfigModule.category }}</n-tag>
+                <n-tag v-if="formatPlatforms(activeAndroidConfigModule.platforms)" size="small" :type="activeAndroidConfigModule.platforms.includes('android') ? 'success' : 'default'">{{ formatPlatforms(activeAndroidConfigModule.platforms) }}</n-tag>
+              </n-space>
+              <n-text depth="3">{{ activeAndroidConfigModule.fields.length }} 项配置</n-text>
+            </div>
+            <n-grid :cols="2" :x-gap="14" :y-gap="10" responsive="screen">
+              <n-gi v-for="field in activeAndroidConfigModule.fields" :key="activeAndroidConfigModule.templateKey + field.key">
+                <n-form-item :label="field.label" :feedback="field.required && !androidFieldValue(field).trim() ? '必填项，未填写时不能开始打包' : undefined">
+                  <template #label>
+                    <n-space align="center" :size="6">
+                      <n-text>{{ field.label }}</n-text>
+                      <n-tag size="tiny" :type="fieldStatusType(field)">{{ fieldStatusLabel(field) }}</n-tag>
+                    </n-space>
+                  </template>
+                  <template v-if="isFileField(field)">
+                    <n-space :size="8" align="center" class="file-field-row">
+                      <n-button size="small" :disabled="isBuildLocked" @click="pickAndroidFileField(field)">选择文件</n-button>
+                      <n-text v-if="androidFieldValue(field)" depth="3" class="file-field-hint">
+                        已选择 ({{ formatFileSize(androidFieldValue(field)) }})
+                      </n-text>
+                      <n-button v-if="androidFieldValue(field)" size="small" quaternary type="error" :disabled="isBuildLocked" @click="clearAndroidFileField(field)">清除</n-button>
+                      <n-text v-else depth="3" class="file-field-hint">{{ field.placeholder }}</n-text>
+                    </n-space>
+                  </template>
+                  <n-select
+                    v-else-if="isSelectField(field)"
+                    :value="androidFieldValue(field)"
+                    :options="selectFieldOptions(activeAndroidConfigModule, field)"
+                    :placeholder="field.placeholder"
+                    :disabled="isBuildLocked"
+                    @update:value="(value: string) => updateAndroidField(field, value)"
+                  />
+                  <n-input
+                    v-else
+                    :value="androidFieldValue(field)"
+                    :placeholder="field.placeholder"
+                    :type="field.secret ? 'password' : 'text'"
+                    :show-password-on="field.secret ? 'click' : undefined"
+                    :disabled="isBuildLocked"
+                    @update:value="(value: string) => updateAndroidField(field, value)"
+                  />
+                </n-form-item>
+              </n-gi>
+            </n-grid>
+          </div>
+        </div>
+      </n-space>
+    </n-card>
+
+    <n-card data-guide="build-log" title="构建日志" class="build-section-card log-section-card">
       <LogPanel :logs="currentBuild?.logs || []" height="380px" />
       <n-progress
         class="build-progress"
@@ -1141,7 +1361,7 @@ function goBack() {
         </n-alert>
         <n-alert v-if="currentGeneratedProjectPath" type="info">
           <n-space align="center">
-            <span>Android 工程已生成:</span>
+            <span>{{ currentGeneratedProjectLabel }}:</span>
             <n-text code class="path-text">{{ currentGeneratedProjectPath }}</n-text>
             <n-button size="small" @click="() => { void invoke('tauri', { __tauriModule: 'shell', message: { cmd: 'open', path: currentGeneratedProjectPath } }) }">打开目录</n-button>
           </n-space>
@@ -1214,8 +1434,7 @@ function goBack() {
   margin-top: 4px;
 }
 
-.insight-grid,
-.module-grid {
+.insight-grid {
   margin-top: 14px;
 }
 
@@ -1242,6 +1461,14 @@ function goBack() {
   gap: 8px;
 }
 
+.module-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 14px;
+  align-items: start;
+}
+
 .module-box {
   min-height: 96px;
   padding: 12px;
@@ -1250,8 +1477,90 @@ function goBack() {
   background: var(--surface-color);
 }
 
+.module-box-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
 .tag-row {
   margin-top: 10px;
+}
+
+.module-choice-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.module-choice {
+  --module-choice-bg: var(--surface-color);
+  --module-choice-border: var(--border-soft);
+  --module-choice-text: inherit;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--module-choice-border);
+  border-radius: 6px;
+  background: var(--module-choice-bg);
+  color: var(--module-choice-text);
+  transition: border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.module-choice--success {
+  --module-choice-bg: #f0fdf4;
+  --module-choice-border: #86d7a2;
+}
+
+.module-choice--warning {
+  --module-choice-bg: #fff8e1;
+  --module-choice-border: #f3c969;
+}
+
+.module-choice--error {
+  --module-choice-bg: #fff1f0;
+  --module-choice-border: #ef9a9a;
+}
+
+.module-choice--default {
+  --module-choice-bg: #f6f7f9;
+  --module-choice-border: #d8dde6;
+  --module-choice-text: #8a929e;
+}
+
+.module-choice :deep(.n-checkbox__label) {
+  flex: 1;
+  min-width: 0;
+  padding-left: 8px;
+  color: var(--module-choice-text);
+}
+
+.module-choice-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.module-choice-main,
+.module-choice-platform {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.module-choice-main {
+  font-weight: 500;
+}
+
+.module-choice-platform {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .module-empty {
@@ -1280,6 +1589,18 @@ function goBack() {
   gap: 14px;
 }
 
+.android-config-switcher {
+  margin-bottom: 2px;
+}
+
+.android-config-chip {
+  cursor: pointer;
+}
+
+.android-config-chip--active {
+  box-shadow: 0 0 0 2px rgba(24, 160, 88, 0.12);
+}
+
 .android-config-module {
   padding: 14px;
   border: 1px solid var(--border-soft);
@@ -1303,10 +1624,6 @@ function goBack() {
   font-size: 12px;
 }
 
-.module-divider {
-  margin: 4px 0 0;
-}
-
 .build-progress {
   margin-top: 16px;
 }
@@ -1323,6 +1640,10 @@ function goBack() {
   }
 
   .path-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .module-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -210,7 +210,7 @@ function goBuild() {
           <n-text v-if="projectForm" depth="3" class="page-subtitle">{{ projectForm.name }}</n-text>
         </div>
       </n-space>
-      <n-space class="header-actions">
+      <n-space data-guide="config-actions" class="header-actions">
         <n-button type="primary" :loading="loading" :disabled="isBuildLocked" @click="handleSave">
           <template #icon><n-icon><SaveOutline /></n-icon></template>
           保存配置
@@ -226,13 +226,13 @@ function goBuild() {
     <n-alert v-if="!projectForm" type="info">正在加载项目配置...</n-alert>
 
     <n-card v-else class="config-panel">
-      <n-tabs type="line" animated class="config-tabs">
+      <n-tabs data-guide="config-tabs" type="line" animated class="config-tabs">
         <n-tab-pane name="basic" tab="基础信息">
           <n-form label-placement="left" label-width="130" :disabled="isBuildLocked">
             <n-grid :cols="2" :x-gap="18" :y-gap="4" responsive="screen">
               <n-gi><n-form-item label="项目名称"><n-input v-model:value="projectForm.name" /></n-form-item></n-gi>
               <n-gi span="2">
-                <n-form-item label="本地项目路径">
+                <n-form-item data-guide="project-path" label="本地项目路径">
                   <n-space class="inline-field-row">
                     <n-input
                       v-model:value="projectForm.localPath"

@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 export type BuildStatus = 'idle' | 'building' | 'success' | 'failed' | 'cancelled'
-export type BuildKind = 'package' | 'generateAndroidProject'
+export type BuildKind = 'package' | 'generateAndroidProject' | 'generateIosProject' | 'generateHarmonyProject'
 
 export interface BuildLog {
   id: string

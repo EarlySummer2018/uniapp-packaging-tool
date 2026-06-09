@@ -122,18 +122,29 @@ pub async fn run_harmony_build(
 }
 
 #[tauri::command]
-pub async fn build_harmony_hap(
+pub async fn generate_harmony_project(
     project_id: String,
     resource_path: String,
     build_id: Option<String>,
     manifest_info: Option<crate::commands::resource::UniappManifestInfo>,
     window: tauri::Window,
-) -> Result<crate::commands::build_android::BuildArtifact, String> {
+) -> Result<String, String> {
     let _ = manifest_info;
     let build_id = build_id
         .filter(|id| !id.trim().is_empty())
-        .unwrap_or_else(|| format!("harmony-{}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
-    emit_harmony_log(&window, &build_id, "info", "开始 Harmony HAP 构建流程", Some(2));
+        .unwrap_or_else(|| {
+            format!(
+                "harmony-gen-{}",
+                chrono::Local::now().format("%Y%m%d-%H%M%S")
+            )
+        });
+    emit_harmony_log(
+        &window,
+        &build_id,
+        "info",
+        "开始生成 Harmony 工程（不执行打包）",
+        Some(2),
+    );
     let config = crate::commands::project::load_project_config_sync(&project_id)?;
     let sdk_config = crate::commands::sdk::load_global_sdk_config_sync()?;
     validate_harmony_config(&config, &sdk_config)?;
@@ -153,12 +164,110 @@ pub async fn build_harmony_hap(
     ))?;
     crate::utils::fs::copy_recursive(&harmony_template, &workspace)
         .map_err(|e| format!("复制 Harmony 工程失败: {}", e))?;
-    emit_harmony_log(&window, &build_id, "success", "Harmony 工程已复制到工作区", Some(15));
+    emit_harmony_log(
+        &window,
+        &build_id,
+        "success",
+        "Harmony 工程已复制到工作区",
+        Some(18),
+    );
 
     patch_harmony_json_files(&workspace, &config)?;
     patch_harmony_signing_files(&workspace, &config)?;
     import_harmony_resource(&workspace, &app_resource_dir, &scan.app_id)?;
-    emit_harmony_log(&window, &build_id, "success", "Harmony 资源和配置已注入", Some(45));
+    emit_harmony_log(
+        &window,
+        &build_id,
+        "success",
+        "Harmony 资源和配置已注入",
+        Some(85),
+    );
+
+    let hvigorw = if cfg!(windows) {
+        workspace.join("hvigorw.bat")
+    } else {
+        workspace.join("hvigorw")
+    };
+    if !hvigorw.exists() {
+        return Err(format!("未找到 hvigorw: {}", hvigorw.display()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&hvigorw)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&hvigorw, perms).map_err(|e| e.to_string())?;
+    }
+
+    let workspace_display = workspace.to_string_lossy().to_string();
+    emit_harmony_log(
+        &window,
+        &build_id,
+        "success",
+        &format!("Harmony 工程已生成: {}", workspace_display),
+        Some(100),
+    );
+    Ok(workspace_display)
+}
+
+#[tauri::command]
+pub async fn build_harmony_hap(
+    project_id: String,
+    resource_path: String,
+    build_id: Option<String>,
+    manifest_info: Option<crate::commands::resource::UniappManifestInfo>,
+    window: tauri::Window,
+) -> Result<crate::commands::build_android::BuildArtifact, String> {
+    let _ = manifest_info;
+    let build_id = build_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| format!("harmony-{}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
+    emit_harmony_log(
+        &window,
+        &build_id,
+        "info",
+        "开始 Harmony HAP 构建流程",
+        Some(2),
+    );
+    let config = crate::commands::project::load_project_config_sync(&project_id)?;
+    let sdk_config = crate::commands::sdk::load_global_sdk_config_sync()?;
+    validate_harmony_config(&config, &sdk_config)?;
+
+    let resource_dir = PathBuf::from(&resource_path);
+    let scan = crate::commands::shared::resource_scan::scan_imported_resource(
+        &resource_dir,
+        &resource_dir,
+        false,
+    )?;
+    let app_resource_dir = PathBuf::from(&scan.app_resource_path);
+    let workspace = crate::utils::fs::get_project_config_dir(&project_id)
+        .join("workspace")
+        .join(safe_file_name(&build_id));
+    let harmony_template = crate::commands::sdk::resolve_harmony_template_root(Path::new(
+        &sdk_config.harmony_template_path,
+    ))?;
+    crate::utils::fs::copy_recursive(&harmony_template, &workspace)
+        .map_err(|e| format!("复制 Harmony 工程失败: {}", e))?;
+    emit_harmony_log(
+        &window,
+        &build_id,
+        "success",
+        "Harmony 工程已复制到工作区",
+        Some(15),
+    );
+
+    patch_harmony_json_files(&workspace, &config)?;
+    patch_harmony_signing_files(&workspace, &config)?;
+    import_harmony_resource(&workspace, &app_resource_dir, &scan.app_id)?;
+    emit_harmony_log(
+        &window,
+        &build_id,
+        "success",
+        "Harmony 资源和配置已注入",
+        Some(45),
+    );
 
     let hvigorw = if cfg!(windows) {
         workspace.join("hvigorw.bat")
@@ -183,7 +292,13 @@ pub async fn build_harmony_hap(
         "--mode".to_string(),
         "release".to_string(),
     ];
-    emit_harmony_log(&window, &build_id, "info", "执行 hvigorw assembleHap", Some(65));
+    emit_harmony_log(
+        &window,
+        &build_id,
+        "info",
+        "执行 hvigorw assembleHap",
+        Some(65),
+    );
     let output = crate::utils::process::run_command_streaming_with_env_tagged(
         &hvigorw.to_string_lossy(),
         &args,

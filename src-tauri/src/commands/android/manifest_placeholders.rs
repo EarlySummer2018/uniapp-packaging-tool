@@ -145,6 +145,7 @@ pub fn manifest_placeholder_aliases<'a>(template_key: &'a str, key: &'a str) -> 
             vec!["GOOGLE_MAPS_API_KEY", "plus.google_map.APIKey_android"]
         }
         ("map", "MAP_PAGE_TYPE") => vec![],
+        ("map", "AMAP_SDK_VERSION") => vec![],
         ("payment", "PAYPAL_RETURN_SCHEME") => {
             vec!["PAYPAL_RETURN_SCHEME", "plus.paypal.returnUrl", "returnUrl"]
         }

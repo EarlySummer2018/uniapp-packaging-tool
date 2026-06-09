@@ -436,11 +436,14 @@ fn get_geolocation_template() -> ModuleTemplate {
             vendor_aars: vec![],
             gradle_dependencies: vec![
                 "com.amap.api:location:6.4.5 (高德定位)".to_string(),
-                "com.tencent.map.geolocation:TencentLocationSdk-openplatform:7.5.4.8 (腾讯定位)".to_string(),
+                "com.tencent.map.geolocation:TencentLocationSdk-openplatform:7.5.4.8 (腾讯定位，构建中心可修改)".to_string(),
             ],
             manifest_placeholders: vec![
                 "BAIDU_MAP_AK (百度地图)".to_string(),
                 "AMAP_KEY (高德地图)".to_string(),
+                "TENCENT_MAP_KEY (腾讯定位 AppKey)".to_string(),
+                "TENCENT_LOCATION_SDK_VERSION (腾讯定位 SDK 版本，默认 7.5.4.8；构建中心可修改)"
+                    .to_string(),
             ],
             manifest_meta_data: vec![
                 HashMap::from([("android:name".to_string(), "com.baidu.lbsapi.API_KEY".to_string()), ("android:value".to_string(), "${BAIDU_MAP_AK}".to_string())]),
@@ -578,12 +581,14 @@ fn get_map_template() -> ModuleTemplate {
             ],
             vendor_aars: vec![],
             gradle_dependencies: vec![
-                "com.amap.api:3dmap:latest.release (高德地图，版本以 SDK demo 为准)".to_string(),
-                "com.amap.api:search:latest.release (高德搜索，版本以 SDK demo 为准)".to_string(),
+                "com.amap.api:3dmap-location-search:10.0.700_loc6.4.5_sea9.7.2 (高德地图，构建中心可修改)"
+                    .to_string(),
                 "com.google.android.gms:play-services-maps:18.0.1 (Google地图)".to_string(),
             ],
             manifest_placeholders: vec![
                 "MAP_PAGE_TYPE (vue/nvue，默认 vue；百度 nvue 不支持)".to_string(),
+                "AMAP_SDK_VERSION (高德地图 SDK 版本，默认 10.0.700_loc6.4.5_sea9.7.2)"
+                    .to_string(),
                 "BAIDU_MAP_AK (百度地图 Key)".to_string(),
                 "AMAP_KEY (高德地图 Key)".to_string(),
                 "GOOGLE_MAPS_API_KEY (Google 地图 Key)".to_string(),

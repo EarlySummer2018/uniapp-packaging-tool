@@ -238,6 +238,9 @@ dependencies {
         )
         .unwrap();
         assert!(manifest.contains(r#"android:allowBackup="false""#));
+        assert!(manifest.contains(r#"xmlns:tools="http://schemas.android.com/tools""#));
+        assert!(manifest.contains(r#"tools:replace="android:allowBackup""#));
+        assert_eq!(manifest.matches("android:allowBackup").count(), 2);
         assert!(manifest.contains(r#"android:value="test-app-key""#));
         assert_eq!(
             manifest
@@ -271,6 +274,34 @@ dependencies {
         assert!(dcloud.contains(r#"appid="__UNI__TEST""#));
 
         let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn application_tools_replace_merges_existing_attributes_idempotently() {
+        let mut editor = XmlManifestEditor::from_str(
+            r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:allowBackup="false"
+        tools:replace="android:theme">
+    </application>
+</manifest>
+"#,
+        );
+
+        editor
+            .add_application_tools_replace("android:allowBackup")
+            .unwrap();
+        editor
+            .add_application_tools_replace("android:allowBackup")
+            .unwrap();
+
+        assert!(editor
+            .as_str()
+            .contains(r#"tools:replace="android:theme,android:allowBackup""#));
+        assert_eq!(editor.as_str().matches("xmlns:tools=").count(), 1);
+        assert_eq!(editor.as_str().matches("android:allowBackup").count(), 2);
+        editor.validate_structure().unwrap();
     }
 
     #[test]

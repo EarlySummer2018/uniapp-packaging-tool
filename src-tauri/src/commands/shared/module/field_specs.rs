@@ -210,6 +210,20 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
                 path_hints: &["geolocation", "location", "tencent", "qqmap", "maps"],
                 field_type: "text",
             },
+            AndroidConfigFieldSpec {
+                key: "TENCENT_LOCATION_SDK_VERSION",
+                label: "腾讯定位 SDK 版本",
+                required: false,
+                secret: false,
+                placeholder: "7.5.4.8",
+                aliases: &[
+                    "TENCENT_LOCATION_SDK_VERSION",
+                    "tencent_location_sdk_version",
+                    "TencentLocationSdkVersion",
+                ],
+                path_hints: &["geolocation", "location", "tencent", "qqmap"],
+                field_type: "text",
+            },
         ],
         "share" => &[
             AndroidConfigFieldSpec {
@@ -456,6 +470,16 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
                 secret: true,
                 placeholder: "使用高德地图时填写",
                 aliases: &["AMAP_KEY", "amap_key", "appkey_android", "appKey", "key"],
+                path_hints: &["maps", "map", "amap", "sdkconfigs"],
+                field_type: "text",
+            },
+            AndroidConfigFieldSpec {
+                key: "AMAP_SDK_VERSION",
+                label: "高德地图 SDK 版本",
+                required: false,
+                secret: false,
+                placeholder: "10.0.700_loc6.4.5_sea9.7.2",
+                aliases: &["AMAP_SDK_VERSION", "amap_sdk_version", "amap_version"],
                 path_hints: &["maps", "map", "amap", "sdkconfigs"],
                 field_type: "text",
             },

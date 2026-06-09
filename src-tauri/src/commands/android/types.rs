@@ -154,6 +154,14 @@ pub fn render_gradle_dependency_line(dep: &str) -> String {
     }
 
     match dep {
+        _ if dep.starts_with("com.amap.api:3dmap-location-search:") => {
+            format!("    implementation \"{}\"", dep)
+        }
+        _ if dep
+            .starts_with("com.tencent.map.geolocation:TencentLocationSdk-openplatform:") =>
+        {
+            format!("    implementation('{}')", dep)
+        }
         "com.getui:gtsdk:3.3.7.0" => {
             "    implementation('com.getui:gtsdk:3.3.7.0'){ exclude(group: 'com.getui') }"
                 .to_string()
@@ -194,4 +202,29 @@ pub fn indent_manifest_fragment(fragment: &str, spaces: usize) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn amap_combined_dependency_uses_double_quoted_implementation() {
+        assert_eq!(
+            render_gradle_dependency_line(
+                "com.amap.api:3dmap-location-search:10.0.700_loc6.4.5_sea9.7.2"
+            ),
+            "    implementation \"com.amap.api:3dmap-location-search:10.0.700_loc6.4.5_sea9.7.2\""
+        );
+    }
+
+    #[test]
+    fn tencent_location_dependency_uses_parenthesized_implementation() {
+        assert_eq!(
+            render_gradle_dependency_line(
+                "com.tencent.map.geolocation:TencentLocationSdk-openplatform:2.3.1"
+            ),
+            "    implementation('com.tencent.map.geolocation:TencentLocationSdk-openplatform:2.3.1')"
+        );
+    }
 }

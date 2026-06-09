@@ -196,6 +196,11 @@ pub(crate) fn apply_android_manifest_modules_internal(
             &template.android_config.gradle_dependencies,
             manifest,
         );
+        let gradle_dependencies = android_gradle_dependencies_for_report(
+            template_key,
+            gradle_dependencies,
+            config_report,
+        );
         if gradle_dependencies
             .iter()
             .any(|dependency| dependency.starts_with("com.amap.api:"))
@@ -237,16 +242,7 @@ pub(crate) fn apply_android_manifest_modules_internal(
             extra_repos.insert(repo.to_string());
         }
         for dep in gradle_dependencies {
-            let resolved = resolve_android_sdk_gradle_dependency(sdk_libs, &dep)?;
-            if resolved != dep {
-                emit_log(
-                    window,
-                    "info",
-                    &format!("已从离线 SDK demo 解析依赖版本: {} -> {}", dep, resolved),
-                    None,
-                );
-            }
-            extra_deps.insert(resolved);
+            insert_gradle_dependency(extra_deps, dep);
         }
 
         if has_artifacts_to_copy {
@@ -411,6 +407,99 @@ pub fn android_gradle_dependencies(
         .collect()
 }
 
+fn android_gradle_dependencies_for_report(
+    template_key: &str,
+    dependencies: Vec<String>,
+    config_report: Option<&crate::commands::module::AndroidModuleConfigReport>,
+) -> Vec<String> {
+    match template_key {
+        "map" => {
+            let Some(amap_version) = report_field_value(config_report, "map", "AMAP_SDK_VERSION")
+            else {
+                return dependencies;
+            };
+
+            let mut inserted_amap_map_dependency = false;
+            dependencies
+                .into_iter()
+                .filter_map(|dependency| {
+                    if dependency.starts_with("com.amap.api:3dmap-location-search:")
+                        || dependency.starts_with("com.amap.api:3dmap:")
+                        || dependency.starts_with("com.amap.api:search:")
+                    {
+                        if inserted_amap_map_dependency {
+                            None
+                        } else {
+                            inserted_amap_map_dependency = true;
+                            Some(format!(
+                                "com.amap.api:3dmap-location-search:{}",
+                                amap_version
+                            ))
+                        }
+                    } else {
+                        Some(dependency)
+                    }
+                })
+                .collect()
+        }
+        "geolocation" => {
+            let Some(tencent_version) =
+                report_field_value(config_report, "geolocation", "TENCENT_LOCATION_SDK_VERSION")
+            else {
+                return dependencies;
+            };
+            dependencies
+                .into_iter()
+                .map(|dependency| {
+                    if dependency
+                        .starts_with("com.tencent.map.geolocation:TencentLocationSdk-openplatform:")
+                    {
+                        format!(
+                            "com.tencent.map.geolocation:TencentLocationSdk-openplatform:{}",
+                            tencent_version
+                        )
+                    } else {
+                        dependency
+                    }
+                })
+                .collect()
+        }
+        _ => dependencies,
+    }
+}
+
+fn insert_gradle_dependency(extra_deps: &mut BTreeSet<String>, dependency: String) {
+    if dependency.starts_with("com.tencent.map.geolocation:TencentLocationSdk-openplatform:") {
+        extra_deps.retain(|existing| {
+            !existing.starts_with("com.tencent.map.geolocation:TencentLocationSdk-openplatform:")
+        });
+    }
+    extra_deps.insert(dependency);
+}
+
+fn report_field_value(
+    config_report: Option<&crate::commands::module::AndroidModuleConfigReport>,
+    template_key: &str,
+    field_key: &str,
+) -> Option<String> {
+    config_report.and_then(|report| {
+        report
+            .modules
+            .iter()
+            .find(|module| module.template_key == template_key)
+            .and_then(|module| {
+                module
+                    .fields
+                    .iter()
+                    .find(|field| field.key == field_key)
+                    .and_then(|field| field.value.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+            })
+    })
+}
+
 fn android_module_artifact_enabled_for_report(
     template_key: &str,
     artifact: &str,
@@ -542,103 +631,6 @@ fn is_conflicting_amap_sdk_aar(file_name: &str) -> bool {
         .any(|wrapper| normalized.contains(wrapper))
 }
 
-fn resolve_android_sdk_gradle_dependency(
-    sdk_libs: &Path,
-    dependency: &str,
-) -> Result<String, String> {
-    let parts = dependency.split(':').collect::<Vec<_>>();
-    if parts.len() != 3 || parts[0] != "com.amap.api" {
-        return Ok(dependency.to_string());
-    }
-
-    if let Some(version) = find_android_sdk_demo_dependency_version(sdk_libs, parts[0], parts[1]) {
-        return Ok(format!("{}:{}:{}", parts[0], parts[1], version));
-    }
-
-    if is_dynamic_gradle_version(parts[2]) {
-        return Err(format!(
-            "离线 SDK demo 中未找到高德依赖 {}:{} 的明确版本，请检查所选 DCloud Android 离线 SDK 是否包含对应 demo",
-            parts[0], parts[1]
-        ));
-    }
-    Ok(dependency.to_string())
-}
-
-fn is_dynamic_gradle_version(version: &str) -> bool {
-    version.contains('+') || version.to_ascii_lowercase().contains("latest")
-}
-
-fn find_android_sdk_demo_dependency_version(
-    sdk_libs: &Path,
-    group: &str,
-    artifact: &str,
-) -> Option<String> {
-    let sdk_root = sdk_libs.parent()?.parent()?;
-    let mut gradle_files = Vec::new();
-    collect_gradle_files(sdk_root, 0, &mut gradle_files);
-    gradle_files.sort_by_key(|path| {
-        let lower = path.to_string_lossy().to_ascii_lowercase();
-        (
-            !lower.contains("demo"),
-            !lower.contains("hbuilder-integrate-as"),
-            lower,
-        )
-    });
-
-    let pattern = regex::Regex::new(&format!(
-        r#"{}:{}:([^'"\s,\)]+)"#,
-        regex::escape(group),
-        regex::escape(artifact)
-    ))
-    .ok()?;
-    for path in gradle_files {
-        let Ok(content) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        for captures in pattern.captures_iter(&content) {
-            let version = captures.get(1)?.as_str().trim();
-            if !version.is_empty()
-                && !is_dynamic_gradle_version(version)
-                && version.chars().next().is_some_and(|ch| ch.is_ascii_digit())
-            {
-                return Some(version.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn collect_gradle_files(dir: &Path, depth: usize, files: &mut Vec<PathBuf>) {
-    if depth > 6 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default();
-            if !matches!(
-                name,
-                ".git" | ".gradle" | "build" | "node_modules" | "target"
-            ) {
-                collect_gradle_files(&path, depth + 1, files);
-            }
-            continue;
-        }
-        if matches!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some("build.gradle" | "build.gradle.kts")
-        ) {
-            files.push(path);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -650,44 +642,6 @@ mod tests {
         assert!(!is_conflicting_amap_sdk_aar("weex_amap-release.aar"));
         assert!(is_conflicting_amap_sdk_aar("AMap_Location_V6.4.5.aar"));
         assert!(is_conflicting_amap_sdk_aar("amap-libs-release.aar"));
-    }
-
-    #[test]
-    fn amap_dependency_version_is_read_from_offline_sdk_demo() {
-        let root =
-            std::env::temp_dir().join(format!("unipack-amap-version-{}", uuid::Uuid::new_v4()));
-        let libs = root.join("SDK/libs");
-        let demo = root.join("HBuilder-Integrate-AS/simpleDemo");
-        std::fs::create_dir_all(&libs).unwrap();
-        std::fs::create_dir_all(&demo).unwrap();
-        std::fs::write(
-            demo.join("build.gradle"),
-            "dependencies { implementation('com.amap.api:location:6.9.0') }",
-        )
-        .unwrap();
-
-        let resolved =
-            resolve_android_sdk_gradle_dependency(&libs, "com.amap.api:location:6.4.5").unwrap();
-
-        assert_eq!(resolved, "com.amap.api:location:6.9.0");
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn dynamic_amap_version_requires_offline_sdk_demo_version() {
-        let root = std::env::temp_dir().join(format!(
-            "unipack-amap-missing-version-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let libs = root.join("SDK/libs");
-        std::fs::create_dir_all(&libs).unwrap();
-
-        let error =
-            resolve_android_sdk_gradle_dependency(&libs, "com.amap.api:3dmap:latest.release")
-                .unwrap_err();
-
-        assert!(error.contains("离线 SDK demo"));
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -723,5 +677,102 @@ mod tests {
         let enabled = enabled_android_artifact_patterns("map", &artifacts, None, Some(&report));
 
         assert_eq!(enabled, vec!["weex_amap-release.aar"]);
+    }
+
+    #[test]
+    fn amap_map_dependency_uses_user_configured_combined_version() {
+        let report = crate::commands::module::AndroidModuleConfigReport {
+            modules: vec![crate::commands::module::AndroidModuleConfigModule {
+                name: "Maps".to_string(),
+                template_key: "map".to_string(),
+                category: "map".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "test".to_string(),
+                fields: vec![
+                    crate::commands::shared::module::types::AndroidModuleConfigField {
+                        key: "AMAP_SDK_VERSION".to_string(),
+                        label: "高德地图 SDK 版本".to_string(),
+                        required: false,
+                        secret: false,
+                        value: Some("10.0.700_loc6.4.5_sea9.7.2".to_string()),
+                        value_source: Some("user".to_string()),
+                        placeholder: String::new(),
+                        field_type: "text".to_string(),
+                    },
+                ],
+            }],
+            missing_required: Vec::new(),
+            all_configured: true,
+        };
+        let deps = vec![
+            "com.amap.api:3dmap:latest.release".to_string(),
+            "com.amap.api:search:latest.release".to_string(),
+            "com.google.android.gms:play-services-maps:18.0.1".to_string(),
+        ];
+
+        let resolved = android_gradle_dependencies_for_report("map", deps, Some(&report));
+
+        assert_eq!(
+            resolved,
+            vec![
+                "com.amap.api:3dmap-location-search:10.0.700_loc6.4.5_sea9.7.2",
+                "com.google.android.gms:play-services-maps:18.0.1",
+            ]
+        );
+    }
+
+    #[test]
+    fn tencent_location_dependency_uses_user_configured_version() {
+        let report = crate::commands::module::AndroidModuleConfigReport {
+            modules: vec![crate::commands::module::AndroidModuleConfigModule {
+                name: "Geolocation".to_string(),
+                template_key: "geolocation".to_string(),
+                category: "geolocation".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "test".to_string(),
+                fields: vec![
+                    crate::commands::shared::module::types::AndroidModuleConfigField {
+                        key: "TENCENT_LOCATION_SDK_VERSION".to_string(),
+                        label: "腾讯定位 SDK 版本".to_string(),
+                        required: false,
+                        secret: false,
+                        value: Some("2.3.1".to_string()),
+                        value_source: Some("user".to_string()),
+                        placeholder: String::new(),
+                        field_type: "text".to_string(),
+                    },
+                ],
+            }],
+            missing_required: Vec::new(),
+            all_configured: true,
+        };
+        let deps =
+            vec!["com.tencent.map.geolocation:TencentLocationSdk-openplatform:7.5.4.8".to_string()];
+
+        let resolved = android_gradle_dependencies_for_report("geolocation", deps, Some(&report));
+
+        assert_eq!(
+            resolved,
+            vec!["com.tencent.map.geolocation:TencentLocationSdk-openplatform:2.3.1"]
+        );
+    }
+
+    #[test]
+    fn inserting_tencent_location_dependency_removes_other_versions() {
+        let mut deps = BTreeSet::from([
+            "com.tencent.map.geolocation:TencentLocationSdk-openplatform:7.5.4.8".to_string(),
+            "androidx.core:core-ktx:1.6.0".to_string(),
+        ]);
+
+        insert_gradle_dependency(
+            &mut deps,
+            "com.tencent.map.geolocation:TencentLocationSdk-openplatform:2.3.1".to_string(),
+        );
+
+        assert!(deps.contains("com.tencent.map.geolocation:TencentLocationSdk-openplatform:2.3.1"));
+        assert!(
+            !deps.contains("com.tencent.map.geolocation:TencentLocationSdk-openplatform:7.5.4.8")
+        );
+        assert!(deps.contains("androidx.core:core-ktx:1.6.0"));
     }
 }
