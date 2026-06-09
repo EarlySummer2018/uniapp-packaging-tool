@@ -26,21 +26,31 @@ pub fn render_patches(
     add_permissions(
         permissions,
         &[
+            "android.permission.ACCESS_COARSE_LOCATION",
+            "android.permission.ACCESS_FINE_LOCATION",
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.ACCESS_NETWORK_STATE",
             "android.permission.CHANGE_WIFI_STATE",
+            "android.permission.READ_PHONE_STATE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.INTERNET",
             "android.permission.MOUNT_UNMOUNT_FILESYSTEMS",
             "android.permission.READ_LOGS",
             "android.permission.WRITE_SETTINGS",
-            "android.permission.ACCESS_BACKGROUND_LOCATION",
-            "android.permission.FOREGROUND_SERVICE",
         ],
     );
     mod_perms.extend([
+        "android.permission.ACCESS_COARSE_LOCATION".to_string(),
+        "android.permission.ACCESS_FINE_LOCATION".to_string(),
+        "android.permission.ACCESS_WIFI_STATE".to_string(),
+        "android.permission.ACCESS_NETWORK_STATE".to_string(),
         "android.permission.CHANGE_WIFI_STATE".to_string(),
+        "android.permission.READ_PHONE_STATE".to_string(),
+        "android.permission.WRITE_EXTERNAL_STORAGE".to_string(),
+        "android.permission.INTERNET".to_string(),
         "android.permission.MOUNT_UNMOUNT_FILESYSTEMS".to_string(),
         "android.permission.READ_LOGS".to_string(),
         "android.permission.WRITE_SETTINGS".to_string(),
-        "android.permission.ACCESS_BACKGROUND_LOCATION".to_string(),
-        "android.permission.FOREGROUND_SERVICE".to_string(),
     ]);
 
     if has_report_value(module, "BAIDU_MAP_AK") {
@@ -57,6 +67,17 @@ pub fn render_patches(
         mod_entries.extend(baidu_entries.iter().cloned());
     }
     if has_report_value(module, "AMAP_KEY") {
+        add_permissions(
+            permissions,
+            &[
+                "android.permission.ACCESS_BACKGROUND_LOCATION",
+                "android.permission.FOREGROUND_SERVICE",
+            ],
+        );
+        mod_perms.extend([
+            "android.permission.ACCESS_BACKGROUND_LOCATION".to_string(),
+            "android.permission.FOREGROUND_SERVICE".to_string(),
+        ]);
         let amap_entries = [
             meta_data(
                 "com.amap.api.v2.apikey",

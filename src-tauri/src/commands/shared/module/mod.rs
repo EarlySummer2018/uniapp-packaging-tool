@@ -12,7 +12,8 @@ pub use types::{
 
 // Re-export functions used by other modules (e.g. build_android.rs)
 pub use analysis::{
-    analyze_android_module_config_sync, android_module_artifact_enabled_for_manifest,
+    analyze_android_module_config_sync, android_amap_geolocation_enabled, android_amap_map_enabled,
+    android_module_artifact_enabled_for_manifest,
     android_module_gradle_dependency_enabled_for_manifest,
     android_module_gradle_repositories_for_manifest, manifest_value_from_info,
 };

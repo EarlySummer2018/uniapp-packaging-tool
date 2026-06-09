@@ -110,21 +110,31 @@ pub fn render_android_module_manifest_patches_impl(
                 add_permissions(
                     &mut permissions,
                     &[
+                        "android.permission.ACCESS_COARSE_LOCATION",
+                        "android.permission.ACCESS_FINE_LOCATION",
+                        "android.permission.ACCESS_WIFI_STATE",
+                        "android.permission.ACCESS_NETWORK_STATE",
                         "android.permission.CHANGE_WIFI_STATE",
+                        "android.permission.READ_PHONE_STATE",
+                        "android.permission.WRITE_EXTERNAL_STORAGE",
+                        "android.permission.INTERNET",
                         "android.permission.MOUNT_UNMOUNT_FILESYSTEMS",
                         "android.permission.READ_LOGS",
                         "android.permission.WRITE_SETTINGS",
-                        "android.permission.ACCESS_BACKGROUND_LOCATION",
-                        "android.permission.FOREGROUND_SERVICE",
                     ],
                 );
                 mod_perms.extend([
+                    "android.permission.ACCESS_COARSE_LOCATION".to_string(),
+                    "android.permission.ACCESS_FINE_LOCATION".to_string(),
+                    "android.permission.ACCESS_WIFI_STATE".to_string(),
+                    "android.permission.ACCESS_NETWORK_STATE".to_string(),
                     "android.permission.CHANGE_WIFI_STATE".to_string(),
+                    "android.permission.READ_PHONE_STATE".to_string(),
+                    "android.permission.WRITE_EXTERNAL_STORAGE".to_string(),
+                    "android.permission.INTERNET".to_string(),
                     "android.permission.MOUNT_UNMOUNT_FILESYSTEMS".to_string(),
                     "android.permission.READ_LOGS".to_string(),
                     "android.permission.WRITE_SETTINGS".to_string(),
-                    "android.permission.ACCESS_BACKGROUND_LOCATION".to_string(),
-                    "android.permission.FOREGROUND_SERVICE".to_string(),
                 ]);
                 if has_report_value(module, "BAIDU_MAP_AK") {
                     let baidu_entries = [
@@ -140,6 +150,17 @@ pub fn render_android_module_manifest_patches_impl(
                     mod_entries.extend(baidu_entries.iter().cloned());
                 }
                 if has_report_value(module, "AMAP_KEY") {
+                    add_permissions(
+                        &mut permissions,
+                        &[
+                            "android.permission.ACCESS_BACKGROUND_LOCATION",
+                            "android.permission.FOREGROUND_SERVICE",
+                        ],
+                    );
+                    mod_perms.extend([
+                        "android.permission.ACCESS_BACKGROUND_LOCATION".to_string(),
+                        "android.permission.FOREGROUND_SERVICE".to_string(),
+                    ]);
                     let amap_entries = [
                         meta_data(
                             "com.amap.api.v2.apikey",
@@ -846,6 +867,82 @@ mod tests {
         assert!(patches
             .application_entries
             .contains("com.example.demo.wxapi.WXPayEntryActivity"));
+    }
+
+    #[test]
+    fn system_geolocation_adds_documented_base_permissions_only() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "Geolocation".to_string(),
+                template_key: "geolocation".to_string(),
+                category: "geolocation".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: Vec::new(),
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, _) =
+            render_android_module_manifest_patches_impl(Some(&report), "com.example.demo", "");
+
+        for permission in [
+            "android.permission.ACCESS_COARSE_LOCATION",
+            "android.permission.ACCESS_FINE_LOCATION",
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.CHANGE_WIFI_STATE",
+            "android.permission.READ_PHONE_STATE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.INTERNET",
+            "android.permission.MOUNT_UNMOUNT_FILESYSTEMS",
+            "android.permission.READ_LOGS",
+            "android.permission.WRITE_SETTINGS",
+        ] {
+            assert!(patches.permissions.contains(permission));
+        }
+        assert!(!patches
+            .permissions
+            .contains("android.permission.ACCESS_BACKGROUND_LOCATION"));
+        assert!(!patches
+            .permissions
+            .contains("android.permission.FOREGROUND_SERVICE"));
+        assert!(!patches.application_entries.contains("APSService"));
+    }
+
+    #[test]
+    fn amap_geolocation_adds_amap_manifest_entries_and_extra_permissions() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "Geolocation".to_string(),
+                template_key: "geolocation".to_string(),
+                category: "geolocation".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: vec![AndroidModuleConfigField {
+                    key: "AMAP_KEY".to_string(),
+                    value: Some("amap-demo".to_string()),
+                    ..Default::default()
+                }],
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, _) =
+            render_android_module_manifest_patches_impl(Some(&report), "com.example.demo", "");
+
+        assert!(patches
+            .permissions
+            .contains("android.permission.ACCESS_BACKGROUND_LOCATION"));
+        assert!(patches
+            .permissions
+            .contains("android.permission.FOREGROUND_SERVICE"));
+        assert!(patches
+            .application_entries
+            .contains("com.amap.api.v2.apikey"));
+        assert!(patches.application_entries.contains("APSService"));
     }
 
     #[test]

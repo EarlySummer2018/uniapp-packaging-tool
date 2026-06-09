@@ -164,11 +164,13 @@ fn android_field_visible_for_manifest(
                 &["geolocation", "location", "position"],
                 &["baidu", "bd"],
             ),
-            "AMAP_KEY" => manifest_has_enabled_provider(
-                manifest,
-                &["geolocation", "location", "position"],
-                &["amap", "gaode"],
-            ),
+            "AMAP_KEY" => {
+                manifest_has_enabled_provider(
+                    manifest,
+                    &["geolocation", "location", "position"],
+                    &["amap", "gaode"],
+                ) && !android_amap_map_enabled(Some(manifest))
+            }
             "TENCENT_MAP_KEY" => manifest_has_enabled_provider(
                 manifest,
                 &["geolocation", "location", "position"],
@@ -371,6 +373,12 @@ fn android_module_entry_enabled_for_manifest(
         return true;
     };
     let note = android_entry_provider_note(entry);
+    if template_key == "geolocation"
+        && android_entry_mentions_any(&note, &["amap", "gaode", "高德"])
+        && android_amap_map_enabled(Some(manifest))
+    {
+        return false;
+    }
 
     match template_key {
         "push" => provider_entry_enabled(
@@ -604,6 +612,26 @@ fn android_module_entry_enabled_for_manifest(
     }
 }
 
+pub fn android_amap_map_enabled(manifest: Option<&serde_json::Value>) -> bool {
+    manifest
+        .map(|manifest| {
+            manifest_has_enabled_provider(manifest, &["maps", "map"], &["amap", "gaode"])
+        })
+        .unwrap_or(false)
+}
+
+pub fn android_amap_geolocation_enabled(manifest: Option<&serde_json::Value>) -> bool {
+    manifest
+        .map(|manifest| {
+            manifest_has_enabled_provider(
+                manifest,
+                &["geolocation", "location", "position"],
+                &["amap", "gaode"],
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn provider_entry_enabled(
     note: &str,
     providers: &[(&[&str], &[&str], &[&str])],
@@ -755,6 +783,16 @@ fn android_optional_field_required_for_manifest(
                     | "VIVO_APP_ID"
                     | "VIVO_APP_KEY"
                     | "HONOR_APP_ID"
+            ) && android_field_visible_for_manifest(template_key, spec, Some(manifest))
+        }
+        "geolocation" => {
+            matches!(spec.key, "BAIDU_MAP_AK" | "AMAP_KEY" | "TENCENT_MAP_KEY")
+                && android_field_visible_for_manifest(template_key, spec, Some(manifest))
+        }
+        "map" => {
+            matches!(
+                spec.key,
+                "BAIDU_MAP_AK" | "AMAP_KEY" | "GOOGLE_MAPS_API_KEY" | "TENCENT_MAP_KEY"
             ) && android_field_visible_for_manifest(template_key, spec, Some(manifest))
         }
         _ => false,

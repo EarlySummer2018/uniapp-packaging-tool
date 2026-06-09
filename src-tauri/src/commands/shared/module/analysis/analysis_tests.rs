@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use crate::commands::resource::DetectedModule;
 use crate::commands::shared::module::analysis::{
-    analyze_android_module_config_sync, android_module_config_report_from_value,
+    analyze_android_module_config_sync, android_module_artifact_enabled_for_manifest,
+    android_module_config_report_from_value, android_module_gradle_dependency_enabled_for_manifest,
 };
 use crate::commands::shared::module::parsing::module_config_from_detected_modules;
 use crate::commands::shared::module::properties::generate_dcloud_properties;
@@ -635,6 +636,209 @@ fn android_config_report_requires_enabled_push_vendor_fields() {
             .any(|missing| missing.key == key));
     }
     assert!(!push.fields.iter().any(|field| field.key == "VIVO_APP_ID"));
+}
+
+#[test]
+fn geolocation_config_requires_only_enabled_provider_keys() {
+    let modules = vec![DetectedModule {
+        name: "Geolocation".to_string(),
+        category: "geolocation".to_string(),
+        platforms: vec!["android".to_string()],
+        configured: false,
+        required_keys: vec![],
+        source: "manifest.json".to_string(),
+    }];
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Geolocation": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "geolocation": {
+                        "amap": {
+                            "__platform__": ["android"],
+                            "appkey_android": ""
+                        },
+                        "baidu": false,
+                        "system": true
+                    }
+                }
+            }
+        }
+    });
+
+    let report = android_module_config_report_from_value(&modules, Some(&manifest), None);
+    let geolocation = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "geolocation")
+        .unwrap();
+
+    assert_eq!(geolocation.fields.len(), 1);
+    assert_eq!(geolocation.fields[0].key, "AMAP_KEY");
+    assert!(geolocation.fields[0].required);
+    assert!(report
+        .missing_required
+        .iter()
+        .any(|missing| missing.key == "AMAP_KEY"));
+    assert!(!geolocation
+        .fields
+        .iter()
+        .any(|field| field.key == "BAIDU_MAP_AK"));
+}
+
+#[test]
+fn system_geolocation_has_no_manual_config_fields() {
+    let modules = vec![DetectedModule {
+        name: "Geolocation".to_string(),
+        category: "geolocation".to_string(),
+        platforms: vec!["android".to_string()],
+        configured: false,
+        required_keys: vec![],
+        source: "manifest.json".to_string(),
+    }];
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Geolocation": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "geolocation": {
+                        "system": true
+                    }
+                }
+            }
+        }
+    });
+
+    let report = android_module_config_report_from_value(&modules, Some(&manifest), None);
+
+    assert!(report.modules[0].fields.is_empty());
+    assert!(report.all_configured);
+}
+
+#[test]
+fn geolocation_artifacts_and_dependencies_follow_enabled_provider() {
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "geolocation": {
+                        "amap": {
+                            "__platform__": ["android"],
+                            "appkey_android": "amap-demo"
+                        },
+                        "baidu": false,
+                        "tencent": false
+                    }
+                }
+            }
+        }
+    });
+
+    assert!(android_module_artifact_enabled_for_manifest(
+        "geolocation",
+        "geolocation-amap-release.aar (高德定位)",
+        Some(&manifest),
+    ));
+    assert!(!android_module_artifact_enabled_for_manifest(
+        "geolocation",
+        "geolocation-baidu-release.aar (百度定位)",
+        Some(&manifest),
+    ));
+    assert!(android_module_gradle_dependency_enabled_for_manifest(
+        "geolocation",
+        "com.amap.api:location:6.4.5 (高德定位)",
+        Some(&manifest),
+    ));
+    assert!(!android_module_gradle_dependency_enabled_for_manifest(
+        "geolocation",
+        "com.tencent.map.geolocation:TencentLocationSdk-openplatform:7.5.4.8 (腾讯定位)",
+        Some(&manifest),
+    ));
+}
+
+#[test]
+fn amap_map_replaces_amap_geolocation_sdk_integration() {
+    let modules = vec![
+        DetectedModule {
+            name: "Geolocation".to_string(),
+            category: "geolocation".to_string(),
+            platforms: vec!["android".to_string()],
+            configured: false,
+            required_keys: vec![],
+            source: "manifest.json".to_string(),
+        },
+        DetectedModule {
+            name: "Maps".to_string(),
+            category: "map".to_string(),
+            platforms: vec!["android".to_string()],
+            configured: false,
+            required_keys: vec![],
+            source: "manifest.json".to_string(),
+        },
+    ];
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Geolocation": {},
+                "Maps": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "geolocation": {
+                        "amap": {
+                            "appkey_android": ""
+                        }
+                    },
+                    "maps": {
+                        "amap": {
+                            "appkey_android": ""
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let report = android_module_config_report_from_value(&modules, Some(&manifest), None);
+    let geolocation = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "geolocation")
+        .unwrap();
+    let map = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "map")
+        .unwrap();
+
+    assert!(geolocation.fields.is_empty());
+    assert!(map
+        .fields
+        .iter()
+        .any(|field| field.key == "AMAP_KEY" && field.required));
+    assert!(report
+        .missing_required
+        .iter()
+        .any(|missing| missing.module_name == "Maps" && missing.key == "AMAP_KEY"));
+    assert!(!android_module_artifact_enabled_for_manifest(
+        "geolocation",
+        "geolocation-amap-release.aar (高德定位)",
+        Some(&manifest),
+    ));
+    assert!(!android_module_gradle_dependency_enabled_for_manifest(
+        "geolocation",
+        "com.amap.api:location:6.4.5 (高德定位)",
+        Some(&manifest),
+    ));
+    assert!(android_module_artifact_enabled_for_manifest(
+        "map",
+        "map-amap-release.aar (高德 vue 页面)",
+        Some(&manifest),
+    ));
 }
 
 fn temp_file(name: &str) -> PathBuf {

@@ -94,11 +94,11 @@ export const useProjectsStore = defineStore('projects', () => {
   }
 
   async function getProject(id: string) {
+    currentProjectId.value = id
     const project = await invoke<Project>('get_project', { projectId: id })
     const index = projects.value.findIndex(p => p.id === id)
     if (index >= 0) projects.value[index] = project
     else projects.value.push(project)
-    currentProjectId.value = id
     return project
   }
 

@@ -136,6 +136,16 @@ pub(crate) fn apply_android_manifest_modules_internal(
         );
         return Ok(());
     }
+    if crate::commands::module::android_amap_map_enabled(manifest)
+        && crate::commands::module::android_amap_geolocation_enabled(manifest)
+    {
+        emit_log(
+            window,
+            "info",
+            "同时检测到高德地图与高德定位，按离线 SDK 要求跳过独立高德定位 SDK，复用高德地图定位能力",
+            None,
+        );
+    }
 
     let config =
         super::manifest_modules::module_config_tree_for_android_build(modules, config_report);
@@ -179,6 +189,17 @@ pub(crate) fn apply_android_manifest_modules_internal(
             &template.android_config.vendor_aars,
             manifest,
         );
+        let gradle_dependencies = android_gradle_dependencies(
+            template_key,
+            &template.android_config.gradle_dependencies,
+            manifest,
+        );
+        if gradle_dependencies
+            .iter()
+            .any(|dependency| dependency.starts_with("com.amap.api:"))
+        {
+            remove_conflicting_amap_sdk_aars(libs_dst, window)?;
+        }
         let has_artifacts_to_copy = !required_artifacts.is_empty() || !vendor_artifacts.is_empty();
 
         if has_artifacts_to_copy {
@@ -213,12 +234,17 @@ pub(crate) fn apply_android_manifest_modules_internal(
         ) {
             extra_repos.insert(repo.to_string());
         }
-        for dep in android_gradle_dependencies(
-            template_key,
-            &template.android_config.gradle_dependencies,
-            manifest,
-        ) {
-            extra_deps.insert(dep);
+        for dep in gradle_dependencies {
+            let resolved = resolve_android_sdk_gradle_dependency(sdk_libs, &dep)?;
+            if resolved != dep {
+                emit_log(
+                    window,
+                    "info",
+                    &format!("已从离线 SDK demo 解析依赖版本: {} -> {}", dep, resolved),
+                    None,
+                );
+            }
+            extra_deps.insert(resolved);
         }
 
         if has_artifacts_to_copy {
@@ -377,4 +403,206 @@ pub fn android_gradle_dependencies(
         .filter(|dep| dep.matches(':').count() >= 2)
         .map(ToString::to_string)
         .collect()
+}
+
+fn remove_conflicting_amap_sdk_aars(libs_dst: &Path, window: &tauri::Window) -> Result<(), String> {
+    if !libs_dst.is_dir() {
+        return Ok(());
+    }
+
+    let mut removed = Vec::new();
+    let entries = std::fs::read_dir(libs_dst)
+        .map_err(|e| format!("扫描 Android 工程 libs 失败 {}: {}", libs_dst.display(), e))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !is_conflicting_amap_sdk_aar(file_name) {
+            continue;
+        }
+        std::fs::remove_file(&path)
+            .map_err(|e| format!("删除冲突的高德本地 SDK {} 失败: {}", path.display(), e))?;
+        removed.push(file_name.to_string());
+    }
+
+    if !removed.is_empty() {
+        removed.sort();
+        emit_log(
+            window,
+            "info",
+            &format!(
+                "已删除与 Maven 高德 SDK 冲突的本地 AAR: {}",
+                removed.join(", ")
+            ),
+            None,
+        );
+    }
+    Ok(())
+}
+
+fn is_conflicting_amap_sdk_aar(file_name: &str) -> bool {
+    if !file_name.to_ascii_lowercase().ends_with(".aar") {
+        return false;
+    }
+    let normalized = file_name
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect::<String>();
+    if !normalized.contains("amap") {
+        return false;
+    }
+    !["geolocationamap", "mapamap", "weexamap"]
+        .iter()
+        .any(|wrapper| normalized.contains(wrapper))
+}
+
+fn resolve_android_sdk_gradle_dependency(
+    sdk_libs: &Path,
+    dependency: &str,
+) -> Result<String, String> {
+    let parts = dependency.split(':').collect::<Vec<_>>();
+    if parts.len() != 3 || parts[0] != "com.amap.api" {
+        return Ok(dependency.to_string());
+    }
+
+    if let Some(version) = find_android_sdk_demo_dependency_version(sdk_libs, parts[0], parts[1]) {
+        return Ok(format!("{}:{}:{}", parts[0], parts[1], version));
+    }
+
+    if is_dynamic_gradle_version(parts[2]) {
+        return Err(format!(
+            "离线 SDK demo 中未找到高德依赖 {}:{} 的明确版本，请检查所选 DCloud Android 离线 SDK 是否包含对应 demo",
+            parts[0], parts[1]
+        ));
+    }
+    Ok(dependency.to_string())
+}
+
+fn is_dynamic_gradle_version(version: &str) -> bool {
+    version.contains('+') || version.to_ascii_lowercase().contains("latest")
+}
+
+fn find_android_sdk_demo_dependency_version(
+    sdk_libs: &Path,
+    group: &str,
+    artifact: &str,
+) -> Option<String> {
+    let sdk_root = sdk_libs.parent()?.parent()?;
+    let mut gradle_files = Vec::new();
+    collect_gradle_files(sdk_root, 0, &mut gradle_files);
+    gradle_files.sort_by_key(|path| {
+        let lower = path.to_string_lossy().to_ascii_lowercase();
+        (
+            !lower.contains("demo"),
+            !lower.contains("hbuilder-integrate-as"),
+            lower,
+        )
+    });
+
+    let pattern = regex::Regex::new(&format!(
+        r#"{}:{}:([^'"\s,\)]+)"#,
+        regex::escape(group),
+        regex::escape(artifact)
+    ))
+    .ok()?;
+    for path in gradle_files {
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for captures in pattern.captures_iter(&content) {
+            let version = captures.get(1)?.as_str().trim();
+            if !version.is_empty()
+                && !is_dynamic_gradle_version(version)
+                && version.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+            {
+                return Some(version.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn collect_gradle_files(dir: &Path, depth: usize, files: &mut Vec<PathBuf>) {
+    if depth > 6 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            if !matches!(
+                name,
+                ".git" | ".gradle" | "build" | "node_modules" | "target"
+            ) {
+                collect_gradle_files(&path, depth + 1, files);
+            }
+            continue;
+        }
+        if matches!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("build.gradle" | "build.gradle.kts")
+        ) {
+            files.push(path);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn amap_wrapper_aars_are_preserved_while_vendor_sdk_aars_are_removed() {
+        assert!(!is_conflicting_amap_sdk_aar("geolocation-amap-release.aar"));
+        assert!(!is_conflicting_amap_sdk_aar("map-amap-release.aar"));
+        assert!(!is_conflicting_amap_sdk_aar("weex_amap-release.aar"));
+        assert!(is_conflicting_amap_sdk_aar("AMap_Location_V6.4.5.aar"));
+        assert!(is_conflicting_amap_sdk_aar("amap-libs-release.aar"));
+    }
+
+    #[test]
+    fn amap_dependency_version_is_read_from_offline_sdk_demo() {
+        let root =
+            std::env::temp_dir().join(format!("unipack-amap-version-{}", uuid::Uuid::new_v4()));
+        let libs = root.join("SDK/libs");
+        let demo = root.join("HBuilder-Integrate-AS/simpleDemo");
+        std::fs::create_dir_all(&libs).unwrap();
+        std::fs::create_dir_all(&demo).unwrap();
+        std::fs::write(
+            demo.join("build.gradle"),
+            "dependencies { implementation('com.amap.api:location:6.9.0') }",
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_android_sdk_gradle_dependency(&libs, "com.amap.api:location:6.4.5").unwrap();
+
+        assert_eq!(resolved, "com.amap.api:location:6.9.0");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dynamic_amap_version_requires_offline_sdk_demo_version() {
+        let root = std::env::temp_dir().join(format!(
+            "unipack-amap-missing-version-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let libs = root.join("SDK/libs");
+        std::fs::create_dir_all(&libs).unwrap();
+
+        let error =
+            resolve_android_sdk_gradle_dependency(&libs, "com.amap.api:3dmap:latest.release")
+                .unwrap_err();
+
+        assert!(error.contains("离线 SDK demo"));
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

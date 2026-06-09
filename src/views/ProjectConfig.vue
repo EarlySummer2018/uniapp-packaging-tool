@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NAlert,
@@ -59,16 +59,28 @@ const exportMethodOptions = [
   { label: 'Development', value: 'development' }
 ]
 
-onMounted(async () => {
+let projectLoadSequence = 0
+
+watch(projectId, async (id) => {
+  const sequence = ++projectLoadSequence
   loading.value = true
+  projectForm.value = null
+  androidStorePassword.value = ''
+  androidKeyPassword.value = ''
+  iosCertificatePassword.value = ''
+  harmonyStorePassword.value = ''
+  harmonyKeyPassword.value = ''
   try {
-    projectForm.value = JSON.parse(JSON.stringify(await projectsStore.getProject(projectId.value)))
+    const project = await projectsStore.getProject(id)
+    if (sequence === projectLoadSequence) {
+      projectForm.value = JSON.parse(JSON.stringify(project))
+    }
   } catch (e: any) {
-    message.error(String(e))
+    if (sequence === projectLoadSequence) message.error(String(e))
   } finally {
-    loading.value = false
+    if (sequence === projectLoadSequence) loading.value = false
   }
-})
+}, { immediate: true })
 
 async function handleSave() {
   if (!projectForm.value) return

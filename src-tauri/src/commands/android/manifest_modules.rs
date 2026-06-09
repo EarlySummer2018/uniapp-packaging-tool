@@ -428,7 +428,12 @@ pub fn emit_android_module_config_report(
     report: &crate::commands::module::AndroidModuleConfigReport,
 ) {
     use crate::commands::android::types::emit_log;
-    if report.modules.is_empty() {
+    let configurable_modules = report
+        .modules
+        .iter()
+        .filter(|module| !module.fields.is_empty())
+        .collect::<Vec<_>>();
+    if configurable_modules.is_empty() {
         return;
     }
 
@@ -437,11 +442,11 @@ pub fn emit_android_module_config_report(
         "info",
         &format!(
             "Android 模块配置清单: {} 个模块需要配置项",
-            report.modules.len()
+            configurable_modules.len()
         ),
         None,
     );
-    for module in &report.modules {
+    for module in configurable_modules {
         emit_log(
             window,
             "info",

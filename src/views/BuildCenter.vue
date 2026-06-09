@@ -283,12 +283,11 @@ const utsPluginLabels = computed(() => {
     ...result.uts.customPlugins.map(plugin => plugin.id)
   ]
 })
+const androidConfigurableModules = computed(() => androidModuleConfigReport.value?.modules.filter(mod => mod.fields.length > 0) || [])
 const androidModuleConfigSummary = computed(() => {
-  const report = androidModuleConfigReport.value
-  if (!report) return []
-  return report.modules.map(mod => `${mod.name} · ${mod.fields.length ? `${mod.fields.length} 项配置` : '无需配置'}`)
+  return androidConfigurableModules.value.map(mod => `${mod.name} · ${mod.fields.length} 项配置`)
 })
-const androidConfiguredModuleNames = computed(() => androidModuleConfigReport.value?.modules.map(mod => mod.name) || [])
+const androidConfiguredModuleNames = computed(() => androidConfigurableModules.value.map(mod => mod.name))
 
 onMounted(async () => {
   if (!projectsStore.projects.length) await projectsStore.loadProjects()
@@ -738,9 +737,10 @@ function manifestLogLines(info: UniappManifestInfo) {
     `[info] manifest 模块: ${moduleNames.length ? moduleNames.join(', ') : '无'}`
   ]
   const report = androidModuleConfigReport.value
-  if (report?.modules.length) {
-    lines.push(`[info] Android 模块配置清单: ${report.modules.map(mod => `${mod.name}(${mod.fields.length})`).join(', ')}`)
-    for (const mod of report.modules) {
+  const configurableModules = report?.modules.filter(mod => mod.fields.length > 0) || []
+  if (configurableModules.length) {
+    lines.push(`[info] Android 模块配置清单: ${configurableModules.map(mod => `${mod.name}(${mod.fields.length})`).join(', ')}`)
+    for (const mod of configurableModules) {
       for (const field of mod.fields) {
         const value = androidFieldValue(field).trim()
         const source = field.valueSource === 'manifest' ? 'manifest' : value ? '构建中心' : field.required ? '缺失' : '可选未填'
@@ -935,13 +935,13 @@ function goBack() {
         <n-alert v-else-if="!latestManifestInfo" type="warning">
           {{ manifestReadWarning || '请先在项目配置中设置本地项目路径，以便读取 manifest.json' }}
         </n-alert>
-        <n-alert v-else-if="!androidModuleConfigReport || !androidModuleConfigReport.modules.length" type="success">
+        <n-alert v-else-if="!androidConfigurableModules.length" type="success">
           未检测到需要额外配置项的 Android 模块。
         </n-alert>
         <n-alert v-else :type="androidMissingRequired.length ? 'warning' : 'success'">
           <n-space vertical :size="6">
             <n-text>
-              已检测到 {{ androidModuleConfigReport.modules.length }} 个 Android 模块将参与打包：
+              已检测到 {{ androidConfigurableModules.length }} 个需要填写配置的 Android 模块：
               {{ androidConfiguredModuleNames.join('、') }}
             </n-text>
             <n-text v-if="androidMissingRequired.length">
@@ -951,15 +951,15 @@ function goBack() {
           </n-space>
         </n-alert>
 
-        <div v-if="androidModuleConfigReport?.modules.length" class="android-config-list">
-          <div v-for="mod in androidModuleConfigReport.modules" :key="mod.templateKey + mod.name" class="android-config-module">
+        <div v-if="androidConfigurableModules.length" class="android-config-list">
+          <div v-for="mod in androidConfigurableModules" :key="mod.templateKey + mod.name" class="android-config-module">
             <div class="android-config-head">
               <n-space align="center" :size="8">
                 <n-text strong>{{ mod.name }}</n-text>
                 <n-tag size="small" type="info">{{ mod.category }}</n-tag>
                 <n-tag size="small" :type="mod.platforms.includes('android') ? 'success' : 'default'">{{ formatPlatforms(mod.platforms) }}</n-tag>
               </n-space>
-              <n-text depth="3">{{ mod.fields.length ? `${mod.fields.length} 项配置` : '无需配置' }}</n-text>
+              <n-text depth="3">{{ mod.fields.length }} 项配置</n-text>
             </div>
             <n-grid :cols="2" :x-gap="14" :y-gap="10" responsive="screen">
               <n-gi v-for="field in mod.fields" :key="mod.templateKey + field.key">
@@ -1088,6 +1088,7 @@ function goBack() {
       <n-progress
         class="build-progress"
         type="line"
+        indicator-placement="inside"
         :percentage="currentBuild?.progress || 0"
         :processing="currentBuild?.status === 'building'"
         :status="currentBuild?.status === 'failed' ? 'error' : currentBuild?.status === 'success' ? 'success' : 'default'"
