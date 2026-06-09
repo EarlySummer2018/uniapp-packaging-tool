@@ -567,7 +567,7 @@ fn get_login_template() -> ModuleTemplate {
 fn get_map_template() -> ModuleTemplate {
     ModuleTemplate {
         module_name: "Map".to_string(),
-        description: "地图模块（高德/腾讯/Google/Apple Maps）".to_string(),
+        description: "地图模块（高德/百度/Google）".to_string(),
         android_config: AndroidModuleTemplate {
             required_aars: vec![
                 "baidu-libs-release.aar (百度地图)".to_string(),
@@ -583,8 +583,10 @@ fn get_map_template() -> ModuleTemplate {
                 "com.google.android.gms:play-services-maps:18.0.1 (Google地图)".to_string(),
             ],
             manifest_placeholders: vec![
+                "MAP_PAGE_TYPE (vue/nvue，默认 vue；百度 nvue 不支持)".to_string(),
+                "BAIDU_MAP_AK (百度地图 Key)".to_string(),
                 "AMAP_KEY (高德地图 Key)".to_string(),
-                "TENCENT_MAP_KEY (腾讯地图 Key)".to_string(),
+                "GOOGLE_MAPS_API_KEY (Google 地图 Key)".to_string(),
             ],
             manifest_meta_data: vec![
                 HashMap::from([("android:name".to_string(), "com.amap.api.v2.apikey".to_string()), ("android:value".to_string(), "${AMAP_KEY}".to_string())]),
@@ -592,7 +594,7 @@ fn get_map_template() -> ModuleTemplate {
             activities: vec![
                 "com.amap.api.maps2d.MapActivity (高德地图容器)".to_string(),
             ],
-            properties_xml: "<feature name=\"Maps\"><module name=\"Amap\"/></feature>".to_string(),
+            properties_xml: "高德: <feature name=\"Maps\" value=\"io.dcloud.js.map.amap.JsMapPluginImpl\"></feature>；百度: <feature name=\"Maps\" value=\"io.dcloud.js.map.JsMapPluginImpl\"></feature> + <service name=\"Maps\" value=\"io.dcloud.js.map.MapInitImpl\"/>".to_string(),
         },
         ios_config: IosModuleTemplate {
             required_frameworks: vec![

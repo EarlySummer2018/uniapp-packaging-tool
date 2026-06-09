@@ -9,8 +9,8 @@ use crate::commands::shared::module::analysis::{
 use crate::commands::shared::module::parsing::module_config_from_detected_modules;
 use crate::commands::shared::module::properties::generate_dcloud_properties;
 use crate::commands::shared::module::types::{
-    LoginModuleConfig, LoginProvider, ModuleConfigTree, PaymentModuleConfig, PushModuleConfig,
-    ShareModuleConfig, SimpleModuleConfig,
+    LoginModuleConfig, LoginProvider, MapModuleConfig, ModuleConfigTree, PaymentModuleConfig,
+    PushModuleConfig, ShareModuleConfig, SimpleModuleConfig,
 };
 use crate::commands::shared::resource::parse_uniapp_manifest;
 
@@ -839,6 +839,121 @@ fn amap_map_replaces_amap_geolocation_sdk_integration() {
         "map-amap-release.aar (高德 vue 页面)",
         Some(&manifest),
     ));
+}
+
+#[test]
+fn map_page_type_defaults_to_vue_and_allows_amap_nvue() {
+    let modules = vec![DetectedModule {
+        name: "Maps".to_string(),
+        category: "map".to_string(),
+        platforms: vec!["android".to_string()],
+        configured: false,
+        required_keys: vec![],
+        source: "manifest.json".to_string(),
+    }];
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "maps": {
+                        "amap": {
+                            "appkey_android": "amap-demo"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let mut user = HashMap::new();
+    user.insert("MAP_PAGE_TYPE".to_string(), "nvue".to_string());
+
+    let report = android_module_config_report_from_value(&modules, Some(&manifest), Some(&user));
+    let field = report.modules[0]
+        .fields
+        .iter()
+        .find(|field| field.key == "MAP_PAGE_TYPE")
+        .unwrap();
+
+    assert_eq!(field.value.as_deref(), Some("nvue"));
+    assert_eq!(field.field_type, "select");
+}
+
+#[test]
+fn baidu_map_page_type_forces_vue() {
+    let modules = vec![DetectedModule {
+        name: "Maps".to_string(),
+        category: "map".to_string(),
+        platforms: vec!["android".to_string()],
+        configured: false,
+        required_keys: vec![],
+        source: "manifest.json".to_string(),
+    }];
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "maps": {
+                        "baidu": {
+                            "appkey_android": "baidu-demo"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let mut user = HashMap::new();
+    user.insert("MAP_PAGE_TYPE".to_string(), "nvue".to_string());
+
+    let report = android_module_config_report_from_value(&modules, Some(&manifest), Some(&user));
+    let field = report.modules[0]
+        .fields
+        .iter()
+        .find(|field| field.key == "MAP_PAGE_TYPE")
+        .unwrap();
+
+    assert_eq!(field.value.as_deref(), Some("vue"));
+    assert_eq!(field.value_source.as_deref(), Some("default"));
+}
+
+#[test]
+fn map_dcloud_properties_follow_selected_provider() {
+    let path = temp_file("unipack-map-provider-properties");
+    let enabled = vec!["Maps".to_string()];
+    let mut config = ModuleConfigTree::default();
+    config.map = Some(MapModuleConfig {
+        enabled: true,
+        engine: "amap".to_string(),
+        amap_key: Some("amap-demo".to_string()),
+        tencent_map_key: None,
+        baidu_map_ak: None,
+        google_maps_api_key: None,
+    });
+
+    generate_dcloud_properties(&path, &config, &enabled).unwrap();
+    let amap_content = std::fs::read_to_string(&path).unwrap();
+    assert!(amap_content.contains(
+        r#"<feature name="Maps" value="io.dcloud.js.map.amap.JsMapPluginImpl"></feature>"#
+    ));
+    assert!(!amap_content.contains(r#"<service name="Maps""#));
+
+    config.map = Some(MapModuleConfig {
+        enabled: true,
+        engine: "baidu".to_string(),
+        amap_key: None,
+        tencent_map_key: None,
+        baidu_map_ak: Some("baidu-demo".to_string()),
+        google_maps_api_key: None,
+    });
+    generate_dcloud_properties(&path, &config, &enabled).unwrap();
+    let baidu_content = std::fs::read_to_string(&path).unwrap();
+    assert!(baidu_content
+        .contains(r#"<feature name="Maps" value="io.dcloud.js.map.JsMapPluginImpl"></feature>"#));
+    assert!(
+        baidu_content.contains(r#"<service name="Maps" value="io.dcloud.js.map.MapInitImpl"/>"#)
+    );
+    assert!(!baidu_content.contains("io.dcloud.js.map.amap.JsMapPluginImpl"));
+
+    let _ = std::fs::remove_file(path);
 }
 
 fn temp_file(name: &str) -> PathBuf {

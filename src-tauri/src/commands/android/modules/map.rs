@@ -23,25 +23,29 @@ pub fn render_patches(
     let mut mod_perms: Vec<String> = Vec::new();
     let mut mod_entries: Vec<String> = Vec::new();
 
-    add_permissions(
-        permissions,
-        &[
+    let provider = active_map_provider(module);
+    let map_permissions = match provider {
+        Some(MapProvider::Baidu) => &[
             "android.permission.CHANGE_WIFI_STATE",
             "android.permission.MOUNT_UNMOUNT_FILESYSTEMS",
             "android.permission.READ_LOGS",
             "android.permission.WRITE_SETTINGS",
-            "android.permission.ACCESS_LOCATION_EXTRA_COMMANDS",
-        ],
+        ][..],
+        Some(MapProvider::Amap) => &[
+            "android.permission.CHANGE_WIFI_STATE",
+            "android.permission.MOUNT_UNMOUNT_FILESYSTEMS",
+        ][..],
+        Some(MapProvider::Google) => &["android.permission.ACCESS_LOCATION_EXTRA_COMMANDS"][..],
+        Some(MapProvider::Tencent) | None => &[][..],
+    };
+    add_permissions(permissions, map_permissions);
+    mod_perms.extend(
+        map_permissions
+            .iter()
+            .map(|permission| (*permission).to_string()),
     );
-    mod_perms.extend([
-        "android.permission.CHANGE_WIFI_STATE".to_string(),
-        "android.permission.MOUNT_UNMOUNT_FILESYSTEMS".to_string(),
-        "android.permission.READ_LOGS".to_string(),
-        "android.permission.WRITE_SETTINGS".to_string(),
-        "android.permission.ACCESS_LOCATION_EXTRA_COMMANDS".to_string(),
-    ]);
 
-    if has_report_value(module, "BAIDU_MAP_AK") {
+    if provider == Some(MapProvider::Baidu) {
         let baidu_map_entries = [
             meta_data(
                 "com.baidu.lbsapi.API_KEY",
@@ -54,7 +58,7 @@ pub fn render_patches(
         add_application_entries(application_entries, &baidu_map_entries);
         mod_entries.extend(baidu_map_entries.iter().cloned());
     }
-    if has_report_value(module, "AMAP_KEY") {
+    if provider == Some(MapProvider::Amap) {
         let amap_map_entries = [
             meta_data(
                 "com.amap.api.v2.apikey",
@@ -65,7 +69,7 @@ pub fn render_patches(
         add_application_entries(application_entries, &amap_map_entries);
         mod_entries.extend(amap_map_entries.iter().cloned());
     }
-    if has_report_value(module, "GOOGLE_MAPS_API_KEY") {
+    if provider == Some(MapProvider::Google) {
         let google_entries = [meta_data(
             "com.google.android.geo.API_KEY",
             &placeholder_value(placeholders, "GOOGLE_MAPS_API_KEY"),
@@ -73,7 +77,7 @@ pub fn render_patches(
         add_application_entries(application_entries, &google_entries);
         mod_entries.extend(google_entries.iter().cloned());
     }
-    if has_report_value(module, "TENCENT_MAP_KEY") {
+    if provider == Some(MapProvider::Tencent) {
         let tencent_map_entries = [meta_data(
             "TencentMapSDK",
             &placeholder_value(placeholders, "TENCENT_MAP_KEY"),
@@ -94,4 +98,26 @@ pub fn render_patches(
         });
     group.permissions.extend(mod_perms);
     group.application_entries.extend(mod_entries);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MapProvider {
+    Baidu,
+    Amap,
+    Google,
+    Tencent,
+}
+
+fn active_map_provider(module: &AndroidModuleConfigModule) -> Option<MapProvider> {
+    if has_report_value(module, "BAIDU_MAP_AK") {
+        Some(MapProvider::Baidu)
+    } else if has_report_value(module, "AMAP_KEY") {
+        Some(MapProvider::Amap)
+    } else if has_report_value(module, "GOOGLE_MAPS_API_KEY") {
+        Some(MapProvider::Google)
+    } else if has_report_value(module, "TENCENT_MAP_KEY") {
+        Some(MapProvider::Tencent)
+    } else {
+        None
+    }
 }

@@ -183,11 +183,13 @@ pub(crate) fn apply_android_manifest_modules_internal(
             template_key,
             &template.android_config.required_aars,
             manifest,
+            config_report,
         );
         let vendor_artifacts = enabled_android_artifact_patterns(
             template_key,
             &template.android_config.vendor_aars,
             manifest,
+            config_report,
         );
         let gradle_dependencies = android_gradle_dependencies(
             template_key,
@@ -325,6 +327,7 @@ fn enabled_android_artifact_patterns(
     template_key: &str,
     artifacts: &[String],
     manifest: Option<&serde_json::Value>,
+    config_report: Option<&crate::commands::module::AndroidModuleConfigReport>,
 ) -> Vec<String> {
     artifacts
         .iter()
@@ -334,6 +337,9 @@ fn enabled_android_artifact_patterns(
                 artifact,
                 manifest,
             )
+        })
+        .filter(|artifact| {
+            android_module_artifact_enabled_for_report(template_key, artifact, config_report)
         })
         .filter_map(|artifact| clean_android_artifact_pattern(artifact))
         .collect()
@@ -403,6 +409,84 @@ pub fn android_gradle_dependencies(
         .filter(|dep| dep.matches(':').count() >= 2)
         .map(ToString::to_string)
         .collect()
+}
+
+fn android_module_artifact_enabled_for_report(
+    template_key: &str,
+    artifact: &str,
+    config_report: Option<&crate::commands::module::AndroidModuleConfigReport>,
+) -> bool {
+    if template_key != "map" {
+        return true;
+    }
+
+    let note = android_entry_provider_note(artifact);
+    if !android_entry_mentions_any(&note, &["amap", "gaode", "高德"]) {
+        return true;
+    }
+
+    let page_type = map_page_type_for_report(config_report);
+    let normalized_note = note.to_ascii_lowercase();
+    if normalized_note.contains("nvue") {
+        return page_type == "nvue";
+    }
+    if normalized_note.contains("vue") {
+        return page_type == "vue";
+    }
+    true
+}
+
+fn map_page_type_for_report(
+    config_report: Option<&crate::commands::module::AndroidModuleConfigReport>,
+) -> &'static str {
+    config_report
+        .and_then(|report| {
+            report
+                .modules
+                .iter()
+                .find(|module| module.template_key == "map")
+                .and_then(|module| {
+                    module
+                        .fields
+                        .iter()
+                        .find(|field| field.key == "MAP_PAGE_TYPE")
+                        .and_then(|field| field.value.as_deref())
+                        .map(str::trim)
+                })
+        })
+        .filter(|value| value.eq_ignore_ascii_case("nvue"))
+        .map(|_| "nvue")
+        .unwrap_or("vue")
+}
+
+fn android_entry_provider_note(entry: &str) -> String {
+    let mut notes = Vec::new();
+    let mut rest = entry;
+    while let Some(start) = rest.find('(') {
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find(')') else {
+            break;
+        };
+        notes.push(after_start[..end].trim());
+        rest = &after_start[end + 1..];
+    }
+    if notes.is_empty() {
+        entry.to_string()
+    } else {
+        notes.join(" ")
+    }
+}
+
+fn android_entry_mentions_any(text: &str, markers: &[&str]) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let normalized = crate::commands::shared::module::parsing::normalize_config_key(text);
+    markers.iter().any(|marker| {
+        let marker_lower = marker.to_ascii_lowercase();
+        let marker_normalized =
+            crate::commands::shared::module::parsing::normalize_config_key(marker);
+        lower.contains(&marker_lower)
+            || (!marker_normalized.is_empty() && normalized.contains(&marker_normalized))
+    })
 }
 
 fn remove_conflicting_amap_sdk_aars(libs_dst: &Path, window: &tauri::Window) -> Result<(), String> {
@@ -604,5 +688,40 @@ mod tests {
 
         assert!(error.contains("离线 SDK demo"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn amap_map_artifacts_follow_configured_page_type() {
+        let report = crate::commands::module::AndroidModuleConfigReport {
+            modules: vec![crate::commands::module::AndroidModuleConfigModule {
+                name: "Maps".to_string(),
+                template_key: "map".to_string(),
+                category: "map".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "test".to_string(),
+                fields: vec![
+                    crate::commands::shared::module::types::AndroidModuleConfigField {
+                        key: "MAP_PAGE_TYPE".to_string(),
+                        label: "地图页面类型".to_string(),
+                        required: false,
+                        secret: false,
+                        value: Some("nvue".to_string()),
+                        value_source: Some("user".to_string()),
+                        placeholder: String::new(),
+                        field_type: "select".to_string(),
+                    },
+                ],
+            }],
+            missing_required: Vec::new(),
+            all_configured: true,
+        };
+        let artifacts = vec![
+            "weex_amap-release.aar (高德 nvue 页面)".to_string(),
+            "map-amap-release.aar (高德 vue 页面)".to_string(),
+        ];
+
+        let enabled = enabled_android_artifact_patterns("map", &artifacts, None, Some(&report));
+
+        assert_eq!(enabled, vec!["weex_amap-release.aar"]);
     }
 }

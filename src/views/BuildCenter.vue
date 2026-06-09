@@ -12,6 +12,7 @@ import {
   NIcon,
   NInput,
   NProgress,
+  NSelect,
   NSpace,
   NTag,
   NText,
@@ -102,6 +103,7 @@ interface AndroidModuleConfigField {
   value?: string | null
   valueSource?: string | null
   placeholder: string
+  fieldType?: string
   field_type?: string
 }
 
@@ -674,7 +676,30 @@ function clearAndroidFileField(field: AndroidModuleConfigField) {
 }
 
 function isFileField(field: AndroidModuleConfigField): boolean {
-  return field.field_type === 'file'
+  return androidFieldType(field) === 'file'
+}
+
+function isSelectField(field: AndroidModuleConfigField): boolean {
+  return androidFieldType(field) === 'select'
+}
+
+function selectFieldOptions(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
+  if (mod.templateKey === 'map' && field.key === 'MAP_PAGE_TYPE') {
+    const provider = mapProviderForModule(mod)
+    return [
+      { label: 'vue', value: 'vue', disabled: provider === 'google' },
+      { label: 'nvue', value: 'nvue', disabled: provider === 'baidu' }
+    ]
+  }
+  return []
+}
+
+function mapProviderForModule(mod: AndroidModuleConfigModule) {
+  if (mod.fields.some(field => field.key === 'BAIDU_MAP_AK')) return 'baidu'
+  if (mod.fields.some(field => field.key === 'AMAP_KEY')) return 'amap'
+  if (mod.fields.some(field => field.key === 'GOOGLE_MAPS_API_KEY')) return 'google'
+  if (mod.fields.some(field => field.key === 'TENCENT_MAP_KEY')) return 'tencent'
+  return 'amap'
 }
 
 function formatFileSize(base64Value: string): string {
@@ -725,7 +750,12 @@ function fieldStatusLabel(field: AndroidModuleConfigField) {
   if (!value && field.required) return '必填'
   if (!value) return '可选'
   if (field.valueSource === 'manifest') return 'manifest'
+  if (field.valueSource === 'default') return '默认'
   return '已填写'
+}
+
+function androidFieldType(field: AndroidModuleConfigField): string {
+  return field.fieldType || field.field_type || 'text'
 }
 
 function manifestLogLines(info: UniappManifestInfo) {
@@ -984,6 +1014,14 @@ function goBack() {
                       <n-text v-else depth="3" class="file-field-hint">{{ field.placeholder }}</n-text>
                     </n-space>
                   </template>
+                  <n-select
+                    v-else-if="isSelectField(field)"
+                    :value="androidFieldValue(field)"
+                    :options="selectFieldOptions(mod, field)"
+                    :placeholder="field.placeholder"
+                    :disabled="isBuildLocked"
+                    @update:value="(value: string) => updateAndroidField(field, value)"
+                  />
                   <n-input
                     v-else
                     :value="androidFieldValue(field)"

@@ -57,17 +57,22 @@ pub fn android_module_config_report_from_value(
                 continue;
             }
             let required = android_field_required_for_manifest(template_key, spec, manifest);
-            let user_value = user_config
-                .and_then(|config| config.get(spec.key))
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty());
-            let manifest_value = manifest.and_then(|value| find_manifest_config_value(value, spec));
-            let (value, value_source) = if let Some(value) = manifest_value {
-                (Some(value), Some("manifest".to_string()))
-            } else if let Some(value) = user_value {
-                (Some(value.to_string()), Some("user".to_string()))
+            let (value, value_source) = if template_key == "map" && spec.key == "MAP_PAGE_TYPE" {
+                android_map_page_type_field_value(manifest, user_config, spec)
             } else {
-                (None, None)
+                let user_value = user_config
+                    .and_then(|config| config.get(spec.key))
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty());
+                let manifest_value =
+                    manifest.and_then(|value| find_manifest_config_value(value, spec));
+                if let Some(value) = manifest_value {
+                    (Some(value), Some("manifest".to_string()))
+                } else if let Some(value) = user_value {
+                    (Some(value.to_string()), Some("user".to_string()))
+                } else {
+                    (None, None)
+                }
             };
 
             let field = AndroidModuleConfigField {
@@ -224,6 +229,7 @@ fn android_field_visible_for_manifest(
             _ => true,
         },
         "map" => match spec.key {
+            "MAP_PAGE_TYPE" => manifest_has_any_map_provider(manifest),
             "BAIDU_MAP_AK" => {
                 manifest_has_enabled_provider(manifest, &["maps", "map"], &["baidu", "bd"])
             }
@@ -314,6 +320,78 @@ fn android_field_visible_for_manifest(
             _ => true,
         },
         _ => true,
+    }
+}
+
+fn android_map_page_type_field_value(
+    manifest: Option<&serde_json::Value>,
+    user_config: Option<&HashMap<String, String>>,
+    spec: &AndroidConfigFieldSpec,
+) -> (Option<String>, Option<String>) {
+    let provider = manifest
+        .and_then(android_map_provider_for_manifest)
+        .unwrap_or("amap");
+    let default_value = android_default_map_page_type(provider);
+    let user_value = user_config
+        .and_then(|config| config.get(spec.key))
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let manifest_value = manifest.and_then(|value| find_manifest_config_value(value, spec));
+
+    if let Some(value) = manifest_value {
+        let normalized = normalize_android_map_page_type(provider, &value);
+        if normalized != default_value
+            || normalize_config_key(&value) == normalize_config_key(default_value)
+        {
+            return (Some(normalized.to_string()), Some("manifest".to_string()));
+        }
+    }
+    if let Some(value) = user_value {
+        let normalized = normalize_android_map_page_type(provider, &value);
+        if normalized != default_value
+            || normalize_config_key(&value) == normalize_config_key(default_value)
+        {
+            return (Some(normalized.to_string()), Some("user".to_string()));
+        }
+    }
+
+    (Some(default_value.to_string()), Some("default".to_string()))
+}
+
+fn android_default_map_page_type(provider: &str) -> &'static str {
+    match provider {
+        "google" => "nvue",
+        _ => "vue",
+    }
+}
+
+fn normalize_android_map_page_type(provider: &str, value: &str) -> &'static str {
+    match provider {
+        "baidu" => "vue",
+        "google" => "nvue",
+        _ if normalize_config_key(value) == "nvue" => "nvue",
+        _ => "vue",
+    }
+}
+
+fn manifest_has_any_map_provider(manifest: &serde_json::Value) -> bool {
+    ["baidu", "bd", "amap", "gaode", "google", "tencent", "qqmap"]
+        .iter()
+        .any(|provider| manifest_has_enabled_provider(manifest, &["maps", "map"], &[*provider]))
+}
+
+fn android_map_provider_for_manifest(manifest: &serde_json::Value) -> Option<&'static str> {
+    if manifest_has_enabled_provider(manifest, &["maps", "map"], &["baidu", "bd"]) {
+        Some("baidu")
+    } else if manifest_has_enabled_provider(manifest, &["maps", "map"], &["amap", "gaode"]) {
+        Some("amap")
+    } else if manifest_has_enabled_provider(manifest, &["maps", "map"], &["google"]) {
+        Some("google")
+    } else if manifest_has_enabled_provider(manifest, &["maps", "map"], &["tencent", "qqmap"]) {
+        Some("tencent")
+    } else {
+        None
     }
 }
 

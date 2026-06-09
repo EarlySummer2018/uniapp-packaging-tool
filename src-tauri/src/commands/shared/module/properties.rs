@@ -291,16 +291,21 @@ fn collect_features_to_add(
     if module_is_enabled(enabled_modules, "map") {
         if let Some(ref map) = config.map {
             if map.enabled {
-                let mut feature = "<feature name=\"Maps\">".to_string();
-                match map.engine.as_str() {
-                    "amap" => feature.push_str("<module name=\"Amap\"/></feature>"),
-                    "tencent" => feature.push_str("<module name=\"TencentMap\"/></feature>"),
-                    _ => feature.push_str("</feature>"),
+                let xml_fragment = match map.engine.as_str() {
+                    "baidu" => Some(
+                        "<feature name=\"Maps\" value=\"io.dcloud.js.map.JsMapPluginImpl\"></feature>",
+                    ),
+                    "amap" => Some(
+                        "<feature name=\"Maps\" value=\"io.dcloud.js.map.amap.JsMapPluginImpl\"></feature>",
+                    ),
+                    _ => None,
+                };
+                if let Some(xml_fragment) = xml_fragment {
+                    features.push(DCloudPropertyFeature {
+                        name: "Maps".to_string(),
+                        xml_fragment: xml_fragment.to_string(),
+                    });
                 }
-                features.push(DCloudPropertyFeature {
-                    name: "Maps".to_string(),
-                    xml_fragment: feature,
-                });
             }
         }
     }
@@ -679,7 +684,52 @@ fn collect_services_to_add(
         }
     }
 
+    if module_is_enabled(enabled_modules, "map") {
+        if let Some(ref map) = config.map {
+            if map.enabled && map.engine == "baidu" {
+                services.push(DCloudPropertyService {
+                    name: "Maps".to_string(),
+                    xml_fragment: "<service name=\"Maps\" value=\"io.dcloud.js.map.MapInitImpl\"/>"
+                        .to_string(),
+                });
+            }
+        }
+    }
+
     services
+}
+
+fn map_module_enabled(config: &ModuleConfigTree, enabled_modules: &[String]) -> bool {
+    module_is_enabled(enabled_modules, "map")
+        && config.map.as_ref().map(|map| map.enabled).unwrap_or(false)
+}
+
+fn remove_feature_from_xml(content: &str, feature_name: &str) -> String {
+    remove_named_xml_entry(content, "feature", feature_name)
+}
+
+fn remove_service_from_xml(content: &str, service_name: &str) -> String {
+    remove_named_xml_entry(content, "service", service_name)
+}
+
+fn remove_named_xml_entry(content: &str, tag_name: &str, entry_name: &str) -> String {
+    let tag = regex::escape(tag_name);
+    let name = regex::escape(entry_name);
+    let quoted_name = format!(r#"(?:"{}"|'{}')"#, name, name);
+    let self_closing_pattern = format!(
+        r#"(?s)\s*<{}\b[^>]*\bname\s*=\s*{}[^>]*/>\s*"#,
+        tag, quoted_name
+    );
+    let paired_pattern = format!(
+        r#"(?s)\s*<{}\b[^>]*\bname\s*=\s*{}[^>]*>.*?</{}>\s*"#,
+        tag, quoted_name, tag
+    );
+    let without_self_closing = regex::Regex::new(&self_closing_pattern)
+        .map(|regex| regex.replace_all(content, "\n").to_string())
+        .unwrap_or_else(|_| content.to_string());
+    regex::Regex::new(&paired_pattern)
+        .map(|regex| regex.replace_all(&without_self_closing, "\n").to_string())
+        .unwrap_or(without_self_closing)
 }
 
 pub fn generate_dcloud_properties(
@@ -700,6 +750,10 @@ pub fn generate_dcloud_properties(
 
     // Step 3: 逐个校验并追加（幂等性保证）
     let mut result = existing_content;
+    if map_module_enabled(config, enabled_modules) {
+        result = remove_feature_from_xml(&result, "Maps");
+        result = remove_service_from_xml(&result, "Maps");
+    }
     for feature in &features_to_add {
         if !feature_exists(&result, &feature.name) {
             result = append_feature_to_xml(&result, &feature.xml_fragment)

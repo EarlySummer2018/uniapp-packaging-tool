@@ -417,6 +417,22 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
         ],
         "map" => &[
             AndroidConfigFieldSpec {
+                key: "MAP_PAGE_TYPE",
+                label: "地图页面类型",
+                required: false,
+                secret: false,
+                placeholder: "默认 vue",
+                aliases: &[
+                    "MAP_PAGE_TYPE",
+                    "map_page_type",
+                    "page_type",
+                    "pageType",
+                    "type",
+                ],
+                path_hints: &["maps", "map", "sdkconfigs"],
+                field_type: "select",
+            },
+            AndroidConfigFieldSpec {
                 key: "BAIDU_MAP_AK",
                 label: "百度地图 AK",
                 required: false,
