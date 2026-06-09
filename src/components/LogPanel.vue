@@ -69,9 +69,10 @@ async function copyLogs() {
   } catch (err) {
     console.error('复制失败:', err)
     // fallback: 复制原始文本
+    let textarea: HTMLTextAreaElement | null = null
     try {
       const allText = props.logs.map(log => log.message).join('\n')
-      const textarea = document.createElement('textarea')
+      textarea = document.createElement('textarea')
       textarea.value = allText
       textarea.style.position = 'fixed'
       textarea.style.left = '-9999px'
@@ -83,11 +84,11 @@ async function copyLogs() {
     } catch (e) {
       message.error('复制失败，请手动选择文本复制')
     }
-    document.body.removeChild(document.querySelector('textarea') || null as unknown as HTMLTextAreaElement)
-    }
+    if (textarea?.parentNode) document.body.removeChild(textarea)
   }
+}
 
-  onUnmounted(() => {
+onUnmounted(() => {
   if (copyTimer) clearTimeout(copyTimer)
 })
 </script>
@@ -131,18 +132,20 @@ async function copyLogs() {
 <style scoped>
 .log-panel-wrapper {
   position: relative;
-  border: 1px solid var(--n-border-color);
-  border-radius: var(--n-border-radius);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
   overflow: hidden;
+  background: var(--surface-color);
 }
 
 .log-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-height: 40px;
   padding: 8px 12px;
-  background: var(--n-color);
-  border-bottom: 1px solid var(--n-border-color);
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--border-soft);
   font-size: 12px;
 }
 

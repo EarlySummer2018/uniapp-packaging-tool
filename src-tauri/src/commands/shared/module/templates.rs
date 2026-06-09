@@ -729,7 +729,7 @@ fn get_face_recognition_template() -> ModuleTemplate {
             gradle_dependencies: vec![
                 "com.squareup.okhttp3:okhttp:3.11.0".to_string(),
                 "com.squareup.okio:okio:1.14.0".to_string(),
-                "Com.aliyun.dpa:oss-android-sdk:+".to_string(),
+                "com.aliyun.dpa:oss-android-sdk:+".to_string(),
             ],
             manifest_placeholders: vec![
                 "DCLOUD_LICENSE (DCloud 许可证)".to_string(),

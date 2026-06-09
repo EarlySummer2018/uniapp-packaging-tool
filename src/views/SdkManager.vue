@@ -425,8 +425,8 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
 <template>
   <div class="sdk-manager">
     <div class="page-header">
-      <n-space align="center" justify="space-between" style="width: 100%;">
-        <n-text strong style="font-size: 24px;">SDK & 环境管理</n-text>
+      <n-space align="center" justify="space-between" class="header-row">
+        <n-text strong class="page-title">SDK & 环境管理</n-text>
         <n-button type="primary" @click="refreshAll" :loading="loading">
           <template #icon>
             <n-icon><RefreshOutline /></n-icon>
@@ -442,7 +442,7 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
         <div class="tab-content">
           <n-spin v-if="globalSdkLoading" />
 
-          <n-card v-else>
+          <n-card v-else class="settings-card">
             <template #header>
               <n-space align="center">
                 <n-icon :size="18"><FolderOpenOutline /></n-icon>
@@ -469,7 +469,7 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
                     </n-tag>
                   </td>
                   <td>
-                    <n-text v-if="item.path" code style="font-size: 11px;">{{ item.path }}</n-text>
+                    <n-text v-if="item.path" code class="path-text">{{ item.path }}</n-text>
                     <n-text v-else depth="3">-</n-text>
                   </td>
                   <td>
@@ -492,8 +492,8 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
       <!-- Tab 2: 环境检测 -->
       <n-tab-pane name="env-check" tab="环境检测">
         <div class="tab-content">
-          <n-space vertical :size="20" style="width: 100%;">
-            <n-card v-for="group in envGroups" :key="group.label">
+          <n-space vertical :size="16" class="env-stack">
+            <n-card v-for="group in envGroups" :key="group.label" class="settings-card">
               <template #header>
                 <n-space align="center">
                   <n-icon :size="18"><component :is="group.icon" /></n-icon>
@@ -523,7 +523,7 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
                       </n-tag>
                     </td>
                     <td>
-                      <n-text v-if="isEnvInfoPath(item)" code style="font-size: 11px;">{{ getEnvInfoText(item) }}</n-text>
+                      <n-text v-if="isEnvInfoPath(item)" code class="path-text">{{ getEnvInfoText(item) }}</n-text>
                       <n-text v-else depth="3">{{ getEnvInfoText(item) }}</n-text>
                     </td>
                     <td>
@@ -545,13 +545,12 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
             </n-card>
           </n-space>
 
-          <!-- 底部汇总 -->
-          <n-card size="small" :bordered="true" style="margin-top: 16px;">
+          <n-card size="small" :bordered="true" class="env-summary-card">
             <n-space justify="center" :size="32">
               <n-space v-for="g in envGroups.filter(g => g.label.includes('Android') || g.label.includes('iOS'))" :key="g.label" align="center" :size="8">
                 <n-text>{{ g.label.replace(' 环境','') }}:</n-text>
                 <n-tag :type="g.ready_count === g.total_count ? 'success' : g.ready_count > 0 ? 'warning' : 'error'" round>
-                  {{ g.ready_count === g.total_count ? '✅ 就绪' : `⚠️ ${g.ready_count}/${g.total_count}` }}
+                  {{ g.ready_count === g.total_count ? '就绪' : `${g.ready_count}/${g.total_count}` }}
                 </n-tag>
               </n-space>
             </n-space>
@@ -572,9 +571,9 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
         </n-alert>
 
         <n-form-item label="安装路径">
-          <n-space :size="8" style="width: 100%;">
-            <n-input v-model:value="inputPath" placeholder="/usr/local/... 或 /Applications/..." style="flex: 1;" />
-            <n-button @click="selectEnvPath" :disabled="validating">浏览...</n-button>
+          <n-space :size="8" class="inline-field-row">
+            <n-input v-model:value="inputPath" placeholder="/usr/local/... 或 /Applications/..." />
+            <n-button @click="selectEnvPath" :disabled="validating">浏览</n-button>
           </n-space>
         </n-form-item>
 
@@ -583,7 +582,7 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
           同时将此路径设置为 ANDROID_HOME 环境变量
         </n-checkbox>
 
-        <div v-if="validating" style="padding: 8px 0;">
+        <div v-if="validating" class="validation-state">
           <n-text depth="3">正在校验...</n-text>
         </div>
 
@@ -629,9 +628,9 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
           ]" />
         </n-form-item>
         <n-form-item label="SDK 目录">
-          <n-space :size="8" style="width: 100%;">
-            <n-input v-model:value="newSdkPath" placeholder="选择或输入 SDK/模板解压路径..." style="flex: 1;" />
-            <n-button @click="selectSdkDirectory">浏览...</n-button>
+          <n-space :size="8" class="inline-field-row">
+            <n-input v-model:value="newSdkPath" placeholder="选择或输入 SDK/模板解压路径..." />
+            <n-button @click="selectSdkDirectory">浏览</n-button>
           </n-space>
         </n-form-item>
       </n-space>
@@ -651,12 +650,31 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
 }
 
 .page-header {
-  margin-bottom: 24px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 18px;
+}
+
+.header-row,
+.env-stack {
+  width: 100%;
 }
 
 .tab-content {
   padding-top: 16px;
+}
+
+.settings-card {
+  overflow: hidden;
+}
+
+.env-summary-card {
+  margin-top: 16px;
+}
+
+.inline-field-row {
+  width: 100%;
+}
+
+.validation-state {
+  padding: 8px 0;
 }
 </style>

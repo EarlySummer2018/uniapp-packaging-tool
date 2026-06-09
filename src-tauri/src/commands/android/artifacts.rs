@@ -165,32 +165,43 @@ pub(crate) fn apply_android_manifest_modules_internal(
             &format!("开始打包 {} 模块", module.name),
             None,
         );
-        emit_log(
-            window,
-            "info",
-            &format!("开始拷贝 {} 模块涉及的 aar 文件", module.name),
-            None,
-        );
-
         let template_key = android_module_template_key(&module.name)
             .expect("supported modules are filtered by template key");
         let template = crate::commands::module::get_module_template_sync(template_key)?;
-        copy_android_module_artifacts(
-            &module.name,
+
+        let required_artifacts = enabled_android_artifact_patterns(
             template_key,
             &template.android_config.required_aars,
             manifest,
+        );
+        let vendor_artifacts = enabled_android_artifact_patterns(
+            template_key,
+            &template.android_config.vendor_aars,
+            manifest,
+        );
+        let has_artifacts_to_copy = !required_artifacts.is_empty() || !vendor_artifacts.is_empty();
+
+        if has_artifacts_to_copy {
+            emit_log(
+                window,
+                "info",
+                &format!("开始拷贝 {} 模块涉及的 aar 文件", module.name),
+                None,
+            );
+        }
+
+        copy_android_module_artifacts(
+            &module.name,
+            &required_artifacts,
             sdk_libs,
             libs_dst,
             window,
         )?;
         // 复制厂商推送 SDK 的本地 AAR（仅当用户配置了对应厂商时才复制）
-        if !template.android_config.vendor_aars.is_empty() {
+        if !vendor_artifacts.is_empty() {
             copy_android_module_artifacts(
                 &module.name,
-                template_key,
-                &template.android_config.vendor_aars,
-                manifest,
+                &vendor_artifacts,
                 sdk_libs,
                 libs_dst,
                 window,
@@ -210,12 +221,14 @@ pub(crate) fn apply_android_manifest_modules_internal(
             extra_deps.insert(dep);
         }
 
-        emit_log(
-            window,
-            "info",
-            &format!("{} 模块涉及的 aar 文件 拷贝完成", module.name),
-            None,
-        );
+        if has_artifacts_to_copy {
+            emit_log(
+                window,
+                "info",
+                &format!("{} 模块涉及的 aar 文件 拷贝完成", module.name),
+                None,
+            );
+        }
         emit_log(
             window,
             "info",
@@ -238,26 +251,14 @@ pub fn android_module_template_key(module_name: &str) -> Option<&'static str> {
 
 fn copy_android_module_artifacts(
     module_name: &str,
-    template_key: &str,
-    required_artifacts: &[String],
-    manifest: Option<&serde_json::Value>,
+    artifact_patterns: &[String],
     sdk_libs: &Path,
     libs_dst: &Path,
     window: &tauri::Window,
 ) -> Result<(), String> {
     let mut copied_names: Vec<String> = Vec::new();
-    for artifact in required_artifacts {
-        if !crate::commands::module::android_module_artifact_enabled_for_manifest(
-            template_key,
-            artifact,
-            manifest,
-        ) {
-            continue;
-        }
-        let Some(pattern) = clean_android_artifact_pattern(artifact) else {
-            continue;
-        };
-        let Some(src) = find_android_sdk_artifact(sdk_libs, &pattern) else {
+    for pattern in artifact_patterns {
+        let Some(src) = find_android_sdk_artifact(sdk_libs, pattern) else {
             emit_log(
                 window,
                 "warn",
@@ -292,6 +293,24 @@ fn copy_android_module_artifacts(
         );
     }
     Ok(())
+}
+
+fn enabled_android_artifact_patterns(
+    template_key: &str,
+    artifacts: &[String],
+    manifest: Option<&serde_json::Value>,
+) -> Vec<String> {
+    artifacts
+        .iter()
+        .filter(|artifact| {
+            crate::commands::module::android_module_artifact_enabled_for_manifest(
+                template_key,
+                artifact,
+                manifest,
+            )
+        })
+        .filter_map(|artifact| clean_android_artifact_pattern(artifact))
+        .collect()
 }
 
 pub fn clean_android_artifact_pattern(raw: &str) -> Option<String> {

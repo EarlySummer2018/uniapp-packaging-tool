@@ -21,9 +21,15 @@ pub struct BuildResult {
     pub error: Option<String>,
 }
 
-fn emit_harmony_log(window: &tauri::Window, level: &str, message: &str, progress: Option<u8>) {
+fn emit_harmony_log(
+    window: &tauri::Window,
+    build_id: &str,
+    level: &str,
+    message: &str,
+    progress: Option<u8>,
+) {
     let event = crate::commands::build_android::BuildLogEvent {
-        build_id: None,
+        build_id: Some(build_id.to_string()),
         platform: "harmony".to_string(),
         level: level.to_string(),
         message: message.to_string(),
@@ -127,7 +133,7 @@ pub async fn build_harmony_hap(
     let build_id = build_id
         .filter(|id| !id.trim().is_empty())
         .unwrap_or_else(|| format!("harmony-{}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
-    emit_harmony_log(&window, "info", "开始 Harmony HAP 构建流程", Some(2));
+    emit_harmony_log(&window, &build_id, "info", "开始 Harmony HAP 构建流程", Some(2));
     let config = crate::commands::project::load_project_config_sync(&project_id)?;
     let sdk_config = crate::commands::sdk::load_global_sdk_config_sync()?;
     validate_harmony_config(&config, &sdk_config)?;
@@ -147,12 +153,12 @@ pub async fn build_harmony_hap(
     ))?;
     crate::utils::fs::copy_recursive(&harmony_template, &workspace)
         .map_err(|e| format!("复制 Harmony 工程失败: {}", e))?;
-    emit_harmony_log(&window, "success", "Harmony 工程已复制到工作区", Some(15));
+    emit_harmony_log(&window, &build_id, "success", "Harmony 工程已复制到工作区", Some(15));
 
     patch_harmony_json_files(&workspace, &config)?;
     patch_harmony_signing_files(&workspace, &config)?;
     import_harmony_resource(&workspace, &app_resource_dir, &scan.app_id)?;
-    emit_harmony_log(&window, "success", "Harmony 资源和配置已注入", Some(45));
+    emit_harmony_log(&window, &build_id, "success", "Harmony 资源和配置已注入", Some(45));
 
     let hvigorw = if cfg!(windows) {
         workspace.join("hvigorw.bat")
@@ -177,13 +183,18 @@ pub async fn build_harmony_hap(
         "--mode".to_string(),
         "release".to_string(),
     ];
-    emit_harmony_log(&window, "info", "执行 hvigorw assembleHap", Some(65));
-    let output = crate::utils::process::run_command_streaming(
+    emit_harmony_log(&window, &build_id, "info", "执行 hvigorw assembleHap", Some(65));
+    let output = crate::utils::process::run_command_streaming_with_env_tagged(
         &hvigorw.to_string_lossy(),
         &args,
         &workspace.to_string_lossy(),
+        &[],
         window.app_handle().clone(),
         "build-log",
+        crate::utils::process::StreamLogMeta {
+            build_id: build_id.clone(),
+            platform: "harmony".to_string(),
+        },
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -203,6 +214,7 @@ pub async fn build_harmony_hap(
         .unwrap_or_default();
     emit_harmony_log(
         &window,
+        &build_id,
         "success",
         &format!("Harmony 打包完成: {}", dest.display()),
         Some(100),

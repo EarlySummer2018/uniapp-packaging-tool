@@ -22,9 +22,15 @@ pub struct BuildResult {
     pub error: Option<String>,
 }
 
-fn emit_ios_log(window: &tauri::Window, level: &str, message: &str, progress: Option<u8>) {
+fn emit_ios_log(
+    window: &tauri::Window,
+    build_id: &str,
+    level: &str,
+    message: &str,
+    progress: Option<u8>,
+) {
     let event = crate::commands::build_android::BuildLogEvent {
-        build_id: None,
+        build_id: Some(build_id.to_string()),
         platform: "ios".to_string(),
         level: level.to_string(),
         message: message.to_string(),
@@ -164,7 +170,7 @@ pub async fn build_ios_ipa(
     let build_id = build_id
         .filter(|id| !id.trim().is_empty())
         .unwrap_or_else(|| format!("ios-{}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
-    emit_ios_log(&window, "info", "开始 iOS IPA 构建流程", Some(2));
+    emit_ios_log(&window, &build_id, "info", "开始 iOS IPA 构建流程", Some(2));
     let config = crate::commands::project::load_project_config_sync(&project_id)?;
     let sdk_config = crate::commands::sdk::load_global_sdk_config_sync()?;
     validate_ios_config(&config, &sdk_config)?;
@@ -198,6 +204,7 @@ pub async fn build_ios_ipa(
         .map_err(|e| format!("复制 HBuilder-Hello 失败: {}", e))?;
     emit_ios_log(
         &window,
+        &build_id,
         "success",
         "HBuilder-Hello 已复制到工作区",
         Some(12),
@@ -211,7 +218,7 @@ pub async fn build_ios_ipa(
     generate_ios_icons(&project_root, &config, manifest_info.as_ref())?;
     install_mobileprovision(&config.ios.provisioning_profile)?;
     import_p12_certificate(&config)?;
-    emit_ios_log(&window, "success", "iOS 工程配置已完成", Some(45));
+    emit_ios_log(&window, &build_id, "success", "iOS 工程配置已完成", Some(45));
 
     let archive_path = workspace.join("build/output.xcarchive");
     let project_file = find_xcodeproj(&project_root)
@@ -236,8 +243,8 @@ pub async fn build_ios_ipa(
         format!("PRODUCT_BUNDLE_IDENTIFIER={}", config.ios.bundle_id),
         "CODE_SIGN_STYLE=Manual".to_string(),
     ];
-    emit_ios_log(&window, "info", "执行 xcodebuild archive", Some(55));
-    run_xcodebuild(&archive_args, &project_root, &window, &ios_env).await?;
+    emit_ios_log(&window, &build_id, "info", "执行 xcodebuild archive", Some(55));
+    run_xcodebuild(&archive_args, &project_root, &window, &ios_env, &build_id).await?;
 
     let export_options = workspace.join("ExportOptions.plist");
     write_export_options(&export_options, &config)?;
@@ -251,8 +258,8 @@ pub async fn build_ios_ipa(
         "-exportOptionsPlist".to_string(),
         export_options.to_string_lossy().to_string(),
     ];
-    emit_ios_log(&window, "info", "执行 xcodebuild exportArchive", Some(80));
-    run_xcodebuild(&export_args, &project_root, &window, &ios_env).await?;
+    emit_ios_log(&window, &build_id, "info", "执行 xcodebuild exportArchive", Some(80));
+    run_xcodebuild(&export_args, &project_root, &window, &ios_env, &build_id).await?;
 
     let ipa = find_file_with_ext(&export_path, "ipa")
         .ok_or_else(|| "导出成功后未找到 IPA 文件".to_string())?;
@@ -266,6 +273,7 @@ pub async fn build_ios_ipa(
         .unwrap_or_default();
     emit_ios_log(
         &window,
+        &build_id,
         "success",
         &format!("iOS 打包完成: {}", dest.display()),
         Some(100),
@@ -944,14 +952,19 @@ async fn run_xcodebuild(
     cwd: &Path,
     window: &tauri::Window,
     env: &IosBuildEnvironment,
+    build_id: &str,
 ) -> Result<(), String> {
-    let output = crate::utils::process::run_command_streaming_with_env(
+    let output = crate::utils::process::run_command_streaming_with_env_tagged(
         &env.xcodebuild_bin.to_string_lossy(),
         args,
         &cwd.to_string_lossy(),
         &ios_process_env(env),
         window.app_handle().clone(),
         "build-log",
+        crate::utils::process::StreamLogMeta {
+            build_id: build_id.to_string(),
+            platform: "ios".to_string(),
+        },
     )
     .await
     .map_err(|e| e.to_string())?;

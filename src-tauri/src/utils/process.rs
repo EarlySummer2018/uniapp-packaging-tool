@@ -14,6 +14,12 @@ pub struct CommandOutput {
     pub logs: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct StreamLogMeta {
+    pub build_id: String,
+    pub platform: String,
+}
+
 impl CommandOutput {
     pub fn from_exit_status(
         status: std::process::ExitStatus,
@@ -72,6 +78,42 @@ pub async fn run_command_streaming_with_env(
     app_handle: tauri::AppHandle,
     channel: &str,
 ) -> Result<CommandOutput> {
+    run_command_streaming_with_env_internal(
+        program, args, cwd, env_vars, app_handle, channel, None,
+    )
+    .await
+}
+
+pub async fn run_command_streaming_with_env_tagged(
+    program: &str,
+    args: &[String],
+    cwd: &str,
+    env_vars: &[(String, String)],
+    app_handle: tauri::AppHandle,
+    channel: &str,
+    meta: StreamLogMeta,
+) -> Result<CommandOutput> {
+    run_command_streaming_with_env_internal(
+        program,
+        args,
+        cwd,
+        env_vars,
+        app_handle,
+        channel,
+        Some(meta),
+    )
+    .await
+}
+
+async fn run_command_streaming_with_env_internal(
+    program: &str,
+    args: &[String],
+    cwd: &str,
+    env_vars: &[(String, String)],
+    app_handle: tauri::AppHandle,
+    channel: &str,
+    meta: Option<StreamLogMeta>,
+) -> Result<CommandOutput> {
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args)
         .stdout(Stdio::piped())
@@ -93,30 +135,48 @@ pub async fn run_command_streaming_with_env(
 
     let app_clone = app_handle.clone();
     let channel_stdout = channel.to_string();
+    let stdout_meta = meta.clone();
     let stdout_handle = tokio::spawn(async move {
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
         while let Ok(Some(line)) = lines.next_line().await {
+            let payload = if let Some(meta) = &stdout_meta {
+                serde_json::json!({
+                    "type": "stdout",
+                    "line": line,
+                    "level": "info",
+                    "buildId": meta.build_id,
+                    "platform": meta.platform,
+                })
+            } else {
+                serde_json::json!({ "type": "stdout", "line": line })
+            };
             let _ = app_clone
-                .emit(
-                    &channel_stdout,
-                    serde_json::json!({ "type": "stdout", "line": line }),
-                )
+                .emit(&channel_stdout, payload)
                 .map_err(|e| eprintln!("emit error: {}", e));
         }
     });
 
     let app_clone2 = app_handle.clone();
     let channel_stderr = channel.to_string();
+    let stderr_meta = meta.clone();
     let stderr_handle = tokio::spawn(async move {
         let reader = BufReader::new(stderr);
         let mut lines = reader.lines();
         while let Ok(Some(line)) = lines.next_line().await {
+            let payload = if let Some(meta) = &stderr_meta {
+                serde_json::json!({
+                    "type": "stderr",
+                    "line": line,
+                    "level": "error",
+                    "buildId": meta.build_id,
+                    "platform": meta.platform,
+                })
+            } else {
+                serde_json::json!({ "type": "stderr", "line": line })
+            };
             let _ = app_clone2
-                .emit(
-                    &channel_stderr,
-                    serde_json::json!({ "type": "stderr", "line": line }),
-                )
+                .emit(&channel_stderr, payload)
                 .map_err(|e| eprintln!("emit error: {}", e));
         }
     });

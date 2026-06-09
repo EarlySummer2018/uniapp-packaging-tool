@@ -147,22 +147,21 @@ async function saveCacheDir() {
   <div class="settings-page">
     <div class="page-header">
       <n-space align="center">
-        <n-text strong class="title">设置</n-text>
+        <n-text strong class="page-title">设置</n-text>
       </n-space>
     </div>
 
-    <n-card title="路径设置">
+    <n-card title="路径设置" class="settings-card">
       <n-space vertical :size="16">
         <n-alert type="info">
           缓存目录用于保存项目配置、导入资源、构建日志和构建工作区。应用启动时会从这里读取项目列表。
         </n-alert>
 
         <n-form-item label="缓存目录">
-          <n-space :size="8" style="width: 100%;">
+          <n-space :size="8" class="inline-field-row">
             <n-input
               v-model:value="cacheDirInput"
               placeholder="输入或选择缓存目录"
-              style="flex: 1;"
               :disabled="loading || saving"
             />
             <n-button :disabled="loading || saving" @click="chooseCacheDir">
@@ -218,14 +217,18 @@ async function saveCacheDir() {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  max-width: 1080px;
 }
 
 .page-header {
-  padding-bottom: 16px;
-  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 2px;
 }
 
-.title {
-  font-size: 24px;
+.settings-card {
+  overflow: hidden;
+}
+
+.inline-field-row {
+  width: 100%;
 }
 </style>

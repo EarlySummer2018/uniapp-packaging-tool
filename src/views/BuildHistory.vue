@@ -1,22 +1,24 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   NCard, NDataTable, NTag, NButton, NSpace, NText, NIcon, NSelect,
   NInput, NPagination, NEmpty, NSpin, NModal, useMessage,
-  NGrid, NGi, NAlert
+  NGrid, NGi, NAlert, NStatistic
 } from 'naive-ui'
 import { RefreshOutline, TrashOutline,
   LogoAndroid, LogoApple, PhonePortraitOutline,
-  CopyOutline, CheckmarkOutline } from '@vicons/ionicons5'
+  CopyOutline, CheckmarkOutline, SearchOutline } from '@vicons/ionicons5'
 import { invoke } from '@tauri-apps/api/core'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import LogDisplay from '../components/LogDisplay.vue'
 import type { LogLevel, LogEntry } from '../components/LogDisplay.vue'
 import { useProjectsStore } from '../stores/projects'
+import { useBuildStore } from '../stores/build'
 
 const message = useMessage()
 const projectsStore = useProjectsStore()
+const buildStore = useBuildStore()
 const router = useRouter()
 
 interface BuildRecord {
@@ -56,10 +58,56 @@ const currentLogRecord = ref<BuildRecord | null>(null)
 const historyCopied = ref(false)
 let historyCopyTimer: ReturnType<typeof setTimeout> | null = null
 
+const currentLogBuild = computed(() => {
+  const record = currentLogRecord.value
+  if (!record) return null
+  return buildStore.builds[record.id] || null
+})
+
+const isStoreBackedLog = computed(() => !!currentLogBuild.value)
+const isRealtimeLog = computed(() => currentLogBuild.value?.status === 'building')
+const currentLogNotice = computed(() => {
+  if (isRealtimeLog.value) return '构建中 · 实时日志'
+  if (currentLogRecord.value?.status === 'building' && !currentLogBuild.value) {
+    return '该记录仍显示构建中，但当前应用没有对应运行时任务，可能来自上次异常退出'
+  }
+  return ''
+})
+
+const displayedLogEntries = computed<LogEntry[]>(() => {
+  const build = currentLogBuild.value
+  if (!build) return currentLogEntries.value
+  return build.logs.map(log => ({
+    level: log.level,
+    message: log.message,
+    timestamp: log.timestamp
+  }))
+})
+
+const displayedLogContent = computed(() => {
+  const build = currentLogBuild.value
+  if (!build) return currentLogContent.value
+  return build.logs.map(log => `[${log.level}] ${log.message}`).join('\n')
+})
+
 onMounted(async () => {
   await projectsStore.initStore()
   loadHistory()
 })
+
+watch(
+  () => buildStore.hasActiveBuilds,
+  (active, previous) => {
+    if (!active && previous) void loadHistory()
+  }
+)
+
+watch(
+  () => currentLogBuild.value?.status,
+  (status, previous) => {
+    if (previous === 'building' && status && status !== 'building') void loadHistory()
+  }
+)
 
 async function loadHistory() {
   loading.value = true
@@ -319,6 +367,7 @@ const columns = [
           size: 'tiny',
           quaternary: true,
           type: 'primary',
+          disabled: buildStore.hasActiveBuilds,
           onClick: () => rebuild(row)
         }, {
           default: () => '重新构建'
@@ -357,6 +406,10 @@ async function viewLog(record: BuildRecord) {
   currentLogEntries.value = []
   showLogModal.value = true
 
+  if (record.status === 'building' && buildStore.builds[record.id]) {
+    return
+  }
+
   if (record.log_path) {
     try {
       const content = await invoke<string>('read_text_file', { path: record.log_path })
@@ -366,15 +419,25 @@ async function viewLog(record: BuildRecord) {
       currentLogContent.value = '无法读取日志文件'
     }
   } else {
-    currentLogContent.value = '该构建记录没有关联的日志文件'
+    currentLogContent.value = record.status === 'building'
+      ? '该构建记录仍显示构建中，但当前应用没有实时日志，且没有关联日志文件'
+      : '该构建记录没有关联的日志文件'
   }
 }
 
 function rebuild(record: BuildRecord) {
+  if (buildStore.hasActiveBuilds) {
+    message.warning('已有构建任务进行中，请等待完成后再重新构建')
+    return
+  }
   router.push(`/build/${record.project_id}`)
 }
 
 async function clearAllHistory() {
+  if (buildStore.hasActiveBuilds) {
+    message.warning('已有构建任务进行中，请等待完成后再清空历史')
+    return
+  }
   try {
     await invoke('clear_build_history', { projectId: null })
     allRecords.value = []
@@ -385,21 +448,22 @@ async function clearAllHistory() {
 }
 
 async function copyHistoryLog() {
-  if (!currentLogContent.value) {
+  const content = displayedLogContent.value
+  if (!content) {
     message.warning('暂无日志可复制')
     return
   }
 
-  if (currentLogContent.value.includes('无法读取') || currentLogContent.value.includes('没有关联')) {
+  if (content.includes('无法读取') || content.includes('没有关联')) {
     message.warning('当前无可复制的有效日志')
     return
   }
 
   try {
-    await navigator.clipboard.writeText(currentLogContent.value)
+    await navigator.clipboard.writeText(content)
 
     historyCopied.value = true
-    const lineCount = currentLogContent.value.split('\n').length
+    const lineCount = content.split('\n').length
     message.success(`已复制 ${lineCount} 行日志到剪贴板`)
 
     if (historyCopyTimer) clearTimeout(historyCopyTimer)
@@ -408,7 +472,7 @@ async function copyHistoryLog() {
     }, 2000)
   } catch (err) {
     console.error('复制历史日志失败:', err)
-    fallbackCopyHistoryLog(currentLogContent.value)
+    fallbackCopyHistoryLog(content)
   }
 }
 
@@ -448,16 +512,16 @@ onUnmounted(() => {
 <template>
   <div class="build-history">
     <div class="page-header">
-      <n-space align="center" justify="space-between" style="width: 100%;">
+      <n-space align="center" justify="space-between" class="history-header-row">
         <n-space align="center">
-          <n-text strong style="font-size: 24px;">打包历史</n-text>
+          <n-text strong class="page-title">打包历史</n-text>
         </n-space>
         <n-space>
           <n-button @click="refresh" :loading="loading">
             <template #icon><n-icon><RefreshOutline /></n-icon></template>
             刷新
           </n-button>
-          <n-button type="error" secondary @click="clearAllHistory" :disabled="!allRecords.length">
+          <n-button type="error" secondary @click="clearAllHistory" :disabled="!allRecords.length || buildStore.hasActiveBuilds">
             <template #icon><n-icon><TrashOutline /></n-icon></template>
             清空历史
           </n-button>
@@ -465,7 +529,7 @@ onUnmounted(() => {
       </n-space>
     </div>
 
-    <n-card>
+    <n-card class="history-card">
       <n-spin :show="loading">
 
         <n-empty v-if="!loading && !filteredRecords.length && !keywordSearch && !platformFilter && !statusFilter"
@@ -487,7 +551,7 @@ onUnmounted(() => {
           <div class="filter-bar">
             <n-grid :cols="5" :x-gap="12" :y-gap="12">
               <n-gi>
-                <n-text depth="3" style="font-size: 13px;">平台</n-text>
+                <n-text depth="3" class="filter-label">平台</n-text>
                 <n-select
                   v-model:value="platformFilter"
                   :options="platformFilterOptions"
@@ -496,7 +560,7 @@ onUnmounted(() => {
                 />
               </n-gi>
               <n-gi>
-                <n-text depth="3" style="font-size: 13px;">状态</n-text>
+                <n-text depth="3" class="filter-label">状态</n-text>
                 <n-select
                   v-model:value="statusFilter"
                   :options="statusFilterOptions"
@@ -505,7 +569,7 @@ onUnmounted(() => {
                 />
               </n-gi>
               <n-gi>
-                <n-text depth="3" style="font-size: 13px;">时间范围</n-text>
+                <n-text depth="3" class="filter-label">时间范围</n-text>
                 <n-select
                   v-model:value="dateRange"
                   :options="dateRangeOptions"
@@ -513,7 +577,7 @@ onUnmounted(() => {
                 />
               </n-gi>
               <n-gi>
-                <n-text depth="3" style="font-size: 13px;">项目</n-text>
+                <n-text depth="3" class="filter-label">项目</n-text>
                 <n-select
                   v-model:value="projectFilter"
                   :options="projectOptions"
@@ -522,20 +586,19 @@ onUnmounted(() => {
                 />
               </n-gi>
               <n-gi>
-                <n-text depth="3" style="font-size: 13px;">搜索</n-text>
+                <n-text depth="3" class="filter-label">搜索</n-text>
                 <n-input
                   v-model:value="keywordSearch"
                   placeholder="版本号 / 错误信息..."
                   size="small"
                   clearable
                 >
-                  <template #prefix>🔍</template>
+                  <template #prefix><n-icon :component="SearchOutline" /></template>
                 </n-input>
               </n-gi>
             </n-grid>
           </div>
 
-          <!-- 数据表格 -->
           <n-data-table
             :columns="(columns as any)"
             :data="pagedRecords"
@@ -544,11 +607,10 @@ onUnmounted(() => {
             size="small"
             striped
             :row-key="(row: BuildRecord) => row.id"
-            style="margin-top: 16px;"
+            class="history-table"
             :scroll-x="1000"
           />
 
-          <!-- 分页 + 统计 -->
           <div class="footer-bar">
             <n-pagination
               v-model:page="currentPage"
@@ -557,19 +619,13 @@ onUnmounted(() => {
               :page-sizes="[15, 30, 50]"
               show-size-picker
               show-quick-jumper
-              style="justify-content: flex-start;"
+              class="history-pagination"
             />
 
-            <n-space :size="32" align="center">
-              <n-statistic label="总次数" :value="stats.total" style="--n-value-font-size: 18px;" />
-              <n-statistic label="成功率" :value="stats.successRate" suffix="%" style="--n-value-font-size: 18px;">
-                <template #prefix>
-                  <n-text :type="Number(stats.successRate) >= 80 ? 'success' : Number(stats.successRate) >= 50 ? 'warning' : 'error'" strong>
-                    {{ stats.successRate }}
-                  </n-text>
-                </template>
-              </n-statistic>
-              <n-statistic label="平均耗时" :value="stats.avgDuration" suffix="秒" style="--n-value-font-size: 18px;" />
+            <n-space :size="28" align="center" class="history-stats">
+              <n-statistic label="总次数" :value="stats.total" class="history-stat" />
+              <n-statistic label="成功率" :value="stats.successRate" suffix="%" class="history-stat" />
+              <n-statistic label="平均耗时" :value="stats.avgDuration" suffix="秒" class="history-stat" />
             </n-space>
           </div>
         </template>
@@ -585,16 +641,16 @@ onUnmounted(() => {
       :segmented="{ content: true }"
     >
       <template #action>
-        <n-space align="center" justify="space-between" style="width: 100%;">
-          <n-text depth="3" style="font-size: 12px;">
-            <template v-if="currentLogEntries.length">
-              共 {{ currentLogEntries.length }} 行 · {{ formatLogSize(currentLogContent.length) }}
+        <n-space align="center" justify="space-between" class="modal-action-row">
+          <n-text depth="3" class="log-meta-text">
+            <template v-if="displayedLogEntries.length">
+              共 {{ displayedLogEntries.length }} 行 · {{ formatLogSize(displayedLogContent.length) }}
             </template>
           </n-text>
           <n-button
             size="small"
             :type="historyCopied ? 'success' : 'primary'"
-            :disabled="!currentLogContent || currentLogContent.includes('无法读取') || currentLogContent.includes('没有关联')"
+            :disabled="!displayedLogContent || displayedLogContent.includes('无法读取') || displayedLogContent.includes('没有关联')"
             @click="copyHistoryLog"
             aria-label="复制完整构建日志到剪贴板"
           >
@@ -606,10 +662,13 @@ onUnmounted(() => {
         </n-space>
       </template>
 
-      <n-alert v-if="!currentLogContent" type="info">日志加载中...</n-alert>
+      <n-alert v-if="currentLogNotice" :type="isRealtimeLog ? 'warning' : 'info'" class="log-notice">
+        {{ currentLogNotice }}
+      </n-alert>
+      <n-alert v-if="!displayedLogContent && !isStoreBackedLog" type="info">日志加载中...</n-alert>
       <LogDisplay
         v-else
-        :logs="currentLogEntries"
+        :logs="displayedLogEntries"
         :height="'450px'"
         :show-toolbar="false"
       />
@@ -623,13 +682,35 @@ onUnmounted(() => {
 }
 
 .page-header {
-  margin-bottom: 24px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 18px;
+}
+
+.history-header-row,
+.modal-action-row {
+  width: 100%;
+}
+
+.history-card {
+  overflow: hidden;
 }
 
 .filter-bar {
-  margin-bottom: 4px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.filter-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.history-table {
+  margin-top: 16px;
 }
 
 .footer-bar {
@@ -638,6 +719,30 @@ onUnmounted(() => {
   align-items: center;
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--border-soft);
+  gap: 16px;
+}
+
+.history-pagination {
+  justify-content: flex-start;
+}
+
+.history-stat {
+  --n-value-font-size: 18px;
+}
+
+.log-meta-text {
+  font-size: 12px;
+}
+
+.log-notice {
+  margin-bottom: 12px;
+}
+
+@media (max-width: 1180px) {
+  .footer-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 </style>

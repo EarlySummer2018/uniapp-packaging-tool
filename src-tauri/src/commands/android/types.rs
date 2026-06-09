@@ -76,9 +76,30 @@ pub fn timestamp() -> String {
 }
 
 pub fn emit_log(window: &tauri::Window, level: &str, message: &str, progress: Option<u8>) {
+    emit_log_with_build_id(window, None, "android", level, message, progress);
+}
+
+pub fn emit_log_for_build(
+    window: &tauri::Window,
+    build_id: &str,
+    level: &str,
+    message: &str,
+    progress: Option<u8>,
+) {
+    emit_log_with_build_id(window, Some(build_id), "android", level, message, progress);
+}
+
+pub fn emit_log_with_build_id(
+    window: &tauri::Window,
+    build_id: Option<&str>,
+    platform: &str,
+    level: &str,
+    message: &str,
+    progress: Option<u8>,
+) {
     let event = BuildLogEvent {
-        build_id: None,
-        platform: "android".to_string(),
+        build_id: build_id.map(|id| id.to_string()),
+        platform: platform.to_string(),
         level: level.to_string(),
         message: message.to_string(),
         progress,

@@ -1,17 +1,63 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { NCard, NButton, NIcon, NSpace, NText, NEmpty, NTag } from 'naive-ui'
+import { NCard, NButton, NIcon, NSpace, NText, NEmpty, NTag, useMessage } from 'naive-ui'
 import {
   AddOutline,
-  FolderOpenOutline
+  FolderOpenOutline,
+  LogoAndroid,
+  LogoApple,
+  PhonePortraitOutline
 } from '@vicons/ionicons5'
 import { useProjectsStore } from '../stores/projects'
+import { useBuildStore } from '../stores/build'
 
+const emit = defineEmits<{
+  (e: 'create-project'): void
+}>()
 const router = useRouter()
 const projectsStore = useProjectsStore()
+const buildStore = useBuildStore()
+const message = useMessage()
+const recentProjects = computed(() => projectsStore.projects.slice(0, 5))
+const platformStats = computed(() => [
+  {
+    key: 'android',
+    label: 'Android',
+    value: projectsStore.projects.filter(project => project.android?.enabled).length,
+    icon: LogoAndroid,
+    color: '#159766'
+  },
+  {
+    key: 'ios',
+    label: 'iOS',
+    value: projectsStore.projects.filter(project => project.ios?.enabled).length,
+    icon: LogoApple,
+    color: '#1f6feb'
+  },
+  {
+    key: 'harmony',
+    label: '鸿蒙',
+    value: projectsStore.projects.filter(project => project.harmony?.enabled).length,
+    icon: PhonePortraitOutline,
+    color: '#c77700'
+  }
+])
 
 function handleGoToBuild(projectId: string) {
+  if (buildStore.hasActiveBuilds) {
+    message.warning('已有构建任务进行中，请等待完成后再开始构建')
+    return
+  }
   router.push(`/build/${projectId}`)
+}
+
+function handleCreateProject() {
+  if (buildStore.hasActiveBuilds) {
+    message.warning('已有构建任务进行中，暂不能新建项目')
+    return
+  }
+  emit('create-project')
 }
 
 function handleGoToConfig(projectId: string) {
@@ -21,17 +67,13 @@ function handleGoToConfig(projectId: string) {
 
 <template>
   <div class="home-content">
-    <div class="welcome-banner">
-      <div class="welcome-text">
-        <n-text class="welcome-title" style="font-size: 28px; font-weight: 700;">
-          UniPack Tool
-        </n-text>
-        <n-text depth="3" style="font-size: 15px; margin-top: 8px;color: #fff;">
-          UniApp 离线打包自动化工具 — Android / iOS / 鸿蒙 一键构建
-        </n-text>
+    <div class="dashboard-header">
+      <div>
+        <n-text class="page-title">项目列表</n-text>
+        <n-text class="page-subtitle">共 {{ projectsStore.projects.length }} 个项目</n-text>
       </div>
-      <div class="welcome-actions">
-        <n-button type="primary" size="large" @click="$emit('create-project')">
+      <div class="dashboard-actions">
+        <n-button type="primary" :disabled="buildStore.hasActiveBuilds" @click="handleCreateProject">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
           </template>
@@ -40,27 +82,45 @@ function handleGoToConfig(projectId: string) {
       </div>
     </div>
 
-    <div class="projects-section" style="margin-top: 32px;">
-      <NSpace align="center" justify="space-between" style="margin-bottom: 16px;">
-        <n-text strong style="font-size: 18px;">最近项目</n-text>
-      </NSpace>
+    <div class="overview-grid">
+      <div class="overview-tile primary">
+        <n-text depth="3">项目总数</n-text>
+        <n-text strong class="overview-value">{{ projectsStore.projects.length }}</n-text>
+      </div>
+      <div
+        v-for="stat in platformStats"
+        :key="stat.key"
+        class="overview-tile"
+      >
+        <div class="overview-icon" :style="{ color: stat.color }">
+          <n-icon :size="18"><component :is="stat.icon" /></n-icon>
+        </div>
+        <n-text depth="3">{{ stat.label }}</n-text>
+        <n-text strong class="overview-value">{{ stat.value }}</n-text>
+      </div>
+    </div>
 
-      <div v-if="projectsStore.projects.length > 0" class="project-cards">
+    <div class="projects-section">
+      <div class="section-heading">
+        <n-text class="section-title">最近项目</n-text>
+      </div>
+
+      <div v-if="recentProjects.length > 0" class="project-cards">
         <NCard
-          v-for="project in projectsStore.projects.slice(0, 5)"
+          v-for="project in recentProjects"
           :key="project.id"
           class="project-card"
           hoverable
         >
           <div class="project-card-header">
             <n-icon size="20" color="#18a058"><FolderOpenOutline /></n-icon>
-            <n-text strong style="font-size: 16px;">{{ project.name }}</n-text>
+            <n-text strong class="project-name">{{ project.name }}</n-text>
           </div>
-          <n-text depth="3" style="margin-top: 4px; display: block;">
+          <n-text depth="3" class="project-description">
             {{ project.description || '暂无描述' }}
           </n-text>
           <div class="project-card-meta">
-            <n-text depth="3" style="font-size: 12px;">
+            <n-text depth="3" class="project-date">
               创建于 {{ new Date(project.createdAt).toLocaleDateString() }}
             </n-text>
             <NSpace :size="8">
@@ -75,11 +135,11 @@ function handleGoToConfig(projectId: string) {
               </n-tag>
             </NSpace>
           </div>
-          <div class="project-card-actions" style="margin-top: 12px;">
+          <div class="project-card-actions">
             <n-button size="small" @click="handleGoToConfig(project.id)">
               配置
             </n-button>
-            <n-button size="small" type="primary" @click="handleGoToBuild(project.id)">
+            <n-button size="small" type="primary" :disabled="buildStore.hasActiveBuilds" @click="handleGoToBuild(project.id)">
               构建
             </n-button>
           </div>
@@ -94,47 +154,71 @@ function handleGoToConfig(projectId: string) {
 <style scoped>
 .home-content {
   max-width: 1200px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
 }
 
-.welcome-banner {
+.dashboard-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 32px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 12px;
-  color: #fff;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border-soft);
 }
 
-.welcome-title {
-  color: #fff !important;
+.dashboard-actions {
+  flex-shrink: 0;
 }
 
-.welcome-text {
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.overview-tile {
+  min-height: 92px;
+  padding: 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-color);
+  box-shadow: var(--shadow-card);
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
 }
 
-.quick-action-card {
-  cursor: pointer;
+.overview-tile.primary {
+  background: var(--primary-soft);
+  border-color: rgba(21, 151, 102, 0.22);
 }
 
-.card-content {
+.overview-icon {
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
-  gap: 16px;
+  justify-content: center;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: #fff;
 }
 
-.card-text {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.overview-value {
+  font-size: 26px;
+  line-height: 1;
 }
 
 .project-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
+}
+
+.project-card {
+  min-height: 176px;
 }
 
 .project-card-header {
@@ -143,16 +227,53 @@ function handleGoToConfig(projectId: string) {
   gap: 10px;
 }
 
+.project-name {
+  min-width: 0;
+  font-size: 16px;
+}
+
+.project-description {
+  display: block;
+  min-height: 40px;
+  margin-top: 8px;
+  line-height: 1.55;
+}
+
 .project-card-meta {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 12px;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.project-date {
+  flex-shrink: 0;
+  font-size: 12px;
 }
 
 .project-card-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: 14px;
+}
+
+@media (max-width: 1180px) {
+  .overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .dashboard-header,
+  .project-card-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

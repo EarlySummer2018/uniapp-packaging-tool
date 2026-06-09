@@ -218,19 +218,20 @@ onUnmounted(() => {
 
 <style scoped>
 .log-display {
-  border: 1px solid var(--n-border-color);
-  border-radius: var(--n-border-radius);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
   overflow: hidden;
-  background: var(--n-color);
+  background: var(--surface-color);
 }
 
 .log-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-height: 40px;
   padding: 8px 12px;
-  background: var(--n-color);
-  border-bottom: 1px solid var(--n-border-color);
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--border-soft);
   font-size: 12px;
 }
 
@@ -256,8 +257,8 @@ onUnmounted(() => {
 .log-container {
   overflow-y: auto;
   overflow-x: hidden;
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: #15181d;
+  color: #d7dde7;
   font-family: 'Menlo', 'Monaco', 'Consolas', 'Courier New', monospace;
   font-size: 12px;
   line-height: 1.7;
@@ -276,7 +277,7 @@ onUnmounted(() => {
 }
 
 .log-container :deep(.log-time) {
-  color: #6a9955;
+  color: #7fb069;
   margin-right: 8px;
   user-select: none;
 }
@@ -302,39 +303,39 @@ onUnmounted(() => {
 
 /* INFO - 蓝色 */
 .log-container :deep(.info .log-level) {
-  color: #569cd6;
-  background: rgba(86, 156, 214, 0.15);
+  color: #79b8ff;
+  background: rgba(121, 184, 255, 0.14);
 }
 .log-container :deep(.info .log-msg) {
-  color: #9cdcfe;
+  color: #b9d8ff;
 }
 
 /* WARN - 黄色 */
 .log-container :deep(.warn .log-level) {
-  color: #dcdcaa;
-  background: rgba(220, 220, 170, 0.12);
+  color: #f2cc60;
+  background: rgba(242, 204, 96, 0.12);
 }
 .log-container :deep(.warn .log-msg) {
-  color: #dcdcaa;
+  color: #f2cc60;
 }
 
 /* ERROR - 红色 */
 .log-container :deep(.error .log-level) {
-  color: #f44747;
-  background: rgba(244, 71, 71, 0.15);
+  color: #ff7b72;
+  background: rgba(255, 123, 114, 0.14);
 }
 .log-container :deep(.error .log-msg) {
-  color: #f44747;
+  color: #ff9b92;
   font-weight: 500;
 }
 
 /* SUCCESS - 绿色 */
 .log-container :deep(.success .log-level) {
-  color: #6a9955;
-  background: rgba(106, 153, 85, 0.15);
+  color: #7ee787;
+  background: rgba(126, 231, 135, 0.12);
 }
 .log-container :deep(.success .log-msg) {
-  color: #6a9955;
+  color: #97d88b;
   font-weight: 500;
 }
 

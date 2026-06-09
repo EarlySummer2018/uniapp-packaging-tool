@@ -1410,7 +1410,7 @@ dependencies {
 dependencies {
     implementation "com.squareup.okhttp3:okhttp:3.11.0"
     implementation "com.squareup.okio:okio:1.14.0"
-    implementation "Com.aliyun.dpa:oss-android-sdk:+"
+    implementation "com.aliyun.dpa:oss-android-sdk:+"
 }
 ```
 

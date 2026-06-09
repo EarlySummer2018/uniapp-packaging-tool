@@ -27,7 +27,7 @@ use crate::commands::android::resources::{
     copy_sdk_assets, import_uniapp_assets, update_dcloud_control,
 };
 use crate::commands::android::types::{
-    emit_log, render_gradle_dependency_line, timestamp, AndroidBuildEnvironment,
+    emit_log_for_build, render_gradle_dependency_line, timestamp, AndroidBuildEnvironment,
     AndroidManifestPatches, UTS_RUNTIME_DEPS,
 };
 
@@ -148,10 +148,11 @@ impl BuildContext {
             });
 
         if resolve_env {
-            emit_log(&window, "info", "开始 Android APK 构建流程", Some(2));
+            emit_log_for_build(&window, &build_id, "info", "开始 Android APK 构建流程", Some(2));
         } else {
-            emit_log(
+            emit_log_for_build(
                 &window,
+                &build_id,
                 "info",
                 "开始生成 Android 工程（不执行打包）",
                 Some(2),
@@ -178,8 +179,9 @@ impl BuildContext {
             false,
         )?;
         let app_resource_dir = PathBuf::from(&scan.app_resource_path);
-        emit_log(
+        emit_log_for_build(
             &window,
+            &build_id,
             "info",
             &format!("检测到 UniApp AppId: {}", scan.app_id),
             Some(5),
@@ -199,8 +201,9 @@ impl BuildContext {
         // SDK 从 zip 解压后文件可能只读，copy 会保留权限，需确保目录可写
         crate::utils::fs::ensure_writable_tree(&workspace)
             .map_err(|e| format!("设置工作区写权限失败: {}", e))?;
-        emit_log(
+        emit_log_for_build(
             &window,
+            &build_id,
             "success",
             "已从 SDK 复制 HBuilder-Integrate-AS 到工作区",
             Some(10),
@@ -242,7 +245,7 @@ impl BuildContext {
     pub fn inject_base_aars(&self, window: &Window) -> Result<(), String> {
         crate::utils::fs::ensure_directory(&self.libs_dst).map_err(|e| e.to_string())?;
         copy_required_aars(&self.sdk_libs, &self.libs_dst, window)?;
-        emit_log(window, "success", "DCloud SDK 基础 AAR 已注入", Some(18));
+        emit_log_for_build(window, &self.build_id, "success", "DCloud SDK 基础 AAR 已注入", Some(18));
         Ok(())
     }
 
@@ -305,7 +308,7 @@ impl BuildContext {
                     &self.workspace,
                 )?;
             }
-            emit_log(window, "success", "UTS 插件依赖已扫描并注入", Some(26));
+            emit_log_for_build(window, &self.build_id, "success", "UTS 插件依赖已扫描并注入", Some(26));
         }
         Ok(())
     }
@@ -510,24 +513,24 @@ impl BuildContext {
 
         let modifier = project_mod::AndroidProjectModifier::new(self.workspace.clone())?;
         modifier.apply_all_modifications(&modification_ctx)?;
-        emit_log(window, "success", "已应用 Android 工程补丁", Some(38));
+        emit_log_for_build(window, &self.build_id, "success", "已应用 Android 工程补丁", Some(38));
         Ok(())
     }
 
     /// Step 6: 导入资源（uniapp assets / dcloud_control / icons / splashscreen）
     pub fn import_resources(&self, window: &Window) -> Result<(), String> {
         import_uniapp_assets(&self.app_resource_dir, &self.workspace, &self.scan.app_id)?;
-        emit_log(window, "success", "UniApp 资源已导入 assets/apps", Some(48));
+        emit_log_for_build(window, &self.build_id, "success", "UniApp 资源已导入 assets/apps", Some(48));
 
         update_dcloud_control(&self.workspace, &self.scan.app_id)?;
-        emit_log(window, "success", "dcloud_control.xml 已更新", Some(55));
+        emit_log_for_build(window, &self.build_id, "success", "dcloud_control.xml 已更新", Some(55));
 
         let android_icons = self
             .manifest_info
             .as_ref()
             .and_then(|info| info.android_icons.as_ref());
         generate_icons(android_icons, &self.workspace, window)?;
-        emit_log(window, "success", "Android 图标已导入", Some(64));
+        emit_log_for_build(window, &self.build_id, "success", "Android 图标已导入", Some(64));
 
         let push_icons = if self.push_module_enabled() {
             self.manifest_info
@@ -544,7 +547,7 @@ impl BuildContext {
             .and_then(|info| info.splashscreen.as_ref())
             .or(self.scan.splashscreen.as_ref());
         apply_android_splashscreen(splashscreen, &self.workspace, window)?;
-        emit_log(window, "success", "Android 启动图已处理", Some(66));
+        emit_log_for_build(window, &self.build_id, "success", "Android 启动图已处理", Some(66));
         Ok(())
     }
 
@@ -586,15 +589,19 @@ impl BuildContext {
             .android_env
             .expect("android_env must be set for build_apk mode");
 
-        emit_log(window, "info", "执行 Gradle assembleRelease", Some(70));
+        emit_log_for_build(window, &self.build_id, "info", "执行 Gradle assembleRelease", Some(70));
         let app_handle = window.app_handle().clone();
-        let output = crate::utils::process::run_command_streaming_with_env(
+        let output = crate::utils::process::run_command_streaming_with_env_tagged(
             &android_env.gradle_bin.to_string_lossy(),
             &["assembleRelease".to_string()],
             &self.workspace.to_string_lossy(),
             &android_process_env(&android_env),
             app_handle,
             "build-log",
+            crate::utils::process::StreamLogMeta {
+                build_id: self.build_id.clone(),
+                platform: "android".to_string(),
+            },
         )
         .await
         .map_err(|e| format!("执行 Gradle 失败: {}", e))?;
@@ -615,8 +622,9 @@ impl BuildContext {
         let size_bytes = std::fs::metadata(&dest)
             .map(|m| m.len())
             .unwrap_or_default();
-        emit_log(
+        emit_log_for_build(
             window,
+            &self.build_id,
             "success",
             &format!("Android 打包完成: {}", dest.display()),
             Some(100),

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::commands::android::types::emit_log;
+use crate::commands::android::types::emit_log_for_build;
 
 // ===== Tauri Command 入口 =====
 
@@ -136,8 +136,9 @@ pub async fn generate_android_project(
     ctx.finalize(&window)?;
 
     let workspace_display = ctx.workspace_path();
-    emit_log(
+    emit_log_for_build(
         &window,
+        &ctx.build_id,
         "success",
         &format!("Android 工程已生成: {}", workspace_display),
         Some(100),

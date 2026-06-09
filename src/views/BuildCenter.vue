@@ -21,11 +21,10 @@ import { ArrowBackOutline, FolderOpenOutline, PlayOutline } from '@vicons/ionico
 import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
 import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { LogoAndroid, LogoApple, PhonePortraitOutline } from '@vicons/ionicons5'
 import PlatformCard from '../components/PlatformCard.vue'
 import LogPanel from '../components/LogPanel.vue'
-import { useBuildStore, type BuildLog } from '../stores/build'
+import { useBuildStore } from '../stores/build'
 import { useProjectsStore } from '../stores/projects'
 
 type Platform = 'android' | 'ios' | 'harmony'
@@ -180,9 +179,6 @@ const projectsStore = useProjectsStore()
 const projectId = computed(() => route.params.id as string)
 const selectedPlatforms = ref<Platform[]>([])
 const importing = ref(false)
-const isBuilding = ref(false)
-const isGenerating = ref(false)
-const generatedProjectPath = ref<string | null>(null)
 const currentBuildId = ref<string | null>(null)
 const scanResult = ref<ResourceScanResult | null>(null)
 const latestManifestInfo = ref<UniappManifestInfo | null>(null)
@@ -190,260 +186,36 @@ const manifestReadWarning = ref('')
 const androidModuleConfigReport = ref<AndroidModuleConfigReport | null>(null)
 const androidModuleConfigValues = ref<Record<string, string>>({})
 const androidModuleConfigLoading = ref(false)
-const artifacts = ref<BuildArtifact[]>([])
 
-let unlistenBuildLog: UnlistenFn | null = null
 let androidModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 
-// ===== 日志节流调度系统（2 秒刷新，最大限度让出主线程给打包编译）=====
-
-interface BufferedLog {
-  buildId: string
-  level: 'info' | 'warn' | 'error' | 'success'
-  message: string
-  progress?: number
-}
-
-/** 原始事件缓冲区：回调只做轻量 push，不做任何响应式/IPC 操作 */
-const logBuffer: BufferedLog[] = []
-
-/** 全局去重集合：记录本构建已写入文件的日志行，防止 Gradle --stacktrace 等重复输出 */
-const emittedLogLines = new Set<string>()
-
-/** UI 刷新定时器句柄 */
-let logFlushTimer: ReturnType<typeof setTimeout> | null = null
-
-/** 是否已有定时器在等待 */
-let flushPending = false
-
-/** UI 刷新间隔（毫秒） */
-const LOG_FLUSH_INTERVAL_MS = 2000
-
-/**
- * 将缓冲区日志批量写入 store（触发 UI 更新）和文件。
- * 由 2 秒定时器驱动，也可在 catch/finally 中主动调用以排空缓冲区。
- */
-async function flushToStoreAndUI() {
-  flushPending = false
-  logFlushTimer = null
-
-  if (logBuffer.length === 0 || !currentBuildId.value) return
-
-  // 取出所有缓冲数据
-  const entries = logBuffer.splice(0)
-  const compactedEntries = compactBufferedLogs(entries)
-
-  // 进度事件不一定都有可展示日志，先从原始事件里同步进度
-  for (const entry of entries) {
-    if (entry.progress != null) {
-      buildStore.updateProgress(entry.buildId, entry.progress)
-    }
-  }
-
-  // 获取当前构建的最后一条日志，用于连续去重
-  const build = buildStore.getBuild(currentBuildId.value)
-  let lastMsg = build?.logs?.length ? build.logs[build.logs.length - 1] : null
-
-  // 批量推入 store（连续去重：跳过与前一条 level+message 完全相同的日志）
-  for (const entry of compactedEntries) {
-    if (lastMsg && lastMsg.level === entry.level && lastMsg.message === entry.message) {
-      continue // Gradle 重复输出常见，跳过连续重复
-    }
-    buildStore.addLog(entry.buildId, entry.level, entry.message)
-    lastMsg = { level: entry.level, message: entry.message } as BuildLog
-  }
-
-  // 文件写入：写入与实时 UI 一致的精简日志
-  const rawLines: string[] = []
-  for (let i = 0; i < compactedEntries.length; i++) {
-    const e = compactedEntries[i]
-    if (i > 0) {
-      const prev = compactedEntries[i - 1]
-      if (prev.level === e.level && prev.message === e.message) continue
-    }
-    rawLines.push(`[${e.level}] ${e.message}`)
-  }
-
-  // 全局去重：跳过本次构建中已写入的行
-  const uniqueLines: string[] = []
-  for (const line of rawLines) {
-    if (!emittedLogLines.has(line)) {
-      emittedLogLines.add(line)
-      uniqueLines.push(line)
-    }
-  }
-
-  if (uniqueLines.length > 0) {
-    void appendLog(currentBuildId.value!, uniqueLines).catch(() => {})
-  }
-}
-
-const STACK_FRAME_RE = /^\s*(at\s+|\.\.\. \d+ more)/
-const D8_METADATA_RE = /WARNING:\s*D8:.*kotlin metadata/i
-const D8_REWRITE_RE = /WARNING:\s*D8:\s*Unexpected error during rewriting of Kotlin metadata for class '([^']+)'/i
-const D8_INTERNAL_RE = /^\s*(com\.android\.tools\.r8\.internal\.|at\s+com\.android\.tools\.r8\.|at\s+com\.android\.builder\.dexing\.|at\s+org\.gradle\.|at\s+java\.|at\s+com\.google\.common\.|at\s+org\.jetbrains\.)/
-const KOTLIN_METADATA_MISMATCH_RE = /Module was compiled with an incompatible version of Kotlin\..*binary version of its metadata is .*expected version is/i
-const SETTINGS_REPOSITORY_WARNING_RE = /Build was configured to prefer settings repositories over project repositories but repository '([^']+)' was added by build file 'build\.gradle'/i
-
-function compactBufferedLogs(entries: BufferedLog[]): BufferedLog[] {
-  const result: BufferedLog[] = []
-  const stackBuffer: BufferedLog[] = []
-  const d8Classes = new Set<string>()
-  const kotlinModules = new Set<string>()
-  const settingsRepositoryWarnings = new Set<string>()
-  let d8WarningCount = 0
-  let d8SuppressedLines = 0
-  let kotlinMismatchCount = 0
-  let settingsRepositoryWarningCount = 0
-  let suppressingD8Details = false
-
-  function pushEntry(entry: BufferedLog) {
-    flushStack()
-    flushD8Summary()
-    flushKotlinMismatchSummary()
-    flushSettingsRepositorySummary()
-    result.push(entry)
-  }
-
-  function flushStack() {
-    if (!stackBuffer.length) return
-    if (stackBuffer.length > 3) {
-      result.push({
-        ...stackBuffer[0],
-        level: stackBuffer.some(entry => entry.level === 'error') ? 'warn' : stackBuffer[0].level,
-        message: `已折叠 ${stackBuffer.length} 行 Gradle/Java 内部堆栈`,
-      })
-    } else {
-      result.push(...stackBuffer)
-    }
-    stackBuffer.length = 0
-  }
-
-  function flushD8Summary() {
-    if (!d8WarningCount && d8Classes.size === 0 && !d8SuppressedLines) return
-    const shownClasses = Array.from(d8Classes).slice(0, 5)
-    const classText = shownClasses.length
-      ? `，示例: ${shownClasses.join('、')}${d8Classes.size > shownClasses.length ? ` 等 ${d8Classes.size} 个类` : ''}`
-      : ''
-    result.push({
-      buildId: currentBuildId.value!,
-      level: 'warn',
-      message: `D8 Kotlin metadata 警告已折叠${classText}；省略 ${d8SuppressedLines} 行 R8/D8 内部堆栈。建议对齐 Kotlin 与 AGP/R8 版本。`,
-    })
-    d8Classes.clear()
-    d8WarningCount = 0
-    d8SuppressedLines = 0
-    suppressingD8Details = false
-  }
-
-  function flushKotlinMismatchSummary() {
-    if (!kotlinMismatchCount) return
-    const modules = Array.from(kotlinModules)
-    const shownModules = modules.slice(0, 5)
-    result.push({
-      buildId: currentBuildId.value!,
-      level: 'warn',
-      message: `Kotlin 元数据版本不兼容提示已折叠: ${kotlinMismatchCount} 条，涉及 ${shownModules.join('、')}${modules.length > shownModules.length ? ` 等 ${modules.length} 个依赖` : ''}。`,
-    })
-    kotlinModules.clear()
-    kotlinMismatchCount = 0
-  }
-
-  function flushSettingsRepositorySummary() {
-    if (!settingsRepositoryWarningCount) return
-    const repositories = Array.from(settingsRepositoryWarnings)
-    const shown = repositories.slice(0, 6).join('、')
-    result.push({
-      buildId: currentBuildId.value!,
-      level: 'info',
-      message: `Gradle 项目级仓库提示已折叠: ${settingsRepositoryWarningCount} 条；settings.gradle 已接管依赖仓库${shown ? `，被忽略仓库: ${shown}` : ''}。`,
-    })
-    settingsRepositoryWarnings.clear()
-    settingsRepositoryWarningCount = 0
-  }
-
-  for (const entry of entries) {
-    const message = entry.message.trimEnd()
-    const d8Class = message.match(D8_REWRITE_RE)?.[1]
-    if (D8_METADATA_RE.test(message) || d8Class) {
-      flushStack()
-      flushKotlinMismatchSummary()
-      d8WarningCount += 1
-      if (d8Class) d8Classes.add(d8Class)
-      suppressingD8Details = true
-      continue
-    }
-
-    if (suppressingD8Details && (D8_INTERNAL_RE.test(message) || STACK_FRAME_RE.test(message))) {
-      d8SuppressedLines += 1
-      continue
-    }
-
-    if (KOTLIN_METADATA_MISMATCH_RE.test(message)) {
-      flushStack()
-      flushD8Summary()
-      kotlinMismatchCount += 1
-      kotlinModules.add(extractKotlinMismatchModule(message))
-      continue
-    }
-
-    const settingsRepository = message.match(SETTINGS_REPOSITORY_WARNING_RE)?.[1]
-    if (settingsRepository) {
-      flushStack()
-      flushD8Summary()
-      flushKotlinMismatchSummary()
-      settingsRepositoryWarnings.add(settingsRepository)
-      settingsRepositoryWarningCount += 1
-      continue
-    }
-
-    if (STACK_FRAME_RE.test(message)) {
-      flushD8Summary()
-      flushKotlinMismatchSummary()
-      flushSettingsRepositorySummary()
-      stackBuffer.push({ ...entry, message })
-      continue
-    }
-
-    pushEntry({ ...entry, message })
-  }
-
-  flushStack()
-  flushD8Summary()
-  flushKotlinMismatchSummary()
-  flushSettingsRepositorySummary()
-  return result
-}
-
-function extractKotlinMismatchModule(message: string): string {
-  const kotlinModule = message.match(/org\.jetbrains\.kotlin\/([^/]+)\/([^/]+)/)
-  if (kotlinModule) return `${kotlinModule[1]}:${kotlinModule[2]}`
-  if (message.includes('utsplugin_release.kotlin_module')) return 'utsplugin-release'
-  const jar = message.match(/\/([^/!]+\.jar)!\/META-INF/)
-  if (jar) return jar[1]
-  const metadata = message.match(/META-INF\/([^/\s]+\.kotlin_module)/)
-  return metadata?.[1] || 'unknown'
-}
-
-/** 调度下一次 UI 刷新（2 秒后，不重复调度） */
-function scheduleLogFlush(): Promise<void> {
-  if (flushPending) return Promise.resolve()
-  flushPending = true
-  return new Promise(resolve => {
-    logFlushTimer = setTimeout(async () => {
-      await flushToStoreAndUI()
-      resolve()
-    }, LOG_FLUSH_INTERVAL_MS)
-  })
-}
-
 const platforms = [
-  { key: 'android' as const, label: 'Android', icon: LogoAndroid, description: '生成 APK 安装包', color: '#2f9e44', bgColor: '#e8f5e9' },
-  { key: 'ios' as const, label: 'iOS', icon: LogoApple, description: '生成 IPA 安装包', color: '#1c7ed6', bgColor: '#e7f5ff' },
-  { key: 'harmony' as const, label: '鸿蒙', icon: PhonePortraitOutline, description: '生成 HAP 安装包', color: '#d6336c', bgColor: '#fff0f6' }
+  { key: 'android' as const, label: 'Android', icon: LogoAndroid, description: 'APK 安装包', color: '#2f9e44', bgColor: '#e8f5e9' },
+  { key: 'ios' as const, label: 'iOS', icon: LogoApple, description: 'IPA 安装包', color: '#1c7ed6', bgColor: '#e7f5ff' },
+  { key: 'harmony' as const, label: '鸿蒙', icon: PhonePortraitOutline, description: 'HAP 安装包', color: '#d6336c', bgColor: '#fff0f6' }
 ]
 
 const selectedNeedsAndroidConfig = computed(() => selectedPlatforms.value.includes('android'))
+const isBuildLocked = computed(() => buildStore.hasActiveBuilds)
+const activeProjectBuild = computed(() => buildStore.getActiveBuildForProject(projectId.value))
+const currentBuild = computed(() => {
+  if (currentBuildId.value) return buildStore.getBuild(currentBuildId.value) || null
+  return activeProjectBuild.value || null
+})
+const packageBuildLoading = computed(() => currentBuild.value?.status === 'building' && currentBuild.value.kind === 'package')
+const androidGenerateLoading = computed(() => currentBuild.value?.status === 'building' && currentBuild.value.kind === 'generateAndroidProject')
+const visibleArtifacts = computed<BuildArtifact[]>(() => {
+  const build = currentBuild.value
+  if (!build?.artifactPath) return []
+  return [{
+    platform: build.platform,
+    path: build.artifactPath,
+    fileName: build.artifactPath.split('/').pop() || build.artifactPath,
+    sizeBytes: build.artifactSizeBytes || 0,
+    buildId: build.id
+  }]
+})
+const currentGeneratedProjectPath = computed(() => currentBuild.value?.generatedProjectPath || null)
 const androidMissingRequired = computed(() => {
   const report = androidModuleConfigReport.value
   if (!report) return []
@@ -452,12 +224,12 @@ const androidMissingRequired = computed(() => {
     .map(field => ({ moduleName: mod.name, key: field.key, label: field.label })))
 })
 const canBuild = computed(() => {
-  if (!scanResult.value || selectedPlatforms.value.length === 0 || isBuilding.value) return false
+  if (!scanResult.value || selectedPlatforms.value.length === 0 || isBuildLocked.value) return false
   if (selectedNeedsAndroidConfig.value && !androidModulesReady.value) return false
   return true
 })
 const canGenerateAndroid = computed(() => {
-  if (!scanResult.value || !selectedPlatforms.value.includes('android') || isBuilding.value || isGenerating.value) return false
+  if (!scanResult.value || !selectedPlatforms.value.includes('android') || isBuildLocked.value) return false
   if (selectedNeedsAndroidConfig.value && !androidModulesReady.value) return false
   return true
 })
@@ -472,7 +244,7 @@ const androidModulesReady = computed(() => {
 const buildDisabledReason = computed(() => {
   if (!scanResult.value) return '请先导入 UniApp 资源'
   if (!selectedPlatforms.value.length) return '请选择至少一个平台'
-  if (isBuilding.value) return '正在构建中'
+  if (isBuildLocked.value) return '正在构建中'
   if (selectedNeedsAndroidConfig.value) {
     if (!latestManifestInfo.value && !currentProject.value?.localPath) {
       return manifestReadWarning.value || '请先在项目配置中选择包含 manifest.json 的本地项目路径'
@@ -483,7 +255,6 @@ const buildDisabledReason = computed(() => {
   }
   return ''
 })
-const currentBuild = computed(() => currentBuildId.value ? buildStore.getBuild(currentBuildId.value) : null)
 const currentProject = computed(() => projectsStore.projects.find(p => p.id === projectId.value) || null)
 const utsDependencyCount = computed(() => {
   const result = scanResult.value
@@ -522,35 +293,8 @@ const androidConfiguredModuleNames = computed(() => androidModuleConfigReport.va
 onMounted(async () => {
   if (!projectsStore.projects.length) await projectsStore.loadProjects()
   projectsStore.setCurrentProject(projectId.value)
-  unlistenBuildLog = await listen<any>('build-log', (event) => {
-    if (!currentBuildId.value) return
-    const payload = event.payload
-
-    // 只做轻量解析 + 推入缓冲区，零响应式、零 IPC
-    if (typeof payload === 'string') {
-      logBuffer.push({ buildId: currentBuildId.value, level: 'info', message: payload })
-    } else {
-      const line = payload?.message || payload?.line
-      if (line) {
-        const level = payload.level === 'error' || payload.type === 'stderr'
-          ? 'error'
-          : payload.level === 'warn'
-            ? 'warn'
-            : payload.level === 'success'
-              ? 'success'
-              : 'info'
-        logBuffer.push({
-          buildId: currentBuildId.value,
-          level,
-          message: String(line),
-          progress: typeof payload?.progress === 'number' ? payload.progress : undefined,
-        })
-      }
-    }
-
-    // 调度 2 秒后的 UI 刷新
-    scheduleLogFlush()
-  })
+  const activeBuild = buildStore.getActiveBuildForProject(projectId.value)
+  if (activeBuild) currentBuildId.value = activeBuild.id
 })
 
 onUnmounted(() => {
@@ -559,53 +303,13 @@ onUnmounted(() => {
     androidModuleConfigSaveTimer = null
   }
   void persistAndroidModuleConfigCache()
-  // 立即刷新剩余缓冲区（同步版本，供 onUnmounted 等无法 await 的场景使用）
-  flushLogBufferImmediately()
-  if (logFlushTimer) { clearTimeout(logFlushTimer); logFlushTimer = null }
-  unlistenBuildLog?.()
 })
 
-/** 同步版本：立即排空 logBuffer，不经过定时器 */
-function flushLogBufferImmediately() {
-  if (logFlushTimer) {
-    clearTimeout(logFlushTimer)
-    logFlushTimer = null
-  }
-  flushPending = false
-  if (logBuffer.length === 0 || !currentBuildId.value) return
-  const entries = logBuffer.splice(0)
-  const compactedEntries = compactBufferedLogs(entries)
-  for (const entry of entries) {
-    if (entry.progress != null) buildStore.updateProgress(entry.buildId, entry.progress)
-  }
-  const build = buildStore.getBuild(currentBuildId.value)
-  let lastMsg = build?.logs?.length ? build.logs[build.logs.length - 1] : null
-  for (const entry of compactedEntries) {
-    if (lastMsg && lastMsg.level === entry.level && lastMsg.message === entry.message) continue
-    buildStore.addLog(entry.buildId, entry.level, entry.message)
-    lastMsg = { level: entry.level, message: entry.message } as BuildLog
-  }
-  const rawLines: string[] = []
-  for (let i = 0; i < compactedEntries.length; i++) {
-    const e = compactedEntries[i]
-    if (i > 0) {
-      const prev = compactedEntries[i - 1]
-      if (prev.level === e.level && prev.message === e.message) continue
-    }
-    rawLines.push(`[${e.level}] ${e.message}`)
-  }
-  // 全局去重
-  const uniqueLines: string[] = []
-  for (const line of rawLines) {
-    if (!emittedLogLines.has(line)) {
-      emittedLogLines.add(line)
-      uniqueLines.push(line)
-    }
-  }
-  if (uniqueLines.length > 0) void appendLog(currentBuildId.value!, uniqueLines).catch(() => {})
-}
-
 async function chooseResource() {
+  if (isBuildLocked.value) {
+    message.warning('已有构建任务进行中，请等待完成后再导入资源')
+    return
+  }
   const selected = await open({
     directory: true,
     multiple: false,
@@ -617,6 +321,10 @@ async function chooseResource() {
 }
 
 async function importResource(path: string) {
+  if (isBuildLocked.value) {
+    message.warning('已有构建任务进行中，请等待完成后再导入资源')
+    return
+  }
   importing.value = true
   scanResult.value = null
   latestManifestInfo.value = null
@@ -639,15 +347,20 @@ async function importResource(path: string) {
 }
 
 function togglePlatform(platform: Platform) {
+  if (isBuildLocked.value) return
   const index = selectedPlatforms.value.indexOf(platform)
   if (index >= 0) selectedPlatforms.value.splice(index, 1)
   else selectedPlatforms.value.push(platform)
 }
 
 async function startBuild() {
-  if (!scanResult.value || selectedPlatforms.value.length === 0 || isBuilding.value) return
-  // 重置全局日志去重集合（每次构建独立）
-  emittedLogLines.clear()
+  if (!scanResult.value || selectedPlatforms.value.length === 0 || isBuildLocked.value) {
+    if (isBuildLocked.value) message.warning('已有构建任务进行中，请等待完成后再开始新的构建')
+    return
+  }
+  const runProjectId = projectId.value
+  const runProjectName = getProjectName()
+  const importedResourcePath = scanResult.value.importedPath
   let manifestInfo: UniappManifestInfo
   try {
     manifestInfo = await ensureManifestInfoLoaded({ persist: true })
@@ -658,20 +371,18 @@ async function startBuild() {
   if (!(await ensureAndroidModuleConfigReadyForBuild())) {
     return
   }
-  const importedResourcePath = scanResult.value.importedPath
   const androidModuleConfig = buildAndroidModuleConfigPayload()
   await persistAndroidModuleConfigCache()
-  artifacts.value = []
-  isBuilding.value = true
   let lastBuildId: string | null = null
   const buildIds: string[] = []
   for (const platform of selectedPlatforms.value) {
-    const buildId = buildStore.startBuild(projectId.value, platform)
+    const buildId = buildStore.startBuild(runProjectId, platform, 'package')
     lastBuildId = buildId
     buildIds.push(buildId)
     currentBuildId.value = buildId
+    buildStore.setActiveEventBuildId(buildId)
     const startedAt = new Date()
-    await createBuildRecord(buildId, platform, startedAt)
+    await createBuildRecord(buildId, platform, startedAt, runProjectId, runProjectName, importedResourcePath)
     await appendManifestLog(buildId, manifestInfo)
     try {
       const command = platform === 'android'
@@ -680,28 +391,29 @@ async function startBuild() {
           ? 'build_ios_ipa'
           : 'build_harmony_hap'
       const artifact = await invoke<BuildArtifact>(command, {
-        projectId: projectId.value,
-        resourcePath: scanResult.value.importedPath,
+        projectId: runProjectId,
+        resourcePath: importedResourcePath,
         buildId,
         manifestInfo,
         moduleConfig: platform === 'android' ? androidModuleConfig : undefined
       })
-      artifacts.value.push(artifact)
-      const build = buildStore.getBuild(buildId)
-      if (build) build.artifactPath = artifact.path
-      buildStore.stopBuild(buildId, true)
+      await buildStore.flushBuildLogs(buildId)
+      await appendFinalLog(buildId, 'success')
       await finalizeBuildRecord(buildId, 'success', startedAt, artifact)
+      buildStore.stopBuild(buildId, true, {
+        artifactPath: artifact.path,
+        artifactSizeBytes: artifact.sizeBytes
+      })
       message.success(`${platform} 构建完成`)
     } catch (e: any) {
-      // 先排空 logBuffer 中的残留 Gradle 输出，确保错误日志在清理日志之前写入
-      if (logBuffer.length > 0 || flushPending) await flushToStoreAndUI()
-      buildStore.failBuild(buildId, String(e))
+      await buildStore.flushBuildLogs(buildId)
+      await appendFinalLog(buildId, 'failed', String(e))
       await finalizeBuildRecord(buildId, 'failed', startedAt, null, String(e))
+      buildStore.failBuild(buildId, String(e))
       message.error(`${platform} 构建失败: ${String(e)}`)
     } finally {
-      // 同样先排空缓冲区，确保所有构建日志在清理日志之前完成写入
-      if (logBuffer.length > 0 || flushPending) await flushToStoreAndUI()
       await cleanupBuildTemporaryFiles(buildId, buildId, null)
+      await buildStore.flushBuildLogs(buildId)
     }
   }
   if (lastBuildId) {
@@ -712,12 +424,18 @@ async function startBuild() {
       }
     }
   }
-  isBuilding.value = false
+  buildStore.setActiveEventBuildId(null)
   scanResult.value = null
 }
 
 async function generateAndroidProject() {
-  if (!scanResult.value || !selectedPlatforms.value.includes('android') || isBuilding.value || isGenerating.value) return
+  if (!scanResult.value || !selectedPlatforms.value.includes('android') || isBuildLocked.value) {
+    if (isBuildLocked.value) message.warning('已有构建任务进行中，请等待完成后再生成安卓工程')
+    return
+  }
+  const runProjectId = projectId.value
+  const runProjectName = getProjectName()
+  const importedResourcePath = scanResult.value.importedPath
   let manifestInfo: UniappManifestInfo
   try {
     manifestInfo = await ensureManifestInfoLoaded({ persist: true })
@@ -730,35 +448,34 @@ async function generateAndroidProject() {
   }
   const androidModuleConfig = buildAndroidModuleConfigPayload()
   await persistAndroidModuleConfigCache()
-  isGenerating.value = true
-  generatedProjectPath.value = null
-  // 重置全局日志去重集合
-  emittedLogLines.clear()
-  const buildId = buildStore.startBuild(projectId.value, 'android')
+  const buildId = buildStore.startBuild(runProjectId, 'android', 'generateAndroidProject')
   currentBuildId.value = buildId
+  buildStore.setActiveEventBuildId(buildId)
   const startedAt = new Date()
-  await createBuildRecord(buildId, 'android', startedAt)
+  await createBuildRecord(buildId, 'android', startedAt, runProjectId, runProjectName, importedResourcePath)
   await appendManifestLog(buildId, manifestInfo)
   try {
     const projectPath = await invoke<string>('generate_android_project', {
-      projectId: projectId.value,
-      resourcePath: scanResult.value!.importedPath,
+      projectId: runProjectId,
+      resourcePath: importedResourcePath,
       buildId,
       manifestInfo,
       moduleConfig: androidModuleConfig,
     })
-    generatedProjectPath.value = projectPath
-    buildStore.stopBuild(buildId, true)
+    await buildStore.flushBuildLogs(buildId)
+    await appendFinalLog(buildId, 'success')
     await finalizeBuildRecord(buildId, 'success', startedAt, null)
+    buildStore.stopBuild(buildId, true, { generatedProjectPath: projectPath })
     message.success(`安卓工程已生成: ${projectPath}`)
   } catch (e: any) {
-    if (logBuffer.length > 0 || flushPending) await flushToStoreAndUI()
-    buildStore.failBuild(buildId, String(e))
+    await buildStore.flushBuildLogs(buildId)
+    await appendFinalLog(buildId, 'failed', String(e))
     await finalizeBuildRecord(buildId, 'failed', startedAt, null, String(e))
+    buildStore.failBuild(buildId, String(e))
     message.error(`生成安卓工程失败: ${String(e)}`)
   } finally {
-    if (logBuffer.length > 0 || flushPending) await flushToStoreAndUI()
-    isGenerating.value = false
+    await buildStore.flushBuildLogs(buildId)
+    if (buildStore.activeEventBuildId === buildId) buildStore.setActiveEventBuildId(null)
   }
 }
 
@@ -916,6 +633,7 @@ function androidFieldValue(field: AndroidModuleConfigField) {
 }
 
 function updateAndroidField(field: AndroidModuleConfigField, value: string) {
+  if (isBuildLocked.value) return
   androidModuleConfigValues.value = {
     ...androidModuleConfigValues.value,
     [field.key]: value
@@ -925,6 +643,10 @@ function updateAndroidField(field: AndroidModuleConfigField, value: string) {
 }
 
 async function pickAndroidFileField(field: AndroidModuleConfigField) {
+  if (isBuildLocked.value) {
+    message.warning('已有构建任务进行中，暂不能修改模块配置')
+    return
+  }
   const selected = await open({
     multiple: false,
     filters: [{ name: 'JSON', extensions: ['json'] }],
@@ -944,6 +666,7 @@ async function pickAndroidFileField(field: AndroidModuleConfigField) {
 }
 
 function clearAndroidFileField(field: AndroidModuleConfigField) {
+  if (isBuildLocked.value) return
   updateAndroidField(field, '')
 }
 
@@ -1029,18 +752,27 @@ function manifestLogLines(info: UniappManifestInfo) {
 }
 
 async function appendManifestLog(buildId: string, info: UniappManifestInfo) {
-  const lines = manifestLogLines(info)
-  await appendLog(buildId, lines)
-  for (const line of lines) {
-    buildStore.addLog(buildId, 'info', line.replace(/^\[info\]\s*/, ''))
-  }
+  await buildStore.appendBuildLogLines(buildId, manifestLogLines(info))
 }
 
-async function createBuildRecord(buildId: string, platform: Platform, startedAt: Date) {
+async function appendFinalLog(buildId: string, status: 'success' | 'failed', errorMessage?: string) {
+  await buildStore.appendBuildLogLines(buildId, [
+    status === 'success' ? '[success] 构建完成！' : `[error] 构建失败: ${errorMessage || '未知错误'}`
+  ])
+}
+
+async function createBuildRecord(
+  buildId: string,
+  platform: Platform,
+  startedAt: Date,
+  recordProjectId: string = projectId.value,
+  recordProjectName: string = getProjectName(),
+  recordResourcePath: string | null = scanResult.value?.importedPath || null
+) {
   const record: BuildRecord = {
     id: buildId,
-    project_id: projectId.value,
-    project_name: getProjectName(),
+    project_id: recordProjectId,
+    project_name: recordProjectName,
     platform,
     status: 'building',
     artifact_path: null,
@@ -1053,11 +785,11 @@ async function createBuildRecord(buildId: string, platform: Platform, startedAt:
     finished_at: null,
     error_message: null,
     log_path: null,
-    resource_path: scanResult.value?.importedPath || null
+    resource_path: recordResourcePath
   }
   try {
     await invoke('add_build_record', { record })
-    await appendLog(buildId, [`[info] 开始构建 ${platform} 版本...`])
+    await buildStore.appendBuildLogLines(buildId, [`[info] 开始构建 ${platform} 版本...`])
   } catch (e) {
     console.warn('Failed to create build history:', e)
   }
@@ -1072,9 +804,7 @@ async function finalizeBuildRecord(
 ) {
   const finishedAt = new Date()
   try {
-    const logPath = await appendLog(buildId, [
-      status === 'success' ? '[success] 构建完成！' : `[error] 构建失败: ${errorMessage || '未知错误'}`
-    ])
+    const build = buildStore.getBuild(buildId)
     await invoke('update_build_record', {
       id: buildId,
       update: {
@@ -1083,7 +813,7 @@ async function finalizeBuildRecord(
         artifact_size_mb: artifact ? artifact.sizeBytes / 1024 / 1024 : null,
         finished_at: finishedAt.toISOString(),
         error_message: errorMessage || null,
-        log_path: logPath,
+        log_path: build?.logPath || null,
         duration_secs: Math.max(1, Math.round((finishedAt.getTime() - startedAt.getTime()) / 1000))
       }
     })
@@ -1092,24 +822,18 @@ async function finalizeBuildRecord(
   }
 }
 
-async function appendLog(buildId: string, lines: string[]) {
-  return invoke<string>('append_build_log', {
-    projectId: projectId.value,
-    buildId,
-    lines
-  })
-}
-
 async function cleanupBuildTemporaryFiles(
   logBuildId: string,
   cleanupBuildId: string | null,
   resourcePath: string | null
 ): Promise<string[]> {
   try {
+    const cleanupProjectId = buildStore.getBuild(logBuildId)?.projectId || projectId.value
+    if (!cleanupProjectId) throw new Error('缺少项目 ID，无法清理临时文件')
     const result = await invoke<{ items: Array<{ label: string; path: string; status: string; message: string }> }>(
       'cleanup_build_temporary_files',
       {
-        projectId: projectId.value,
+        projectId: cleanupProjectId,
         buildId: cleanupBuildId,
         resourcePath
       }
@@ -1132,11 +856,7 @@ async function cleanupBuildTemporaryFiles(
 
 async function appendCleanupLines(buildId: string, lines: string[]) {
   if (!lines.length) return
-  await appendLog(buildId, lines).catch(() => undefined)
-  for (const line of lines) {
-    const match = line.match(/^\[(\w+)\]\s*(.*)$/)
-    buildStore.addLog(buildId, match?.[1] === 'warn' ? 'warn' : 'info', match?.[2] || line)
-  }
+  await buildStore.appendBuildLogLines(buildId, lines).catch(() => undefined)
 }
 
 function goBack() {
@@ -1151,51 +871,57 @@ function goBack() {
         <n-button quaternary circle @click="goBack">
           <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
         </n-button>
-        <n-text strong class="title">构建中心</n-text>
+        <div>
+          <n-text strong class="page-title">构建中心</n-text>
+          <n-text v-if="currentProject" depth="3" class="page-subtitle">{{ getProjectName() }}</n-text>
+        </div>
       </n-space>
     </div>
-    <n-grid :cols="2" :x-gap="20" responsive="screen">
+    <n-grid cols="1 s:1 m:2" :x-gap="18" :y-gap="18" responsive="screen" class="build-grid">
       <n-gi>
-        <n-card title="1. 导入 UniApp 资源" style="min-height: 507px;">
+        <n-card title="1. 导入 UniApp 资源" class="build-step-card import-card">
           <n-space>
-            <n-button type="primary" :loading="importing" @click="chooseResource">
+            <n-button type="primary" :loading="importing" :disabled="isBuildLocked" @click="chooseResource">
               <template #icon><n-icon><FolderOpenOutline /></n-icon></template>
               选择 resources 目录
             </n-button>
           </n-space>
           <div v-if="scanResult" class="scan-result">
-            <n-alert type="success" title="资源扫描完成">
-              <n-space vertical :size="8">
-                <n-text>AppId: <n-text code>{{ insightAppId }}</n-text></n-text>
-                <n-text>版本: {{ insightVersionName }} / {{ insightVersionCode }}</n-text>
-                <n-text>资源包根目录: <n-text code>{{ scanResult.importedPath }}</n-text></n-text>
-                <n-text>应用资源目录: <n-text code>{{ scanResult.appResourcePath }}</n-text></n-text>
-                <n-text>manifest 路径: <n-text code>{{ insightManifestPath }}</n-text></n-text>
-              </n-space>
-            </n-alert>
-            <n-alert v-for="warning in scanResult.warnings" :key="warning" type="warning" style="margin-top: 8px;">
-              {{ warning }}
-            </n-alert>
-            <n-alert v-if="manifestReadWarning" type="warning" style="margin-top: 8px;">
-              {{ manifestReadWarning }}
-            </n-alert>
+            <div class="alert-stack">
+              <n-alert type="success" title="资源扫描完成">
+                <n-space vertical :size="8">
+                  <n-text>AppId: <n-text code class="path-text">{{ insightAppId }}</n-text></n-text>
+                  <n-text>版本: {{ insightVersionName }} / {{ insightVersionCode }}</n-text>
+                  <n-text>资源包根目录: <n-text code class="path-text">{{ scanResult.importedPath }}</n-text></n-text>
+                  <n-text>应用资源目录: <n-text code class="path-text">{{ scanResult.appResourcePath }}</n-text></n-text>
+                  <n-text>manifest 路径: <n-text code class="path-text">{{ insightManifestPath }}</n-text></n-text>
+                </n-space>
+              </n-alert>
+              <n-alert v-for="warning in scanResult.warnings" :key="warning" type="warning">
+                {{ warning }}
+              </n-alert>
+              <n-alert v-if="manifestReadWarning" type="warning">
+                {{ manifestReadWarning }}
+              </n-alert>
+            </div>
           </div>
         </n-card>
       </n-gi>
       <n-gi>
-        <n-card title="2. 选择平台">
+        <n-card title="2. 选择平台" class="build-step-card">
           <PlatformCard
             :platforms="platforms"
             :selected-platforms="selectedPlatforms"
+            :disabled="isBuildLocked"
             @toggle="togglePlatform"
           />
-          <n-space justify="end" style="margin-top: 18px;">
+          <n-space justify="end" class="build-action-row">
             <n-text v-if="buildDisabledReason && !canBuild" depth="3">{{ buildDisabledReason }}</n-text>
-            <n-button type="primary" :disabled="!canGenerateAndroid" :loading="isGenerating" @click="generateAndroidProject">
+            <n-button type="primary" :disabled="!canGenerateAndroid" :loading="androidGenerateLoading" @click="generateAndroidProject">
               <template #icon><n-icon><LogoAndroid /></n-icon></template>
               生成安卓项目
             </n-button>
-            <n-button type="success" :disabled="!canBuild" :loading="isBuilding" @click="startBuild">
+            <n-button type="success" :disabled="!canBuild" :loading="packageBuildLoading" @click="startBuild">
               <template #icon><n-icon><PlayOutline /></n-icon></template>
               开始打包
             </n-button>
@@ -1203,7 +929,7 @@ function goBack() {
         </n-card>
       </n-gi>
     </n-grid>
-    <n-card v-if="scanResult && selectedPlatforms.includes('android')" title="Android 模块配置" style="margin-top: 16px;">
+    <n-card v-if="scanResult && selectedPlatforms.includes('android')" title="Android 模块配置" class="build-section-card">
       <n-space vertical :size="14">
         <n-alert v-if="androidModuleConfigLoading" type="info">正在从 manifest 解析 Android 模块配置...</n-alert>
         <n-alert v-else-if="!latestManifestInfo" type="warning">
@@ -1244,36 +970,35 @@ function goBack() {
                       <n-tag size="tiny" :type="fieldStatusType(field)">{{ fieldStatusLabel(field) }}</n-tag>
                     </n-space>
                   </template>
-                  <!-- 文件类型字段：渲染文件选择器 -->
                   <template v-if="isFileField(field)">
-                    <n-space :size="8" align="center" style="width: 100%;">
-                      <n-button size="small" @click="pickAndroidFileField(field)">选择文件</n-button>
-                      <n-text v-if="androidFieldValue(field)" depth="3" style="font-size: 12px;">
+                    <n-space :size="8" align="center" class="file-field-row">
+                      <n-button size="small" :disabled="isBuildLocked" @click="pickAndroidFileField(field)">选择文件</n-button>
+                      <n-text v-if="androidFieldValue(field)" depth="3" class="file-field-hint">
                         已选择 ({{ formatFileSize(androidFieldValue(field)) }})
                       </n-text>
-                      <n-button v-if="androidFieldValue(field)" size="small" quaternary type="error" @click="clearAndroidFileField(field)">清除</n-button>
-                      <n-text v-else depth="3" style="font-size: 12px;">{{ field.placeholder }}</n-text>
+                      <n-button v-if="androidFieldValue(field)" size="small" quaternary type="error" :disabled="isBuildLocked" @click="clearAndroidFileField(field)">清除</n-button>
+                      <n-text v-else depth="3" class="file-field-hint">{{ field.placeholder }}</n-text>
                     </n-space>
                   </template>
-                  <!-- 文本类型字段：渲染输入框 -->
                   <n-input
                     v-else
                     :value="androidFieldValue(field)"
                     :placeholder="field.placeholder"
                     :type="field.secret ? 'password' : 'text'"
                     :show-password-on="field.secret ? 'click' : undefined"
+                    :disabled="isBuildLocked"
                     @update:value="(value: string) => updateAndroidField(field, value)"
                   />
                 </n-form-item>
               </n-gi>
             </n-grid>
-            <n-divider style="margin: 4px 0 0;" />
+            <n-divider class="module-divider" />
           </div>
         </div>
       </n-space>
     </n-card>
 
-    <n-card v-if="scanResult" title="识别到的资源与模块" style="margin-top: 16px;">
+    <n-card v-if="scanResult" title="识别到的资源与模块" class="build-section-card">
       <div class="insight-panel">
         <div class="insight-head">
           <div>
@@ -1349,7 +1074,7 @@ function goBack() {
       </div>
 
       <div v-if="scanResult.warnings.length" class="module-section">
-        <n-alert v-for="warning in scanResult.warnings" :key="warning" type="warning" style="margin-top: 8px;">
+        <n-alert v-for="warning in scanResult.warnings" :key="warning" type="warning">
           {{ warning }}
         </n-alert>
       </div>
@@ -1358,25 +1083,27 @@ function goBack() {
       </div>
     </n-card>
 
-    <n-card title="构建日志" style="margin-top: 16px;">
+    <n-card title="构建日志" class="build-section-card log-section-card">
       <LogPanel :logs="currentBuild?.logs || []" height="380px" />
       <n-progress
-        style="margin-top: 16px;"
+        class="build-progress"
         type="line"
         :percentage="currentBuild?.progress || 0"
         :processing="currentBuild?.status === 'building'"
         :status="currentBuild?.status === 'failed' ? 'error' : currentBuild?.status === 'success' ? 'success' : 'default'"
       />
-      <n-alert v-for="artifact in artifacts" :key="artifact.path" type="success" style="margin-top: 12px;">
-        {{ artifact.platform }}: <n-text code>{{ artifact.path }}</n-text>
-      </n-alert>
-      <n-alert v-if="generatedProjectPath" type="info" style="margin-top: 12px;">
-        <n-space align="center">
-          <span>Android 工程已生成:</span>
-          <n-text code>{{ generatedProjectPath }}</n-text>
-          <n-button size="small" @click="() => { void invoke('tauri', { __tauriModule: 'shell', message: { cmd: 'open', path: generatedProjectPath } }) }">打开目录</n-button>
-        </n-space>
-      </n-alert>
+      <div class="alert-stack log-result-stack">
+        <n-alert v-for="artifact in visibleArtifacts" :key="artifact.path" type="success">
+          {{ artifact.platform }}: <n-text code class="path-text">{{ artifact.path }}</n-text>
+        </n-alert>
+        <n-alert v-if="currentGeneratedProjectPath" type="info">
+          <n-space align="center">
+            <span>Android 工程已生成:</span>
+            <n-text code class="path-text">{{ currentGeneratedProjectPath }}</n-text>
+            <n-button size="small" @click="() => { void invoke('tauri', { __tauriModule: 'shell', message: { cmd: 'open', path: currentGeneratedProjectPath } }) }">打开目录</n-button>
+          </n-space>
+        </n-alert>
+      </div>
     </n-card>
   </div>
 </template>
@@ -1384,16 +1111,33 @@ function goBack() {
 <style scoped>
 .build-center {
   max-width: 1280px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .page-header {
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 2px;
 }
 
-.title {
-  font-size: 24px;
+.build-grid {
+  align-items: start;
+}
+
+.build-step-card {
+  height: auto;
+}
+
+.import-card {
+  min-height: 220px;
+}
+
+.build-action-row {
+  margin-top: 18px;
+}
+
+.build-section-card {
+  margin-top: 0;
 }
 
 .scan-result {
@@ -1402,9 +1146,9 @@ function goBack() {
 
 .insight-panel {
   padding: 16px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
-  background: #fafafa;
+  background: var(--surface-muted);
 }
 
 .insight-head {
@@ -1413,7 +1157,7 @@ function goBack() {
   align-items: flex-start;
   gap: 12px;
   padding-bottom: 14px;
-  border-bottom: 1px solid #ececec;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .insight-title {
@@ -1435,12 +1179,12 @@ function goBack() {
 .summary-tile {
   min-height: 72px;
   padding: 12px;
-  border: 1px solid #f0f0f0;
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  background: #fafafa;
+  background: var(--surface-color);
 }
 
 .summary-value {
@@ -1450,14 +1194,17 @@ function goBack() {
 
 .module-section {
   margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .module-box {
   min-height: 96px;
   padding: 12px;
-  border: 1px solid #eeeeee;
-  border-radius: 6px;
-  background: #ffffff;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-color);
 }
 
 .tag-row {
@@ -1475,9 +1222,9 @@ function goBack() {
   gap: 8px 12px;
   margin-top: 14px;
   padding: 12px;
-  border: 1px solid #eeeeee;
-  border-radius: 6px;
-  background: #ffffff;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-color);
 }
 
 .path-summary :deep(.n-text) {
@@ -1491,10 +1238,10 @@ function goBack() {
 }
 
 .android-config-module {
-  padding: 12px;
-  border: 1px solid #eeeeee;
-  border-radius: 6px;
-  background: #ffffff;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-muted);
 }
 
 .android-config-head {
@@ -1503,5 +1250,37 @@ function goBack() {
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.file-field-row {
+  width: 100%;
+}
+
+.file-field-hint {
+  font-size: 12px;
+}
+
+.module-divider {
+  margin: 4px 0 0;
+}
+
+.build-progress {
+  margin-top: 16px;
+}
+
+.log-result-stack {
+  margin-top: 12px;
+}
+
+@media (max-width: 1180px) {
+  .android-config-head,
+  .insight-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .path-summary {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
