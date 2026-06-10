@@ -29,6 +29,7 @@ import { useBuildStore } from '../stores/build'
 import { useProjectsStore } from '../stores/projects'
 
 type Platform = 'android' | 'ios' | 'harmony'
+type NonIosPlatform = Exclude<Platform, 'ios'>
 
 interface UtsBuiltinModule {
   name: string
@@ -85,6 +86,7 @@ interface UniappManifestInfo {
   hbuilderxVersion?: string | null
   androidIcons?: { android: Record<string, string> } | null
   iosIcons?: { ios: Record<string, string> } | null
+  iosPrivacyDescriptions?: Record<string, string>
   splashscreen?: SplashscreenConfig | null
   manifestValue?: Record<string, any> | null
   manifestPath: string
@@ -202,11 +204,12 @@ let androidModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 const platforms = [
   { key: 'android' as const, label: 'Android', icon: LogoAndroid, description: 'APK 安装包', color: '#2f9e44', bgColor: '#e8f5e9' },
-  { key: 'ios' as const, label: 'iOS', icon: LogoApple, description: 'IPA 安装包', color: '#1c7ed6', bgColor: '#e7f5ff' },
+  { key: 'ios' as const, label: 'iOS', icon: LogoApple, description: '离线 SDK / IPA', color: '#1c7ed6', bgColor: '#e7f5ff' },
   { key: 'harmony' as const, label: '鸿蒙', icon: PhonePortraitOutline, description: 'HAP 安装包', color: '#d6336c', bgColor: '#fff0f6' }
 ]
 
 const selectedNeedsAndroidConfig = computed(() => selectedPlatforms.value.includes('android'))
+const selectedNeedsIosConfig = computed(() => selectedPlatforms.value.includes('ios'))
 const isBuildLocked = computed(() => buildStore.hasActiveBuilds)
 const activeProjectBuild = computed(() => buildStore.getActiveBuildForProject(projectId.value))
 const currentBuild = computed(() => {
@@ -239,9 +242,24 @@ const androidMissingRequired = computed(() => {
       .filter(field => field.required && !androidFieldValue(mod, field).trim())
       .map(field => ({ moduleName: mod.name, key: field.key, label: field.label })))
 })
+const iosMissingRequired = computed(() => {
+  if (!selectedNeedsIosConfig.value) return []
+  const ios = currentProject.value?.ios
+  if (!ios) return ['iOS 项目配置']
+  const missing: string[] = []
+  if (!ios.dcloudAppKey?.trim()) missing.push('DCloud AppKey')
+  if (!ios.bundleId?.trim()) missing.push('Bundle ID')
+  if (!ios.teamId?.trim()) missing.push('Team ID')
+  if (!ios.provisioningProfile?.trim()) missing.push('描述文件')
+  return missing
+})
+const iosBuildReady = computed(() => !selectedNeedsIosConfig.value || iosMissingRequired.value.length === 0)
+const iosIconCount = computed(() => Object.keys(latestManifestInfo.value?.iosIcons?.ios || {}).length)
+const iosPrivacyDescriptionCount = computed(() => Object.keys(latestManifestInfo.value?.iosPrivacyDescriptions || {}).length)
 const canBuild = computed(() => {
   if (!scanResult.value || selectedPlatforms.value.length === 0 || isBuildLocked.value) return false
   if (selectedNeedsAndroidConfig.value && !androidModulesReady.value) return false
+  if (!iosBuildReady.value) return false
   return true
 })
 const canGenerateAndroid = computed(() => {
@@ -249,7 +267,7 @@ const canGenerateAndroid = computed(() => {
   if (selectedNeedsAndroidConfig.value && !androidModulesReady.value) return false
   return true
 })
-const canGenerateIos = computed(() => canGenerateNativeProject('ios'))
+const canGenerateIos = computed(() => canGenerateIosProject())
 const canGenerateHarmony = computed(() => canGenerateNativeProject('harmony'))
 const currentGeneratedProjectLabel = computed(() => {
   const platform = currentBuild.value?.platform
@@ -267,6 +285,9 @@ const buildDisabledReason = computed(() => {
   if (!scanResult.value) return '请先导入 UniApp 资源'
   if (!selectedPlatforms.value.length) return '请选择至少一个平台'
   if (isBuildLocked.value) return '正在构建中'
+  if (selectedNeedsIosConfig.value && iosMissingRequired.value.length) {
+    return `还有 ${iosMissingRequired.value.length} 个 iOS 必填配置未填写`
+  }
   if (selectedNeedsAndroidConfig.value) {
     if (!latestManifestInfo.value && !currentProject.value?.localPath) {
       return manifestReadWarning.value || '请先在项目配置中选择包含 manifest.json 的本地项目路径'
@@ -424,45 +445,11 @@ async function startBuild() {
   let lastBuildId: string | null = null
   const buildIds: string[] = []
   for (const platform of selectedPlatforms.value) {
-    const buildId = buildStore.startBuild(runProjectId, platform, 'package')
+    const buildId = platform === 'ios'
+      ? await buildIosIpa(runProjectId, runProjectName, importedResourcePath, buildManifestInfo)
+      : await buildStandardPackage(platform, runProjectId, runProjectName, importedResourcePath, buildManifestInfo, androidModuleConfig)
     lastBuildId = buildId
     buildIds.push(buildId)
-    currentBuildId.value = buildId
-    buildStore.setActiveEventBuildId(buildId)
-    const startedAt = new Date()
-    await createBuildRecord(buildId, platform, startedAt, runProjectId, runProjectName, importedResourcePath)
-    await appendManifestLog(buildId, buildManifestInfo)
-    try {
-      const command = platform === 'android'
-        ? 'build_android_apk'
-        : platform === 'ios'
-          ? 'build_ios_ipa'
-          : 'build_harmony_hap'
-      const artifact = await invoke<BuildArtifact>(command, {
-        projectId: runProjectId,
-        resourcePath: importedResourcePath,
-        buildId,
-        manifestInfo: buildManifestInfo,
-        moduleConfig: platform === 'android' ? androidModuleConfig : undefined
-      })
-      await buildStore.flushBuildLogs(buildId)
-      await appendFinalLog(buildId, 'success')
-      await finalizeBuildRecord(buildId, 'success', startedAt, artifact)
-      buildStore.stopBuild(buildId, true, {
-        artifactPath: artifact.path,
-        artifactSizeBytes: artifact.sizeBytes
-      })
-      message.success(`${platform} 构建完成`)
-    } catch (e: any) {
-      await buildStore.flushBuildLogs(buildId)
-      await appendFinalLog(buildId, 'failed', String(e))
-      await finalizeBuildRecord(buildId, 'failed', startedAt, null, String(e))
-      buildStore.failBuild(buildId, String(e))
-      message.error(`${platform} 构建失败: ${String(e)}`)
-    } finally {
-      await cleanupBuildTemporaryFiles(buildId, buildId, null)
-      await buildStore.flushBuildLogs(buildId)
-    }
   }
   if (lastBuildId) {
     const resourceCleanupLines = await cleanupBuildTemporaryFiles(lastBuildId, null, importedResourcePath)
@@ -476,19 +463,163 @@ async function startBuild() {
   scanResult.value = null
 }
 
+async function buildIosIpa(
+  runProjectId: string,
+  runProjectName: string,
+  importedResourcePath: string,
+  buildManifestInfo: UniappManifestInfo
+) {
+  const platform: Platform = 'ios'
+  const buildId = buildStore.startBuild(runProjectId, platform, 'package')
+  currentBuildId.value = buildId
+  buildStore.setActiveEventBuildId(buildId)
+  const startedAt = new Date()
+  await createBuildRecord(buildId, platform, startedAt, runProjectId, runProjectName, importedResourcePath)
+  await appendManifestLog(buildId, buildManifestInfo)
+  await buildStore.appendBuildLogLines(buildId, [
+    '[info] iOS 离线 SDK 流程: 复制 SDK 自带 HBuilder-Hello* 并配置 workspace 副本',
+    `[info] iOS 图标配置: ${iosIconCount.value} 项，隐私描述: ${iosPrivacyDescriptionCount.value} 项`
+  ])
+  try {
+    const artifact = await invoke<BuildArtifact>('build_ios_ipa', {
+      projectId: runProjectId,
+      resourcePath: importedResourcePath,
+      buildId,
+      manifestInfo: buildManifestInfo
+    })
+    await buildStore.flushBuildLogs(buildId)
+    await appendFinalLog(buildId, 'success')
+    await finalizeBuildRecord(buildId, 'success', startedAt, artifact)
+    buildStore.stopBuild(buildId, true, {
+      artifactPath: artifact.path,
+      artifactSizeBytes: artifact.sizeBytes
+    })
+    message.success('iOS IPA 构建完成')
+  } catch (e: any) {
+    await buildStore.flushBuildLogs(buildId)
+    await appendFinalLog(buildId, 'failed', String(e))
+    await finalizeBuildRecord(buildId, 'failed', startedAt, null, String(e))
+    buildStore.failBuild(buildId, String(e))
+    message.error(`iOS IPA 构建失败: ${String(e)}`)
+  } finally {
+    await cleanupBuildTemporaryFiles(buildId, buildId, null)
+    await buildStore.flushBuildLogs(buildId)
+  }
+  return buildId
+}
+
+async function buildStandardPackage(
+  platform: NonIosPlatform,
+  runProjectId: string,
+  runProjectName: string,
+  importedResourcePath: string,
+  buildManifestInfo: UniappManifestInfo,
+  androidModuleConfig: Record<string, string>
+) {
+  const buildId = buildStore.startBuild(runProjectId, platform, 'package')
+  currentBuildId.value = buildId
+  buildStore.setActiveEventBuildId(buildId)
+  const startedAt = new Date()
+  await createBuildRecord(buildId, platform, startedAt, runProjectId, runProjectName, importedResourcePath)
+  await appendManifestLog(buildId, buildManifestInfo)
+  try {
+    const command = platform === 'android' ? 'build_android_apk' : 'build_harmony_hap'
+    const artifact = await invoke<BuildArtifact>(command, {
+      projectId: runProjectId,
+      resourcePath: importedResourcePath,
+      buildId,
+      manifestInfo: buildManifestInfo,
+      moduleConfig: platform === 'android' ? androidModuleConfig : undefined
+    })
+    await buildStore.flushBuildLogs(buildId)
+    await appendFinalLog(buildId, 'success')
+    await finalizeBuildRecord(buildId, 'success', startedAt, artifact)
+    buildStore.stopBuild(buildId, true, {
+      artifactPath: artifact.path,
+      artifactSizeBytes: artifact.sizeBytes
+    })
+    message.success(`${platform} 构建完成`)
+  } catch (e: any) {
+    await buildStore.flushBuildLogs(buildId)
+    await appendFinalLog(buildId, 'failed', String(e))
+    await finalizeBuildRecord(buildId, 'failed', startedAt, null, String(e))
+    buildStore.failBuild(buildId, String(e))
+    message.error(`${platform} 构建失败: ${String(e)}`)
+  } finally {
+    await cleanupBuildTemporaryFiles(buildId, buildId, null)
+    await buildStore.flushBuildLogs(buildId)
+  }
+  return buildId
+}
+
 async function generateAndroidProject() {
   await generateNativeProject('android')
 }
 
 async function generateIosProject() {
-  await generateNativeProject('ios')
+  await generateIosOfflineProject()
 }
 
 async function generateHarmonyProject() {
   await generateNativeProject('harmony')
 }
 
-async function generateNativeProject(platform: Platform) {
+function canGenerateIosProject() {
+  return !!scanResult.value && singleSelectedPlatform.value === 'ios' && !isBuildLocked.value && iosBuildReady.value
+}
+
+async function generateIosOfflineProject() {
+  if (!canGenerateIosProject()) {
+    if (isBuildLocked.value) message.warning('已有构建任务进行中，请等待完成后再生成项目')
+    return
+  }
+  const runProjectId = projectId.value
+  const runProjectName = getProjectName()
+  const importedResourcePath = scanResult.value!.importedPath
+  let manifestInfo: UniappManifestInfo
+  try {
+    manifestInfo = await ensureManifestInfoLoaded({ persist: true })
+  } catch (e: any) {
+    message.error(String(e))
+    return
+  }
+  const buildManifestInfo = selectedManifestInfoForBuild(manifestInfo)
+  await persistAndroidModuleConfigCache()
+  const buildId = buildStore.startBuild(runProjectId, 'ios', 'generateIosProject')
+  currentBuildId.value = buildId
+  buildStore.setActiveEventBuildId(buildId)
+  const startedAt = new Date()
+  await createBuildRecord(buildId, 'ios', startedAt, runProjectId, runProjectName, importedResourcePath)
+  await appendManifestLog(buildId, buildManifestInfo)
+  await buildStore.appendBuildLogLines(buildId, [
+    '[info] iOS 工程生成: 复制 SDK 自带 HBuilder-Hello* 后配置 workspace 副本',
+    `[info] iOS 图标配置: ${iosIconCount.value} 项，隐私描述: ${iosPrivacyDescriptionCount.value} 项`
+  ])
+  try {
+    const projectPath = await invoke<string>('generate_ios_project', {
+      projectId: runProjectId,
+      resourcePath: importedResourcePath,
+      buildId,
+      manifestInfo: buildManifestInfo
+    })
+    await buildStore.flushBuildLogs(buildId)
+    await appendFinalLog(buildId, 'success')
+    await finalizeBuildRecord(buildId, 'success', startedAt, null)
+    buildStore.stopBuild(buildId, true, { generatedProjectPath: projectPath })
+    message.success(`iOS 工程已生成: ${projectPath}`)
+  } catch (e: any) {
+    await buildStore.flushBuildLogs(buildId)
+    await appendFinalLog(buildId, 'failed', String(e))
+    await finalizeBuildRecord(buildId, 'failed', startedAt, null, String(e))
+    buildStore.failBuild(buildId, String(e))
+    message.error(`生成 iOS 工程失败: ${String(e)}`)
+  } finally {
+    await buildStore.flushBuildLogs(buildId)
+    if (buildStore.activeEventBuildId === buildId) buildStore.setActiveEventBuildId(null)
+  }
+}
+
+async function generateNativeProject(platform: NonIosPlatform) {
   if (!scanResult.value || singleSelectedPlatform.value !== platform || isBuildLocked.value) {
     if (isBuildLocked.value) message.warning('已有构建任务进行中，请等待完成后再生成项目')
     return
@@ -572,15 +703,13 @@ function platformProjectName(platform: Platform) {
   return '鸿蒙'
 }
 
-function generateProjectKind(platform: Platform) {
+function generateProjectKind(platform: NonIosPlatform) {
   if (platform === 'android') return 'generateAndroidProject' as const
-  if (platform === 'ios') return 'generateIosProject' as const
   return 'generateHarmonyProject' as const
 }
 
-function generateProjectCommand(platform: Platform) {
+function generateProjectCommand(platform: NonIosPlatform) {
   if (platform === 'android') return 'generate_android_project'
-  if (platform === 'ios') return 'generate_ios_project'
   return 'generate_harmony_project'
 }
 
@@ -1290,6 +1419,53 @@ function goBack() {
       </div>
     </n-card>
 
+    <n-card v-if="scanResult && selectedPlatforms.includes('ios')" title="iOS 离线 SDK 工程" class="build-section-card">
+      <n-space vertical :size="14">
+        <n-alert :type="iosMissingRequired.length ? 'warning' : 'success'">
+          <n-space vertical :size="6">
+            <n-text v-if="iosMissingRequired.length">
+              缺少 {{ iosMissingRequired.join('、') }}，补齐后才能生成 iOS 工程或 IPA。
+            </n-text>
+            <n-text v-else>iOS 基础配置已就绪，将使用 SDK 管理中配置的 HBuilder-Hello* 工程副本。</n-text>
+          </n-space>
+        </n-alert>
+        <n-grid :cols="4" :x-gap="12" :y-gap="12" responsive="screen" class="insight-grid">
+          <n-gi>
+            <div class="summary-tile">
+              <n-text depth="3">Bundle ID</n-text>
+              <n-text strong class="summary-text">{{ currentProject?.ios.bundleId || '-' }}</n-text>
+            </div>
+          </n-gi>
+          <n-gi>
+            <div class="summary-tile">
+              <n-text depth="3">Team ID</n-text>
+              <n-text strong class="summary-text">{{ currentProject?.ios.teamId || '-' }}</n-text>
+            </div>
+          </n-gi>
+          <n-gi>
+            <div class="summary-tile">
+              <n-text depth="3">iOS 图标</n-text>
+              <n-text strong class="summary-value">{{ iosIconCount }}</n-text>
+            </div>
+          </n-gi>
+          <n-gi>
+            <div class="summary-tile">
+              <n-text depth="3">隐私描述</n-text>
+              <n-text strong class="summary-value">{{ iosPrivacyDescriptionCount }}</n-text>
+            </div>
+          </n-gi>
+        </n-grid>
+        <div class="path-summary">
+          <n-text depth="3">工程来源</n-text>
+          <n-text code>SDK 管理 / DCloud iOS 离线 SDK / HBuilder-Hello*</n-text>
+          <n-text depth="3">App 资源</n-text>
+          <n-text code>Pandora/apps/{{ insightAppId }}</n-text>
+          <n-text depth="3">模块处理</n-text>
+          <n-text code>本轮未启用</n-text>
+        </div>
+      </n-space>
+    </n-card>
+
     <n-card v-if="scanResult && selectedPlatforms.includes('android')" title="Android 模块配置" class="build-section-card">
       <n-space vertical :size="14">
         <n-alert v-if="androidModuleConfigLoading" type="info">正在从 manifest 解析 Android 模块配置...</n-alert>
@@ -1486,6 +1662,13 @@ function goBack() {
 .summary-value {
   font-size: 24px;
   line-height: 1;
+}
+
+.summary-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .module-section {

@@ -80,7 +80,7 @@ const globalSdkItems = computed<GlobalSdkItem[]>(() => [
     download_url: 'https://nativesupport.dcloud.net.cn/AppDocs/download/android.html',
   },
   {
-    name: 'iOS 离线SDK',
+    name: 'iOS 离线SDK (HBuilder-Hello)',
     status: globalSdkConfig.value.dcloudIosSdkPath ? 'ok' : 'error',
     path: globalSdkConfig.value.dcloudIosSdkPath,
     platform: 'ios',
@@ -188,12 +188,6 @@ async function loadEnvReport() {
       iosItems.push(mk('Command Line Tools', 'ok', { version: report.command_line_tools.version, path: report.command_line_tools.path, tool_key: 'clt', download_url: 'https://developer.apple.com/download/more/' }))
     } else {
       iosItems.push(mk('Command Line Tools', 'warning', { tool_key: 'clt', download_url: 'https://developer.apple.com/download/more/' }))
-    }
-
-    if (report.cocoapods?.installed) {
-      iosItems.push(mk('CocoaPods', 'ok', { version: report.cocoapods.version?.replace(/^v/i,'').split('(')[0].trim(), path: report.cocoapods.path, tool_key: 'cocoapods', download_url: 'https://cocoapods.org/' }))
-    } else {
-      iosItems.push(mk('CocoaPods', 'warning', { tool_key: 'cocoapods', download_url: 'https://cocoapods.org/' }))
     }
 
     if (report.harmony?.available) {
@@ -623,7 +617,7 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
         <n-form-item label="平台">
           <n-select v-model:value="newSdkPlatform" disabled :options="[
             { label: 'Android 离线SDK', value: 'android' },
-            { label: 'iOS 离线SDK', value: 'ios' },
+            { label: 'iOS 离线SDK (HBuilder-Hello)', value: 'ios' },
             { label: 'Harmony 工程模板', value: 'harmony' }
           ]" />
         </n-form-item>

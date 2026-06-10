@@ -52,6 +52,23 @@ const compileSdkWarning = computed(() => {
   return undefined
 })
 
+const iosConfigMissingFields = computed(() => {
+  const ios = projectForm.value?.ios
+  if (!ios?.enabled) return []
+  const missing: string[] = []
+  if (!ios.dcloudAppKey?.trim()) missing.push('DCloud AppKey')
+  if (!ios.bundleId?.trim()) missing.push('Bundle ID')
+  if (!ios.teamId?.trim()) missing.push('Team ID')
+  if (!ios.provisioningProfile?.trim()) missing.push('描述文件')
+  return missing
+})
+
+const iosSigningReady = computed(() => {
+  const ios = projectForm.value?.ios
+  if (!ios?.enabled) return false
+  return !!ios.provisioningProfile?.trim() && (!!ios.certificate?.trim() ? ios.hasCertificatePassword || !!iosCertificatePassword.value : true)
+})
+
 const exportMethodOptions = [
   { label: 'App Store', value: 'app-store' },
   { label: 'Ad Hoc', value: 'ad-hoc' },
@@ -306,22 +323,67 @@ function goBuild() {
 
         <n-tab-pane name="ios" tab="iOS">
           <n-form label-placement="left" label-width="150" :disabled="isBuildLocked">
-            <n-form-item label="启用 iOS"><n-switch v-model:value="projectForm.ios.enabled" /></n-form-item>
-            <n-form-item label="DCloud AppKey">
-              <n-input v-model:value="projectForm.ios.dcloudAppKey" type="password" show-password-on="click" />
-            </n-form-item>
-            <n-grid :cols="2" :x-gap="18" :y-gap="4" responsive="screen">
-              <n-gi><n-form-item label="Bundle ID"><n-input v-model:value="projectForm.ios.bundleId" /></n-form-item></n-gi>
-              <n-gi><n-form-item label="Team ID"><n-input v-model:value="projectForm.ios.teamId" /></n-form-item></n-gi>
-              <n-gi><n-form-item label="导出方式"><n-select v-model:value="projectForm.ios.exportMethod" :options="exportMethodOptions" /></n-form-item></n-gi>
-            </n-grid>
-            <n-form-item label="描述文件">
-              <n-space class="inline-field-row"><n-input v-model:value="projectForm.ios.provisioningProfile" /><n-button :disabled="isBuildLocked" @click="chooseFile(v => projectForm!.ios.provisioningProfile = v, ['mobileprovision'])">选择</n-button></n-space>
-            </n-form-item>
-            <n-form-item label="P12 证书">
-              <n-space class="inline-field-row"><n-input v-model:value="projectForm.ios.certificate" /><n-button :disabled="isBuildLocked" @click="chooseFile(v => projectForm!.ios.certificate = v, ['p12'])">选择</n-button></n-space>
-            </n-form-item>
-            <n-form-item label="P12 密码"><n-input v-model:value="iosCertificatePassword" type="password" show-password-on="click" :placeholder="projectForm.ios.hasCertificatePassword ? '已保存，留空不变' : '请输入'" /></n-form-item>
+            <n-space vertical :size="16">
+              <n-form-item label="启用 iOS"><n-switch v-model:value="projectForm.ios.enabled" /></n-form-item>
+              <n-alert :type="!projectForm.ios.enabled ? 'default' : iosConfigMissingFields.length ? 'warning' : 'success'">
+                <n-text v-if="!projectForm.ios.enabled">iOS 未启用。</n-text>
+                <n-text v-else-if="iosConfigMissingFields.length">缺少 {{ iosConfigMissingFields.join('、') }}。</n-text>
+                <n-text v-else>iOS 基础配置已就绪。</n-text>
+              </n-alert>
+
+              <div class="form-section">
+                <n-text strong class="form-section-title">工程身份</n-text>
+                <n-grid :cols="2" :x-gap="18" :y-gap="4" responsive="screen">
+                  <n-gi>
+                    <n-form-item label="DCloud AppKey">
+                      <n-input v-model:value="projectForm.ios.dcloudAppKey" type="password" show-password-on="click" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi>
+                    <n-form-item label="Bundle ID">
+                      <n-input v-model:value="projectForm.ios.bundleId" placeholder="com.example.app" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi>
+                    <n-form-item label="Team ID">
+                      <n-input v-model:value="projectForm.ios.teamId" placeholder="Apple Developer Team ID" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi>
+                    <n-form-item label="导出方式">
+                      <n-select v-model:value="projectForm.ios.exportMethod" :options="exportMethodOptions" />
+                    </n-form-item>
+                  </n-gi>
+                </n-grid>
+              </div>
+
+              <div class="form-section">
+                <n-space align="center" justify="space-between" class="form-section-head">
+                  <n-text strong class="form-section-title">签名文件</n-text>
+                  <n-text depth="3">{{ iosSigningReady ? '签名配置可用' : '等待签名配置' }}</n-text>
+                </n-space>
+                <n-form-item label="描述文件">
+                  <n-space class="inline-field-row">
+                    <n-input v-model:value="projectForm.ios.provisioningProfile" placeholder="*.mobileprovision" />
+                    <n-button :disabled="isBuildLocked" @click="chooseFile(v => projectForm!.ios.provisioningProfile = v, ['mobileprovision'])">选择</n-button>
+                  </n-space>
+                </n-form-item>
+                <n-form-item label="P12 证书">
+                  <n-space class="inline-field-row">
+                    <n-input v-model:value="projectForm.ios.certificate" placeholder="可选，未填写时使用本机已有证书" />
+                    <n-button :disabled="isBuildLocked" @click="chooseFile(v => projectForm!.ios.certificate = v, ['p12'])">选择</n-button>
+                  </n-space>
+                </n-form-item>
+                <n-form-item label="P12 密码">
+                  <n-input
+                    v-model:value="iosCertificatePassword"
+                    type="password"
+                    show-password-on="click"
+                    :placeholder="projectForm.ios.hasCertificatePassword ? '已保存，留空不变' : '请输入'"
+                  />
+                </n-form-item>
+              </div>
+            </n-space>
           </n-form>
         </n-tab-pane>
 
@@ -373,6 +435,24 @@ function goBuild() {
 
 .inline-field-row {
   width: 100%;
+}
+
+.form-section {
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.form-section:first-of-type {
+  border-top: 0;
+}
+
+.form-section-head {
+  margin-bottom: 8px;
+}
+
+.form-section-title {
+  display: block;
+  margin-bottom: 10px;
 }
 
 .compile-sdk-control {

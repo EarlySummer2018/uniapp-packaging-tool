@@ -1,55 +1,41 @@
-//! iOS 平台环境检测
+//! iOS 环境检测。
 
 use crate::commands::shared::env::PlatformEnv;
 
-/// 检测 iOS 平台环境是否就绪（Xcode / Command Line Tools）
-async fn check_ios_platform() -> PlatformEnv {
-    let mut issues = Vec::new();
-    let xcode_path = std::process::Command::new("xcode-select")
+#[tauri::command]
+pub async fn check_ios_env() -> Result<PlatformEnv, String> {
+    let xcode_select = std::process::Command::new("xcode-select")
         .arg("-p")
         .output()
         .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|path| !path.is_empty());
 
     let xcode_version = std::process::Command::new("xcodebuild")
         .arg("-version")
         .output()
         .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| {
-            String::from_utf8_lossy(&o.stdout)
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            String::from_utf8_lossy(&output.stdout)
                 .lines()
-                .find(|l| l.contains("Xcode"))
-                .map(|s| {
-                    s.trim()
-                        .replace("Xcode ", "")
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or("")
-                        .to_string()
-                })
+                .find(|line| line.starts_with("Xcode "))
+                .map(|line| line.trim_start_matches("Xcode ").trim().to_string())
         });
 
-    match &xcode_path {
-        Some(p) if p.is_empty() => {
-            issues.push("Xcode Command Line Tools are not configured".to_string());
-        }
-        None => {
-            issues.push("Xcode is not installed".to_string());
-        }
-        _ => {}
+    let mut issues = Vec::new();
+    if xcode_select.is_none() {
+        issues.push("未配置 Xcode Command Line Tools".to_string());
+    }
+    if xcode_version.is_none() {
+        issues.push("未检测到可用的 xcodebuild".to_string());
     }
 
-    PlatformEnv {
-        available: xcode_path.is_some() && xcode_path.as_deref().unwrap_or("").is_empty() == false,
-        sdk_path: xcode_path,
-        sdk_version: xcode_version.or(Some("detected".to_string())),
+    Ok(PlatformEnv {
+        available: xcode_select.is_some() && xcode_version.is_some(),
+        sdk_path: xcode_select,
+        sdk_version: xcode_version,
         issues,
-    }
-}
-
-#[tauri::command]
-pub async fn check_ios_env() -> Result<PlatformEnv, String> {
-    Ok(check_ios_platform().await)
+    })
 }

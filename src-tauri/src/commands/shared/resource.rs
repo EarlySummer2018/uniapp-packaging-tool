@@ -95,6 +95,8 @@ pub struct UniappManifestInfo {
     #[serde(default)]
     pub splashscreen: Option<SplashscreenConfig>,
     #[serde(default)]
+    pub ios_privacy_descriptions: BTreeMap<String, String>,
+    #[serde(default)]
     pub manifest_value: Option<serde_json::Value>,
     pub manifest_path: String,
     pub project_root: String,
@@ -650,6 +652,7 @@ pub fn parse_uniapp_manifest(
     let ios_icons = find_manifest_ios_icons(manifest, project_root);
     let push_icons = find_manifest_push_icons(manifest, project_root);
     let splashscreen = find_manifest_splashscreen(manifest, project_root);
+    let ios_privacy_descriptions = find_manifest_ios_privacy_descriptions(manifest);
     let android_value = manifest
         .get("app-plus")
         .and_then(|v| v.get("distribute"))
@@ -730,6 +733,7 @@ pub fn parse_uniapp_manifest(
         ios_icons,
         push_icons,
         splashscreen,
+        ios_privacy_descriptions,
         manifest_value: Some(manifest.clone()),
         manifest_path: manifest_path.to_string_lossy().to_string(),
         project_root: project_root.to_string_lossy().to_string(),
@@ -1120,6 +1124,31 @@ fn find_manifest_ios_icons(
     Some(IosIconsConfig { ios })
 }
 
+fn find_manifest_ios_privacy_descriptions(
+    manifest: &serde_json::Value,
+) -> BTreeMap<String, String> {
+    let Some(map) = manifest
+        .get("app-plus")
+        .and_then(|v| v.get("distribute"))
+        .and_then(|v| v.get("ios"))
+        .and_then(|v| v.get("privacyDescription"))
+        .and_then(|v| v.as_object())
+    else {
+        return BTreeMap::new();
+    };
+
+    map.iter()
+        .filter_map(|(key, value)| {
+            let key = key.trim();
+            if key.is_empty() || key == "NSUserTrackingUsageDescription" {
+                return None;
+            }
+            let value = value.as_str().map(str::trim).filter(|v| !v.is_empty())?;
+            Some((key.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
 fn find_manifest_push_icons(
     manifest: &serde_json::Value,
     project_root: &Path,
@@ -1334,6 +1363,44 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn parse_manifest_reads_ios_privacy_descriptions_without_idfa() {
+        let project_root =
+            std::env::temp_dir().join(format!("unipack-ios-privacy-{}", uuid::Uuid::new_v4()));
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "ios": {
+                        "privacyDescription": {
+                            "NSCameraUsageDescription": "用于上传头像",
+                            "NSUserTrackingUsageDescription": "广告跟踪本轮不处理",
+                            "NSLocationWhenInUseUsageDescription": ""
+                        }
+                    }
+                }
+            }
+        });
+
+        let info = parse_uniapp_manifest(
+            &manifest,
+            &project_root.join("manifest.json"),
+            &project_root,
+            None,
+        );
+
+        assert_eq!(
+            info.ios_privacy_descriptions
+                .get("NSCameraUsageDescription"),
+            Some(&"用于上传头像".to_string())
+        );
+        assert!(!info
+            .ios_privacy_descriptions
+            .contains_key("NSUserTrackingUsageDescription"));
+        assert!(!info
+            .ios_privacy_descriptions
+            .contains_key("NSLocationWhenInUseUsageDescription"));
     }
 
     #[test]
