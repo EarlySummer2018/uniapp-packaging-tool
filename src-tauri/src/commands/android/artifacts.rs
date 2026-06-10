@@ -64,9 +64,12 @@ pub fn inject_huawei_agconnect_json(
         return Ok(());
     };
 
-    let Some(base64_content) = config.get("HUAWEI_AGCONNECT_JSON") else {
+    let Some(base64_content) = config
+        .get("push.HUAWEI_AGCONNECT_JSON")
+        .or_else(|| config.get("HUAWEI_AGCONNECT_JSON"))
+    else {
         // 未配置文件，检查是否启用了华为推送（有 HUAWEI_APP_ID 说明启用了）
-        if config.contains_key("HUAWEI_APP_ID") {
+        if config.contains_key("push.HUAWEI_APP_ID") || config.contains_key("HUAWEI_APP_ID") {
             emit_log(
                 window,
                 "warn",
@@ -147,8 +150,11 @@ pub(crate) fn apply_android_manifest_modules_internal(
         );
     }
 
-    let config =
-        super::manifest_modules::module_config_tree_for_android_build(modules, config_report);
+    let config = super::manifest_modules::module_config_tree_for_android_build(
+        modules,
+        config_report,
+        manifest,
+    );
 
     // 构建白名单：只在 detected_modules 中且 template key 匹配的模块名
     let enabled_module_names: Vec<String> = supported.iter().map(|m| m.name.clone()).collect();
@@ -162,19 +168,9 @@ pub(crate) fn apply_android_manifest_modules_internal(
         &enabled_module_names,
     )?;
 
+    let mut processed_modules = 0usize;
+    let mut copied_artifacts = 0usize;
     for module in supported {
-        emit_log(
-            window,
-            "info",
-            &format!("检测到 {} 模块", module.name),
-            None,
-        );
-        emit_log(
-            window,
-            "info",
-            &format!("开始打包 {} 模块", module.name),
-            None,
-        );
         let template_key = android_module_template_key(&module.name)
             .expect("supported modules are filtered by template key");
         let template = crate::commands::module::get_module_template_sync(template_key)?;
@@ -207,18 +203,7 @@ pub(crate) fn apply_android_manifest_modules_internal(
         {
             remove_conflicting_amap_sdk_aars(libs_dst, window)?;
         }
-        let has_artifacts_to_copy = !required_artifacts.is_empty() || !vendor_artifacts.is_empty();
-
-        if has_artifacts_to_copy {
-            emit_log(
-                window,
-                "info",
-                &format!("开始拷贝 {} 模块涉及的 aar 文件", module.name),
-                None,
-            );
-        }
-
-        copy_android_module_artifacts(
+        copied_artifacts += copy_android_module_artifacts(
             &module.name,
             &required_artifacts,
             sdk_libs,
@@ -227,7 +212,7 @@ pub(crate) fn apply_android_manifest_modules_internal(
         )?;
         // 复制厂商推送 SDK 的本地 AAR（仅当用户配置了对应厂商时才复制）
         if !vendor_artifacts.is_empty() {
-            copy_android_module_artifacts(
+            copied_artifacts += copy_android_module_artifacts(
                 &module.name,
                 &vendor_artifacts,
                 sdk_libs,
@@ -244,28 +229,17 @@ pub(crate) fn apply_android_manifest_modules_internal(
         for dep in gradle_dependencies {
             insert_gradle_dependency(extra_deps, dep);
         }
-
-        if has_artifacts_to_copy {
-            emit_log(
-                window,
-                "info",
-                &format!("{} 模块涉及的 aar 文件 拷贝完成", module.name),
-                None,
-            );
-        }
-        emit_log(
-            window,
-            "info",
-            &format!("开始修改 {} 模块需要的配置项", module.name),
-            None,
-        );
-        emit_log(
-            window,
-            "success",
-            &format!("{} 模块配置/打包完成", module.name),
-            None,
-        );
+        processed_modules += 1;
     }
+    emit_log(
+        window,
+        "success",
+        &format!(
+            "已完成 {} 个 Android 模块处理，复制 {} 个本地依赖",
+            processed_modules, copied_artifacts
+        ),
+        None,
+    );
     Ok(())
 }
 
@@ -279,8 +253,8 @@ fn copy_android_module_artifacts(
     sdk_libs: &Path,
     libs_dst: &Path,
     window: &tauri::Window,
-) -> Result<(), String> {
-    let mut copied_names: Vec<String> = Vec::new();
+) -> Result<usize, String> {
+    let mut copied_count = 0usize;
     for pattern in artifact_patterns {
         let Some(src) = find_android_sdk_artifact(sdk_libs, pattern) else {
             emit_log(
@@ -302,21 +276,9 @@ fn copy_android_module_artifacts(
                 e
             )
         })?;
-        copied_names.push(file_name.to_string_lossy().to_string());
+        copied_count += 1;
     }
-    if !copied_names.is_empty() {
-        emit_log(
-            window,
-            "info",
-            &format!(
-                "{} 模块已复制本地依赖: {}",
-                module_name,
-                copied_names.join(", ")
-            ),
-            None,
-        );
-    }
-    Ok(())
+    Ok(copied_count)
 }
 
 fn enabled_android_artifact_patterns(

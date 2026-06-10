@@ -3,7 +3,7 @@
 //! 将 build_android_apk 和 generate_android_project 的共享逻辑提取为可复用的步骤方法
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{Manager, Window};
 
 use crate::commands::android::artifacts::{copy_required_aars, inject_huawei_agconnect_json};
@@ -15,11 +15,11 @@ use crate::commands::android::icons::{
     apply_android_splashscreen, apply_push_small_icon, generate_icons,
 };
 use crate::commands::android::manifest_modules::{
-    apply_android_manifest_modules, copy_module_activity_sources,
+    android_module_string_resources, apply_android_manifest_modules, copy_module_activity_sources,
     emit_android_module_config_report, merged_android_module_config, validate_android_config,
 };
 use crate::commands::android::manifest_patches_render::{
-    render_android_module_manifest_patches_impl, render_dependency_excludes_impl,
+    render_android_module_manifest_patches_for_manifest_impl, render_dependency_excludes_impl,
 };
 use crate::commands::android::manifest_placeholders::render_android_module_manifest_placeholders;
 use crate::commands::android::project_mod;
@@ -30,6 +30,8 @@ use crate::commands::android::types::{
     emit_log_for_build, render_gradle_dependency_line, timestamp, AndroidBuildEnvironment,
     AndroidManifestPatches, UTS_RUNTIME_DEPS,
 };
+
+const DEFAULT_ANDROIDX_VERSION: &str = "1.0.0";
 
 /// Android 构建上下文，持有构建过程中的所有中间状态
 #[allow(dead_code)]
@@ -126,6 +128,80 @@ fn render_buildscript_dependency_line(dep: &str) -> Option<String> {
     }
 }
 
+fn google_oauth_enabled(manifest: Option<&serde_json::Value>) -> bool {
+    manifest
+        .map(|manifest| {
+            crate::commands::module::android_module_gradle_dependency_enabled_for_manifest(
+                "login",
+                "com.google.android.gms:play-services-auth:19.2.0 (Google登录)",
+                Some(manifest),
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn stripe_payment_enabled(manifest: Option<&serde_json::Value>) -> bool {
+    manifest
+        .map(|manifest| {
+            crate::commands::module::android_module_gradle_dependency_enabled_for_manifest(
+                "payment",
+                "com.stripe:stripe-android:18.2.0 (Stripe)",
+                Some(manifest),
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn payment_androidx_version(
+    config_report: Option<&crate::commands::module::AndroidModuleConfigReport>,
+    extra_deps: &BTreeSet<String>,
+) -> Option<String> {
+    report_field_value(config_report, "payment", "androidxVersion").or_else(|| {
+        extra_deps
+            .iter()
+            .any(|dependency| dependency.contains("rootProject.ext.androidxVersion"))
+            .then(|| DEFAULT_ANDROIDX_VERSION.to_string())
+    })
+}
+
+fn report_field_value(
+    config_report: Option<&crate::commands::module::AndroidModuleConfigReport>,
+    template_key: &str,
+    field_key: &str,
+) -> Option<String> {
+    config_report.and_then(|report| {
+        report
+            .modules
+            .iter()
+            .find(|module| module.template_key == template_key)
+            .and_then(|module| {
+                module
+                    .fields
+                    .iter()
+                    .find(|field| field.key == field_key)
+                    .and_then(|field| field.value.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+            })
+    })
+}
+
+fn clean_copied_gradle_outputs(workspace: &Path) -> Result<(), String> {
+    for path in [
+        workspace.join(".gradle"),
+        workspace.join("build"),
+        workspace.join(project_mod::MODULE_NAME).join(".gradle"),
+        workspace.join(project_mod::MODULE_NAME).join("build"),
+    ] {
+        if path.exists() {
+            std::fs::remove_dir_all(&path)
+                .map_err(|e| format!("清理 SDK 模板旧构建产物失败 {}: {}", path.display(), e))?;
+        }
+    }
+    Ok(())
+}
+
 impl BuildContext {
     /// Step 0: 创建构建上下文（解析参数、加载配置、准备工作区）
     pub fn new(
@@ -148,7 +224,13 @@ impl BuildContext {
             });
 
         if resolve_env {
-            emit_log_for_build(&window, &build_id, "info", "开始 Android APK 构建流程", Some(2));
+            emit_log_for_build(
+                &window,
+                &build_id,
+                "info",
+                "开始 Android APK 构建流程",
+                Some(2),
+            );
         } else {
             emit_log_for_build(
                 &window,
@@ -201,6 +283,7 @@ impl BuildContext {
         // SDK 从 zip 解压后文件可能只读，copy 会保留权限，需确保目录可写
         crate::utils::fs::ensure_writable_tree(&workspace)
             .map_err(|e| format!("设置工作区写权限失败: {}", e))?;
+        clean_copied_gradle_outputs(&workspace)?;
         emit_log_for_build(
             &window,
             &build_id,
@@ -245,7 +328,13 @@ impl BuildContext {
     pub fn inject_base_aars(&self, window: &Window) -> Result<(), String> {
         crate::utils::fs::ensure_directory(&self.libs_dst).map_err(|e| e.to_string())?;
         copy_required_aars(&self.sdk_libs, &self.libs_dst, window)?;
-        emit_log_for_build(window, &self.build_id, "success", "DCloud SDK 基础 AAR 已注入", Some(18));
+        emit_log_for_build(
+            window,
+            &self.build_id,
+            "success",
+            "DCloud SDK 基础 AAR 已注入",
+            Some(18),
+        );
         Ok(())
     }
 
@@ -308,7 +397,13 @@ impl BuildContext {
                     &self.workspace,
                 )?;
             }
-            emit_log_for_build(window, &self.build_id, "success", "UTS 插件依赖已扫描并注入", Some(26));
+            emit_log_for_build(
+                window,
+                &self.build_id,
+                "success",
+                "UTS 插件依赖已扫描并注入",
+                Some(26),
+            );
         }
         Ok(())
     }
@@ -337,8 +432,9 @@ impl BuildContext {
     /// Step 4: 渲染 Manifest 补丁 + Placeholder
     pub fn render_patches(&mut self, _window: &Window) -> Result<(), String> {
         let (mut manifest_patches, mut manifest_patch_groups) =
-            render_android_module_manifest_patches_impl(
+            render_android_module_manifest_patches_for_manifest_impl(
                 self.module_config_report.as_ref(),
+                self.manifest_value.as_ref(),
                 &self.config.android.package_name,
                 &self.scan.app_id,
             );
@@ -415,6 +511,30 @@ impl BuildContext {
             .manifest_patches
             .as_ref()
             .expect("manifest_patches must be set before apply_modifications");
+        let mut project_buildscript_dependencies = self
+            .scan
+            .uts
+            .custom_plugins
+            .iter()
+            .flat_map(|plugin| plugin.project_dependencies.iter())
+            .filter_map(|dep| render_buildscript_dependency_line(dep))
+            .collect::<BTreeSet<_>>();
+        if google_oauth_enabled(self.manifest_value.as_ref()) {
+            project_buildscript_dependencies
+                .insert("classpath 'com.google.gms:google-services:4.2.0'".to_string());
+        }
+        let mut min_sdk = self
+            .scan
+            .uts
+            .custom_plugins
+            .iter()
+            .filter_map(|plugin| plugin.min_sdk_version)
+            .max()
+            .map(|min_sdk| min_sdk.max(self.config.android.min_sdk_version))
+            .unwrap_or(self.config.android.min_sdk_version);
+        if stripe_payment_enabled(self.manifest_value.as_ref()) {
+            min_sdk = min_sdk.max(21);
+        }
 
         let modification_ctx = project_mod::BuildModificationContext {
             project_name: safe_file_name(&self.config.name),
@@ -422,19 +542,12 @@ impl BuildContext {
             appid: self.scan.app_id.clone(),
             dcloud_appkey: self.config.android.dcloud_app_key.clone(),
             app_name: self.config.app.name.clone(),
+            string_resources: android_module_string_resources(self.module_config_report.as_ref()),
             version_code: self.config.app.version_code,
             version_name: self.config.app.version.clone(),
             compile_sdk: self.config.android.compile_sdk_version,
             target_sdk: self.config.android.target_sdk_version,
-            min_sdk: self
-                .scan
-                .uts
-                .custom_plugins
-                .iter()
-                .filter_map(|plugin| plugin.min_sdk_version)
-                .max()
-                .map(|min_sdk| min_sdk.max(self.config.android.min_sdk_version))
-                .unwrap_or(self.config.android.min_sdk_version),
+            min_sdk,
             keystore_path: self.config.android.keystore.path.clone(),
             key_alias: self.config.android.keystore.alias.clone(),
             key_password,
@@ -444,20 +557,17 @@ impl BuildContext {
             } else {
                 "true".to_string()
             },
+            androidx_version: payment_androidx_version(
+                self.module_config_report.as_ref(),
+                &self.extra_deps,
+            ),
             extra_repositories: self.extra_repos.clone().into_iter().collect(),
             extra_dependencies: self
                 .extra_deps
                 .iter()
                 .map(|dep| render_gradle_dependency_line(dep))
                 .collect(),
-            project_buildscript_dependencies: self
-                .scan
-                .uts
-                .custom_plugins
-                .iter()
-                .flat_map(|plugin| plugin.project_dependencies.iter())
-                .filter_map(|dep| render_buildscript_dependency_line(dep))
-                .collect::<BTreeSet<_>>()
+            project_buildscript_dependencies: project_buildscript_dependencies
                 .into_iter()
                 .collect(),
             plugin_includes: self.plugin_includes.clone().into_iter().collect(),
@@ -533,24 +643,48 @@ impl BuildContext {
 
         let modifier = project_mod::AndroidProjectModifier::new(self.workspace.clone())?;
         modifier.apply_all_modifications(&modification_ctx)?;
-        emit_log_for_build(window, &self.build_id, "success", "已应用 Android 工程补丁", Some(38));
+        emit_log_for_build(
+            window,
+            &self.build_id,
+            "success",
+            "已应用 Android 工程补丁",
+            Some(38),
+        );
         Ok(())
     }
 
     /// Step 6: 导入资源（uniapp assets / dcloud_control / icons / splashscreen）
     pub fn import_resources(&self, window: &Window) -> Result<(), String> {
         import_uniapp_assets(&self.app_resource_dir, &self.workspace, &self.scan.app_id)?;
-        emit_log_for_build(window, &self.build_id, "success", "UniApp 资源已导入 assets/apps", Some(48));
+        emit_log_for_build(
+            window,
+            &self.build_id,
+            "success",
+            "UniApp 资源已导入 assets/apps",
+            Some(48),
+        );
 
         update_dcloud_control(&self.workspace, &self.scan.app_id)?;
-        emit_log_for_build(window, &self.build_id, "success", "dcloud_control.xml 已更新", Some(55));
+        emit_log_for_build(
+            window,
+            &self.build_id,
+            "success",
+            "dcloud_control.xml 已更新",
+            Some(55),
+        );
 
         let android_icons = self
             .manifest_info
             .as_ref()
             .and_then(|info| info.android_icons.as_ref());
         generate_icons(android_icons, &self.workspace, window)?;
-        emit_log_for_build(window, &self.build_id, "success", "Android 图标已导入", Some(64));
+        emit_log_for_build(
+            window,
+            &self.build_id,
+            "success",
+            "Android 图标已导入",
+            Some(64),
+        );
 
         let push_icons = if self.push_module_enabled() {
             self.manifest_info
@@ -567,7 +701,13 @@ impl BuildContext {
             .and_then(|info| info.splashscreen.as_ref())
             .or(self.scan.splashscreen.as_ref());
         apply_android_splashscreen(splashscreen, &self.workspace, window)?;
-        emit_log_for_build(window, &self.build_id, "success", "Android 启动图已处理", Some(66));
+        emit_log_for_build(
+            window,
+            &self.build_id,
+            "success",
+            "Android 启动图已处理",
+            Some(66),
+        );
         Ok(())
     }
 
@@ -609,7 +749,13 @@ impl BuildContext {
             .android_env
             .expect("android_env must be set for build_apk mode");
 
-        emit_log_for_build(window, &self.build_id, "info", "执行 Gradle assembleRelease", Some(70));
+        emit_log_for_build(
+            window,
+            &self.build_id,
+            "info",
+            "执行 Gradle assembleRelease",
+            Some(70),
+        );
         let app_handle = window.app_handle().clone();
         let output = crate::utils::process::run_command_streaming_with_env_tagged(
             &android_env.gradle_bin.to_string_lossy(),
@@ -743,5 +889,137 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("wx-build")
         );
+    }
+
+    #[test]
+    fn google_oauth_adds_official_project_buildscript_dependency() {
+        let google_manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "sdkConfigs": {
+                        "oauth": {
+                            "google": {}
+                        }
+                    }
+                }
+            }
+        });
+        let facebook_manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "sdkConfigs": {
+                        "oauth": {
+                            "facebook": {}
+                        }
+                    }
+                }
+            }
+        });
+
+        assert!(google_oauth_enabled(Some(&google_manifest)));
+        assert!(!google_oauth_enabled(Some(&facebook_manifest)));
+    }
+
+    #[test]
+    fn stripe_payment_requires_android_min_sdk_21() {
+        let stripe_manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "sdkConfigs": {
+                        "payment": {
+                            "stripe": {}
+                        }
+                    }
+                }
+            }
+        });
+        let alipay_manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "sdkConfigs": {
+                        "payment": {
+                            "alipay": {}
+                        }
+                    }
+                }
+            }
+        });
+
+        assert!(stripe_payment_enabled(Some(&stripe_manifest)));
+        assert!(!stripe_payment_enabled(Some(&alipay_manifest)));
+    }
+
+    #[test]
+    fn payment_androidx_version_prefers_config_report_and_falls_back_when_dependency_needs_it() {
+        let report = crate::commands::module::AndroidModuleConfigReport {
+            modules: vec![crate::commands::module::AndroidModuleConfigModule {
+                name: "Payment".to_string(),
+                template_key: "payment".to_string(),
+                category: "payment".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "test".to_string(),
+                fields: vec![
+                    crate::commands::shared::module::types::AndroidModuleConfigField {
+                        key: "androidxVersion".to_string(),
+                        label: "AndroidX 版本".to_string(),
+                        required: false,
+                        secret: false,
+                        value: Some("1.7.0".to_string()),
+                        value_source: Some("user".to_string()),
+                        placeholder: "1.0.0".to_string(),
+                        field_type: "text".to_string(),
+                    },
+                ],
+            }],
+            missing_required: Vec::new(),
+            all_configured: true,
+        };
+        let mut deps = BTreeSet::new();
+        deps.insert("androidx.appcompat:appcompat:${rootProject.ext.androidxVersion}".to_string());
+
+        assert_eq!(
+            payment_androidx_version(Some(&report), &deps).as_deref(),
+            Some("1.7.0")
+        );
+        assert_eq!(
+            payment_androidx_version(None, &deps).as_deref(),
+            Some(DEFAULT_ANDROIDX_VERSION)
+        );
+        assert_eq!(payment_androidx_version(None, &BTreeSet::new()), None);
+    }
+
+    #[test]
+    fn copied_gradle_outputs_are_removed_without_touching_sources() {
+        let workspace =
+            std::env::temp_dir().join(format!("unipack-android-clean-{}", uuid::Uuid::new_v4()));
+        let source_dir = workspace.join(project_mod::MODULE_NAME).join("src/main");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("AndroidManifest.xml"), "<manifest />").unwrap();
+
+        for stale_dir in [
+            workspace.join(".gradle"),
+            workspace.join("build"),
+            workspace.join(project_mod::MODULE_NAME).join(".gradle"),
+            workspace.join(project_mod::MODULE_NAME).join("build"),
+        ] {
+            std::fs::create_dir_all(&stale_dir).unwrap();
+            std::fs::write(stale_dir.join("stale.bin"), "old").unwrap();
+        }
+
+        clean_copied_gradle_outputs(&workspace).unwrap();
+
+        assert!(source_dir.join("AndroidManifest.xml").is_file());
+        assert!(!workspace.join(".gradle").exists());
+        assert!(!workspace.join("build").exists());
+        assert!(!workspace
+            .join(project_mod::MODULE_NAME)
+            .join(".gradle")
+            .exists());
+        assert!(!workspace
+            .join(project_mod::MODULE_NAME)
+            .join("build")
+            .exists());
+
+        let _ = std::fs::remove_dir_all(workspace);
     }
 }

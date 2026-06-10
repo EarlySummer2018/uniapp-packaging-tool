@@ -437,50 +437,53 @@ pub fn emit_android_module_config_report(
         return;
     }
 
+    let mut configured_fields = 0usize;
+    let mut total_fields = 0usize;
+    let mut missing_optional = Vec::new();
+    let mut missing_required = Vec::new();
+    for module in &configurable_modules {
+        total_fields += module.fields.len();
+        for field in &module.fields {
+            let configured = field
+                .value
+                .as_deref()
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+            if configured {
+                configured_fields += 1;
+            } else if field.required {
+                missing_required.push(format!("{} / {}", module.name, field.label));
+            } else {
+                missing_optional.push(format!("{} / {}", module.name, field.label));
+            }
+        }
+    }
     emit_log(
         window,
         "info",
         &format!(
-            "Android 模块配置清单: {} 个模块需要配置项",
-            configurable_modules.len()
+            "Android 模块配置已校验: {} 个模块，{}/{} 项已填写",
+            configurable_modules.len(),
+            configured_fields,
+            total_fields
         ),
         None,
     );
-    for module in configurable_modules {
+    for item in missing_required {
+        emit_log(
+            window,
+            "warn",
+            &format!("缺失 Android 必填配置: {}", item),
+            None,
+        );
+    }
+    if !missing_optional.is_empty() {
         emit_log(
             window,
             "info",
-            &format!("模块 {} 需要配置 {} 项", module.name, module.fields.len()),
+            &format!("未填写可选配置: {}", missing_optional.join("、")),
             None,
         );
-        for field in &module.fields {
-            let status = if field
-                .value
-                .as_deref()
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false)
-            {
-                match field.value_source.as_deref() {
-                    Some("manifest") => "已从 manifest 读取",
-                    Some("user") => "已在构建中心填写",
-                    _ => "已填写",
-                }
-            } else if field.required {
-                "缺失必填"
-            } else {
-                "未填写可选"
-            };
-            emit_log(
-                window,
-                if field.required && status == "缺失必填" {
-                    "warn"
-                } else {
-                    "info"
-                },
-                &format!("  - {} ({})", field.label, status),
-                None,
-            );
-        }
     }
 }
 
@@ -488,6 +491,7 @@ pub fn emit_android_module_config_report(
 pub fn module_config_tree_for_android_build(
     modules: &[crate::commands::resource::DetectedModule],
     report: Option<&crate::commands::module::AndroidModuleConfigReport>,
+    manifest: Option<&serde_json::Value>,
 ) -> crate::commands::module::ModuleConfigTree {
     let mut tree = crate::commands::module::module_config_from_detected_modules(modules);
     let Some(report) = report else {
@@ -538,8 +542,13 @@ pub fn module_config_tree_for_android_build(
 
     if let Some(ref mut login) = tree.login {
         let mut providers = Vec::new();
-        if let Some(wx_appid) = report_value(report, "login", "WX_APPID") {
-            let mut config = HashMap::from([("WX_APPID".to_string(), wx_appid)]);
+        if login_provider_enabled_for_manifest(manifest, "微信登录")
+            || report_value(report, "login", "WX_APPID").is_some()
+        {
+            let mut config = HashMap::new();
+            if let Some(wx_appid) = report_value(report, "login", "WX_APPID") {
+                config.insert("WX_APPID".to_string(), wx_appid);
+            }
             if let Some(secret) = report_value(report, "login", "WX_SECRET") {
                 config.insert("WX_SECRET".to_string(), secret);
             }
@@ -549,18 +558,82 @@ pub fn module_config_tree_for_android_build(
                 config,
             });
         }
-        if let Some(qq_appid) = report_value(report, "login", "QQ_APPID") {
+        if login_provider_enabled_for_manifest(manifest, "QQ登录")
+            || report_value(report, "login", "QQ_APPID").is_some()
+        {
+            let mut config = HashMap::new();
+            if let Some(qq_appid) = report_value(report, "login", "QQ_APPID") {
+                config.insert("QQ_APPID".to_string(), qq_appid);
+            }
             providers.push(crate::commands::module::LoginProvider {
                 name: "qq".to_string(),
                 enabled: true,
-                config: HashMap::from([("QQ_APPID".to_string(), qq_appid)]),
+                config,
             });
         }
-        if let Some(gy_appid) = report_value(report, "login", "GY_APP_ID") {
+        if login_provider_enabled_for_manifest(manifest, "一键登录")
+            || report_value(report, "login", "GY_APP_ID").is_some()
+        {
+            let mut config = HashMap::new();
+            if let Some(gy_appid) = report_value(report, "login", "GY_APP_ID") {
+                config.insert("GY_APP_ID".to_string(), gy_appid);
+            }
             providers.push(crate::commands::module::LoginProvider {
                 name: "univerify".to_string(),
                 enabled: true,
-                config: HashMap::from([("GY_APP_ID".to_string(), gy_appid)]),
+                config,
+            });
+        }
+        if login_provider_enabled_for_manifest(manifest, "微博登录")
+            || report_value(report, "login", "SINA_APPKEY").is_some()
+        {
+            let mut config = HashMap::new();
+            for key in ["SINA_APPKEY", "SINA_REDIRECT_URI"] {
+                if let Some(value) = report_value(report, "login", key) {
+                    config.insert(key.to_string(), value);
+                }
+            }
+            providers.push(crate::commands::module::LoginProvider {
+                name: "sina".to_string(),
+                enabled: true,
+                config,
+            });
+        }
+        if login_provider_enabled_for_manifest(manifest, "小米登录")
+            || report_value(report, "login", "MIUI_APPID").is_some()
+        {
+            let mut config = HashMap::new();
+            for key in ["MIUI_APPID", "MIUI_APPSECRET", "MIUI_REDIRECT_URI"] {
+                if let Some(value) = report_value(report, "login", key) {
+                    config.insert(key.to_string(), value);
+                }
+            }
+            providers.push(crate::commands::module::LoginProvider {
+                name: "miui".to_string(),
+                enabled: true,
+                config,
+            });
+        }
+        if login_provider_enabled_for_manifest(manifest, "Google登录") {
+            providers.push(crate::commands::module::LoginProvider {
+                name: "google".to_string(),
+                enabled: true,
+                config: HashMap::new(),
+            });
+        }
+        if login_provider_enabled_for_manifest(manifest, "Facebook登录")
+            || report_value(report, "login", "FACEBOOK_APP_ID").is_some()
+        {
+            let mut config = HashMap::new();
+            for key in ["FACEBOOK_APP_ID", "FACEBOOK_CLIENT_TOKEN"] {
+                if let Some(value) = report_value(report, "login", key) {
+                    config.insert(key.to_string(), value);
+                }
+            }
+            providers.push(crate::commands::module::LoginProvider {
+                name: "facebook".to_string(),
+                enabled: true,
+                config,
             });
         }
         if !providers.is_empty() {
@@ -569,8 +642,26 @@ pub fn module_config_tree_for_android_build(
     }
 
     if let Some(ref mut payment) = tree.payment {
+        if manifest.is_some() {
+            payment.alipay =
+                payment_provider_enabled_for_manifest(manifest, "支付宝").then(HashMap::new);
+            payment.weixin =
+                payment_provider_enabled_for_manifest(manifest, "微信支付").then(HashMap::new);
+            payment.paypal =
+                payment_provider_enabled_for_manifest(manifest, "PayPal").then(HashMap::new);
+            payment.stripe =
+                payment_provider_enabled_for_manifest(manifest, "Stripe").then(HashMap::new);
+            payment.google =
+                payment_provider_enabled_for_manifest(manifest, "Google Pay").then(HashMap::new);
+        }
         if let Some(wx_appid) = report_value(report, "payment", "WX_APPID") {
             payment.weixin = Some(HashMap::from([("WX_APPID".to_string(), wx_appid)]));
+        }
+        if let Some(return_scheme) = report_value(report, "payment", "PAYPAL_RETURN_SCHEME") {
+            payment.paypal = Some(HashMap::from([(
+                "PAYPAL_RETURN_SCHEME".to_string(),
+                return_scheme,
+            )]));
         }
     }
 
@@ -611,6 +702,59 @@ pub fn module_config_tree_for_android_build(
     tree
 }
 
+fn login_provider_enabled_for_manifest(
+    manifest: Option<&serde_json::Value>,
+    provider_note: &str,
+) -> bool {
+    manifest
+        .map(|manifest| {
+            crate::commands::module::android_module_artifact_enabled_for_manifest(
+                "login",
+                &format!("oauth-provider.aar ({})", provider_note),
+                Some(manifest),
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn payment_provider_enabled_for_manifest(
+    manifest: Option<&serde_json::Value>,
+    provider_note: &str,
+) -> bool {
+    manifest
+        .map(|manifest| {
+            crate::commands::module::android_module_artifact_enabled_for_manifest(
+                "payment",
+                &format!("payment-provider.aar ({})", provider_note),
+                Some(manifest),
+            )
+        })
+        .unwrap_or(false)
+}
+
+pub fn android_module_string_resources(
+    report: Option<&crate::commands::module::AndroidModuleConfigReport>,
+) -> Vec<(String, String)> {
+    let Some(report) = report else {
+        return Vec::new();
+    };
+    let Some(app_id) = report_value(report, "login", "FACEBOOK_APP_ID") else {
+        return Vec::new();
+    };
+
+    let mut resources = vec![
+        ("facebook_app_id".to_string(), app_id.clone()),
+        (
+            "fb_login_protocol_scheme".to_string(),
+            format!("fb{}", app_id),
+        ),
+    ];
+    if let Some(client_token) = report_value(report, "login", "FACEBOOK_CLIENT_TOKEN") {
+        resources.push(("facebook_client_token".to_string(), client_token));
+    }
+    resources
+}
+
 fn report_value(
     report: &crate::commands::module::AndroidModuleConfigReport,
     template_key: &str,
@@ -624,4 +768,188 @@ fn report_value(
         .and_then(|field| field.value.clone())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod oauth_config_tests {
+    use super::*;
+    use crate::commands::shared::module::types::{
+        AndroidModuleConfigField, AndroidModuleConfigModule, AndroidModuleConfigReport,
+    };
+
+    fn field(key: &str, value: &str) -> AndroidModuleConfigField {
+        AndroidModuleConfigField {
+            key: key.to_string(),
+            value: Some(value.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn oauth_report() -> AndroidModuleConfigReport {
+        AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "OAuth".to_string(),
+                template_key: "login".to_string(),
+                category: "oauth".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: vec![
+                    field("WX_APPID", "wx-id"),
+                    field("WX_SECRET", "wx-secret"),
+                    field("QQ_APPID", "qq-id"),
+                    field("GY_APP_ID", "gy-id"),
+                    field("SINA_APPKEY", "sina-key"),
+                    field("SINA_REDIRECT_URI", "https://example.com/sina"),
+                    field("MIUI_APPID", "miui-id"),
+                    field("MIUI_APPSECRET", "miui-secret"),
+                    field("MIUI_REDIRECT_URI", "https://example.com/miui"),
+                    field("FACEBOOK_APP_ID", "facebook-id"),
+                    field("FACEBOOK_CLIENT_TOKEN", "facebook-token"),
+                ],
+            }],
+            all_configured: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn all_selected_oauth_providers_are_kept_for_dcloud_properties() {
+        let modules = vec![crate::commands::resource::DetectedModule {
+            name: "OAuth".to_string(),
+            category: "oauth".to_string(),
+            platforms: vec!["android".to_string()],
+            configured: true,
+            required_keys: vec![],
+            source: "manifest.json".to_string(),
+        }];
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "sdkConfigs": {
+                        "oauth": {
+                            "weixin": {},
+                            "qq": {},
+                            "univerify": {},
+                            "sinaweibo": {},
+                            "miui": {},
+                            "google": {},
+                            "facebook": {}
+                        }
+                    }
+                }
+            }
+        });
+        let report = oauth_report();
+
+        let tree = module_config_tree_for_android_build(&modules, Some(&report), Some(&manifest));
+        let provider_names = tree
+            .login
+            .expect("login config")
+            .providers
+            .into_iter()
+            .map(|provider| provider.name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            provider_names,
+            vec![
+                "weixin",
+                "qq",
+                "univerify",
+                "sina",
+                "miui",
+                "google",
+                "facebook"
+            ]
+        );
+    }
+
+    #[test]
+    fn facebook_login_generates_official_string_resources() {
+        let report = oauth_report();
+
+        assert_eq!(
+            android_module_string_resources(Some(&report)),
+            vec![
+                ("facebook_app_id".to_string(), "facebook-id".to_string()),
+                (
+                    "fb_login_protocol_scheme".to_string(),
+                    "fbfacebook-id".to_string()
+                ),
+                (
+                    "facebook_client_token".to_string(),
+                    "facebook-token".to_string()
+                ),
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod payment_config_tests {
+    use super::*;
+    use crate::commands::shared::module::types::{
+        AndroidModuleConfigField, AndroidModuleConfigModule, AndroidModuleConfigReport,
+    };
+
+    #[test]
+    fn all_selected_payment_providers_are_kept_for_dcloud_properties() {
+        let modules = vec![crate::commands::resource::DetectedModule {
+            name: "Payment".to_string(),
+            category: "payment".to_string(),
+            platforms: vec!["android".to_string()],
+            configured: true,
+            required_keys: vec![],
+            source: "manifest.json".to_string(),
+        }];
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "sdkConfigs": {
+                        "payment": {
+                            "alipay": {},
+                            "weixin": {},
+                            "paypal": {},
+                            "stripe": {},
+                            "googlepay": {}
+                        }
+                    }
+                }
+            }
+        });
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "Payment".to_string(),
+                template_key: "payment".to_string(),
+                category: "payment".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: vec![
+                    AndroidModuleConfigField {
+                        key: "WX_APPID".to_string(),
+                        value: Some("wx-pay".to_string()),
+                        ..Default::default()
+                    },
+                    AndroidModuleConfigField {
+                        key: "PAYPAL_RETURN_SCHEME".to_string(),
+                        value: Some("paypal-demo".to_string()),
+                        ..Default::default()
+                    },
+                ],
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let payment =
+            module_config_tree_for_android_build(&modules, Some(&report), Some(&manifest))
+                .payment
+                .expect("payment config");
+
+        assert!(payment.alipay.is_some());
+        assert!(payment.weixin.is_some());
+        assert!(payment.paypal.is_some());
+        assert!(payment.stripe.is_some());
+        assert!(payment.google.is_some());
+    }
 }

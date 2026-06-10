@@ -13,6 +13,16 @@ use crate::commands::shared::module::types::{
 
 const DEFAULT_AMAP_MAP_SDK_VERSION: &str = "10.0.700_loc6.4.5_sea9.7.2";
 const DEFAULT_TENCENT_LOCATION_SDK_VERSION: &str = "7.5.4.8";
+const DEFAULT_ANDROIDX_VERSION: &str = "1.0.0";
+const MAVEN_CENTRAL_MIRROR_REPOSITORY: &str =
+    "maven { url 'https://maven.aliyun.com/repository/public' }";
+const PAYPAL_MAVEN_REPOSITORY: &str = r#"maven {
+    url "https://cardinalcommerceprod.jfrog.io/artifactory/android"
+    credentials {
+        username 'paypal_sgerritz'
+        password 'YOUR_JFROG_PASSWORD_HERE'
+    }
+}"#;
 
 // parse_project_modules 与 module_config_from_detected_modules 已移至 parsing.rs
 
@@ -63,24 +73,34 @@ pub fn android_module_config_report_from_value(
             let (value, value_source) = if template_key == "map" && spec.key == "MAP_PAGE_TYPE" {
                 android_map_page_type_field_value(manifest, user_config, spec)
             } else if template_key == "map" && spec.key == "AMAP_SDK_VERSION" {
-                android_user_defaulted_field_value(user_config, spec, DEFAULT_AMAP_MAP_SDK_VERSION)
+                android_user_defaulted_field_value(
+                    user_config,
+                    template_key,
+                    spec,
+                    DEFAULT_AMAP_MAP_SDK_VERSION,
+                )
             } else if template_key == "geolocation" && spec.key == "TENCENT_LOCATION_SDK_VERSION" {
                 android_user_defaulted_field_value(
                     user_config,
+                    template_key,
                     spec,
                     DEFAULT_TENCENT_LOCATION_SDK_VERSION,
                 )
+            } else if template_key == "payment" && spec.key == "androidxVersion" {
+                android_user_defaulted_field_value(
+                    user_config,
+                    template_key,
+                    spec,
+                    DEFAULT_ANDROIDX_VERSION,
+                )
             } else {
-                let user_value = user_config
-                    .and_then(|config| config.get(spec.key))
-                    .map(|value| value.trim())
-                    .filter(|value| !value.is_empty());
+                let user_value = user_config_field_value(user_config, template_key, spec);
                 let manifest_value =
                     manifest.and_then(|value| find_manifest_config_value(value, spec));
                 if let Some(value) = manifest_value {
                     (Some(value), Some("manifest".to_string()))
                 } else if let Some(value) = user_value {
-                    (Some(value.to_string()), Some("user".to_string()))
+                    (Some(value), Some("user".to_string()))
                 } else {
                     (None, None)
                 }
@@ -269,6 +289,17 @@ fn android_field_visible_for_manifest(
                 &["payment", "pay", "payments"],
                 &["paypal"],
             ),
+            "androidxVersion" => {
+                manifest_has_enabled_provider(
+                    manifest,
+                    &["payment", "pay", "payments"],
+                    &["stripe"],
+                ) || manifest_has_enabled_provider(
+                    manifest,
+                    &["payment", "pay", "payments"],
+                    &["google", "googlepay", "google_pay"],
+                )
+            }
             _ => true,
         },
         "speech" => match spec.key {
@@ -346,11 +377,7 @@ fn android_map_page_type_field_value(
         .and_then(android_map_provider_for_manifest)
         .unwrap_or("amap");
     let default_value = android_default_map_page_type(provider);
-    let user_value = user_config
-        .and_then(|config| config.get(spec.key))
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
+    let user_value = user_config_field_value(user_config, "map", spec);
     let manifest_value = manifest.and_then(|value| find_manifest_config_value(value, spec));
 
     if let Some(value) = manifest_value {
@@ -375,19 +402,41 @@ fn android_map_page_type_field_value(
 
 fn android_user_defaulted_field_value(
     user_config: Option<&HashMap<String, String>>,
+    template_key: &str,
     spec: &AndroidConfigFieldSpec,
     default_value: &str,
 ) -> (Option<String>, Option<String>) {
-    let user_value = user_config
-        .and_then(|config| config.get(spec.key))
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
+    let user_value = user_config_field_value(user_config, template_key, spec);
     if let Some(value) = user_value {
         return (Some(value), Some("user".to_string()));
     }
 
     (Some(default_value.to_string()), Some("default".to_string()))
+}
+
+fn user_config_field_value(
+    user_config: Option<&HashMap<String, String>>,
+    template_key: &str,
+    spec: &AndroidConfigFieldSpec,
+) -> Option<String> {
+    let config = user_config?;
+    let scoped_key = if template_key.is_empty() {
+        None
+    } else {
+        Some(format!("{}.{}", template_key, spec.key))
+    };
+
+    scoped_key
+        .as_deref()
+        .into_iter()
+        .chain(std::iter::once(spec.key))
+        .find_map(|key| {
+            config
+                .get(key)
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
 }
 
 fn android_default_map_page_type(provider: &str) -> &'static str {
@@ -448,16 +497,31 @@ pub fn android_module_gradle_repositories_for_manifest(
 ) -> Vec<&'static str> {
     let Some(manifest) = manifest else {
         return match template_key {
+            "login" => {
+                vec!["maven { url 'https://mvn.getui.com/nexus/content/repositories/releases' }"]
+            }
             "push" => vec![
                 "maven { url 'https://mvn.getui.com/nexus/content/repositories/releases' }",
                 "maven { url 'https://developer.huawei.com/repo/' }",
                 "maven { url 'https://developer.hihonor.com/repo/' }",
             ],
+            "payment" => vec![MAVEN_CENTRAL_MIRROR_REPOSITORY, PAYPAL_MAVEN_REPOSITORY],
             _ => Vec::new(),
         };
     };
 
     match template_key {
+        "login" => {
+            if manifest_has_enabled_provider(
+                manifest,
+                &["oauth", "login", "oauths"],
+                &["univerify", "igetui", "getui"],
+            ) {
+                vec!["maven { url 'https://mvn.getui.com/nexus/content/repositories/releases' }"]
+            } else {
+                Vec::new()
+            }
+        }
         "push" => {
             let mut repos =
                 vec!["maven { url 'https://mvn.getui.com/nexus/content/repositories/releases' }"];
@@ -466,6 +530,21 @@ pub fn android_module_gradle_repositories_for_manifest(
             }
             if push_provider_enabled(manifest, &["honor"]) {
                 repos.push("maven { url 'https://developer.hihonor.com/repo/' }");
+            }
+            repos
+        }
+        "payment" => {
+            let mut repos = Vec::new();
+            if manifest_has_enabled_provider(
+                manifest,
+                &["payment", "pay", "payments"],
+                &["paypal", "stripe", "google", "googlepay", "google_pay"],
+            ) {
+                repos.push(MAVEN_CENTRAL_MIRROR_REPOSITORY);
+            }
+            if manifest_has_enabled_provider(manifest, &["payment", "pay", "payments"], &["paypal"])
+            {
+                repos.push(PAYPAL_MAVEN_REPOSITORY);
             }
             repos
         }
@@ -487,6 +566,21 @@ fn android_module_entry_enabled_for_manifest(
         && android_amap_map_enabled(Some(manifest))
     {
         return false;
+    }
+    if template_key == "statistic"
+        && android_entry_mentions_any(&note, &["google play", "googleplay", "umeng gp"])
+    {
+        return manifest_has_enabled_provider(
+            manifest,
+            &["statistic", "statistics", "statics"],
+            &[
+                "umeng-gp",
+                "umeng_gp",
+                "umenggp",
+                "umeng-google-play",
+                "umengGooglePlay",
+            ],
+        );
     }
 
     match template_key {
@@ -848,6 +942,11 @@ fn android_field_required_for_manifest(
                 &["payment", "pay", "payments"],
                 &["weixin", "wechat", "wx"],
             ),
+            "PAYPAL_RETURN_SCHEME" => manifest_has_enabled_provider(
+                manifest,
+                &["payment", "pay", "payments"],
+                &["paypal"],
+            ),
             _ => spec.required,
         },
         "statistic" => match spec.key {
@@ -902,6 +1001,12 @@ fn android_optional_field_required_for_manifest(
             matches!(
                 spec.key,
                 "BAIDU_MAP_AK" | "AMAP_KEY" | "GOOGLE_MAPS_API_KEY" | "TENCENT_MAP_KEY"
+            ) && android_field_visible_for_manifest(template_key, spec, Some(manifest))
+        }
+        "share" => {
+            matches!(
+                spec.key,
+                "SINA_APPKEY" | "SINA_SECRET" | "SINA_REDIRECT_URI"
             ) && android_field_visible_for_manifest(template_key, spec, Some(manifest))
         }
         _ => false,

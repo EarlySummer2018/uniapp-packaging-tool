@@ -29,6 +29,18 @@ pub fn render_android_module_manifest_patches_impl(
     AndroidManifestPatches,
     Vec<crate::commands::android::project_mod::ManifestPatchGroup>,
 ) {
+    render_android_module_manifest_patches_for_manifest_impl(report, None, package_name, app_id)
+}
+
+pub fn render_android_module_manifest_patches_for_manifest_impl(
+    report: Option<&crate::commands::module::AndroidModuleConfigReport>,
+    manifest: Option<&serde_json::Value>,
+    package_name: &str,
+    app_id: &str,
+) -> (
+    AndroidManifestPatches,
+    Vec<crate::commands::android::project_mod::ManifestPatchGroup>,
+) {
     use crate::commands::android::types::{
         indent_manifest_fragment, prefix_if_nonempty, AndroidManifestPatches,
     };
@@ -215,10 +227,21 @@ pub fn render_android_module_manifest_patches_impl(
                     mod_entries.extend(qq_share_entries.iter().cloned());
                 }
                 if has_report_value(module, "SINA_APPKEY") {
+                    add_permissions(
+                        &mut permissions,
+                        &[
+                            "android.permission.ACCESS_WIFI_STATE",
+                            "android.permission.ACCESS_NETWORK_STATE",
+                        ],
+                    );
+                    mod_perms.extend([
+                        "android.permission.ACCESS_WIFI_STATE".to_string(),
+                        "android.permission.ACCESS_NETWORK_STATE".to_string(),
+                    ]);
                     let sina_share_entries = [
                         meta_data(
                             "SINA_APPKEY",
-                            &placeholder_value(&placeholders, "SINA_APPKEY"),
+                            &format!("_{}", placeholder_value(&placeholders, "SINA_APPKEY")),
                         ),
                         meta_data(
                             "SINA_SECRET",
@@ -232,7 +255,12 @@ pub fn render_android_module_manifest_patches_impl(
                             r#"<activity android:name="com.sina.weibo.sdk.web.WeiboSdkWebActivity" android:configChanges="keyboardHidden|orientation" android:exported="false" android:windowSoftInputMode="adjustResize" />"#,
                         ),
                         service_entry(
-                            r#"<activity android:name="com.sina.weibo.sdk.share.WbShareTransActivity" android:launchMode="singleTask" android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen" />"#,
+                            r#"<activity android:name="com.sina.weibo.sdk.share.WbShareTransActivity" android:exported="true" android:launchMode="singleTask" android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen">
+    <intent-filter>
+        <action android:name="com.sina.weibo.sdk.action.ACTION_SDK_REQ_ACTIVITY" />
+        <category android:name="android.intent.category.DEFAULT" />
+    </intent-filter>
+</activity>"#,
                         ),
                     ];
                     add_application_entries(&mut application_entries, &sina_share_entries);
@@ -242,15 +270,9 @@ pub fn render_android_module_manifest_patches_impl(
             "login" => {
                 add_permissions(
                     &mut permissions,
-                    &[
-                        "android.permission.MODIFY_AUDIO_SETTINGS",
-                        "com.xiaomi.permission.AUTH_SERVICE",
-                    ],
+                    &["android.permission.MODIFY_AUDIO_SETTINGS"],
                 );
-                mod_perms.extend([
-                    "android.permission.MODIFY_AUDIO_SETTINGS".to_string(),
-                    "com.xiaomi.permission.AUTH_SERVICE".to_string(),
-                ]);
+                mod_perms.push("android.permission.MODIFY_AUDIO_SETTINGS".to_string());
                 if has_report_value(module, "WX_APPID") {
                     let wx_appid = placeholder_value(&placeholders, "WX_APPID");
                     let wx_login_entries = [
@@ -284,7 +306,7 @@ pub fn render_android_module_manifest_patches_impl(
                     let sina_login_entries = [
                         meta_data(
                             "SINA_APPKEY",
-                            &placeholder_value(&placeholders, "SINA_APPKEY"),
+                            &format!("_{}", placeholder_value(&placeholders, "SINA_APPKEY")),
                         ),
                         meta_data(
                             "SINA_REDIRECT_URI",
@@ -298,10 +320,12 @@ pub fn render_android_module_manifest_patches_impl(
                     mod_entries.extend(sina_login_entries.iter().cloned());
                 }
                 if has_report_value(module, "MIUI_APPID") {
+                    add_permissions(&mut permissions, &["com.xiaomi.permission.AUTH_SERVICE"]);
+                    mod_perms.push("com.xiaomi.permission.AUTH_SERVICE".to_string());
                     let miui_entries = [
                         meta_data(
                             "MIUI_APPID",
-                            &placeholder_value(&placeholders, "MIUI_APPID"),
+                            &format!("_{}", placeholder_value(&placeholders, "MIUI_APPID")),
                         ),
                         meta_data(
                             "MIUI_APPSECRET",
@@ -381,32 +405,46 @@ pub fn render_android_module_manifest_patches_impl(
                 }
             }
             "payment" => {
-                add_permissions(
-                    &mut permissions,
-                    &[
+                let alipay_enabled = payment_provider_enabled_for_manifest(manifest, "支付宝");
+                let weixin_enabled = payment_provider_enabled_for_manifest(manifest, "微信支付");
+                let paypal_enabled = payment_provider_enabled_for_manifest(manifest, "PayPal");
+                let stripe_enabled = payment_provider_enabled_for_manifest(manifest, "Stripe");
+                let google_enabled = payment_provider_enabled_for_manifest(manifest, "Google Pay");
+
+                if alipay_enabled {
+                    let alipay_permissions = [
                         "android.permission.INTERNET",
                         "android.permission.ACCESS_NETWORK_STATE",
                         "android.permission.ACCESS_WIFI_STATE",
                         "android.permission.READ_PHONE_STATE",
                         "android.permission.WRITE_EXTERNAL_STORAGE",
                         "android.permission.ACCESS_COARSE_LOCATION",
-                        "android.permission.MODIFY_AUDIO_SETTINGS",
-                    ],
-                );
-                mod_perms.extend([
-                    "android.permission.INTERNET".to_string(),
-                    "android.permission.ACCESS_NETWORK_STATE".to_string(),
-                    "android.permission.ACCESS_WIFI_STATE".to_string(),
-                    "android.permission.READ_PHONE_STATE".to_string(),
-                    "android.permission.WRITE_EXTERNAL_STORAGE".to_string(),
-                    "android.permission.ACCESS_COARSE_LOCATION".to_string(),
-                    "android.permission.MODIFY_AUDIO_SETTINGS".to_string(),
-                ]);
-                if has_report_value(module, "WX_APPID") {
+                    ];
+                    add_permissions(&mut permissions, &alipay_permissions);
+                    mod_perms.extend(alipay_permissions.into_iter().map(ToString::to_string));
+                }
+                if weixin_enabled {
+                    add_permissions(
+                        &mut permissions,
+                        &["android.permission.MODIFY_AUDIO_SETTINGS"],
+                    );
+                    mod_perms.push("android.permission.MODIFY_AUDIO_SETTINGS".to_string());
+                }
+                if paypal_enabled {
+                    add_permissions(&mut permissions, &["android.permission.INTERNET"]);
+                    if !mod_perms
+                        .iter()
+                        .any(|permission| permission == "android.permission.INTERNET")
+                    {
+                        mod_perms.push("android.permission.INTERNET".to_string());
+                    }
+                }
+
+                if weixin_enabled && has_report_value(module, "WX_APPID") {
                     let wx_pay_entries = [
                         meta_data("WX_APPID", &placeholder_value(&placeholders, "WX_APPID")),
                         service_entry(
-                            r#"<activity android:name="io.dcloud.feature.payment.weixin.WXPayProcessMeadiatorActivity" android:exported="false" android:excludeFromRecents="true" android:theme="@style/TranslucentTheme" />"#,
+                            r#"<activity android:name="io.dcloud.feature.payment.weixin.WXPayProcessMeadiatorActivity" android:exported="false" android:excludeFromRecents="true" android:theme="@style/ProjectDialogTheme" />"#,
                         ),
                         service_entry(&format!(
                             r#"<activity android:name="{}.wxapi.WXPayEntryActivity" android:exported="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:launchMode="singleTop" />"#,
@@ -415,6 +453,51 @@ pub fn render_android_module_manifest_patches_impl(
                     ];
                     add_application_entries(&mut application_entries, &wx_pay_entries);
                     mod_entries.extend(wx_pay_entries.iter().cloned());
+                }
+                if paypal_enabled && has_report_value(module, "PAYPAL_RETURN_SCHEME") {
+                    let scheme = placeholder_value(&placeholders, "PAYPAL_RETURN_SCHEME");
+                    let paypal_entries = [
+                        service_entry(&format!(
+                            r#"<activity android:name="com.paypal.openid.RedirectUriReceiverActivity" android:excludeFromRecents="true" android:exported="true" android:theme="@style/PYPLAppTheme">
+    <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:host="paypalpay" android:scheme="{}" />
+    </intent-filter>
+</activity>"#,
+                            scheme
+                        )),
+                        service_entry(&format!(
+                            r#"<activity android:name="com.paypal.pyplcheckout.home.view.activities.PYPLInitiateCheckoutActivity" android:exported="true" android:theme="@style/AppFullScreenTheme">
+    <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:host="paypalxo" android:scheme="{}" />
+    </intent-filter>
+</activity>"#,
+                            scheme
+                        )),
+                        meta_data("returnUrl", &format!("{}://paypalpay", scheme)),
+                    ];
+                    add_application_entries(&mut application_entries, &paypal_entries);
+                    mod_entries.extend(paypal_entries.iter().cloned());
+                }
+                if stripe_enabled {
+                    let stripe_entries = [service_entry(
+                        r#"<activity android:name="io.dcloud.feature.payment.stripe.TransparentActivity" android:excludeFromRecents="true" android:exported="false" android:theme="@style/TranslucentTheme" />"#,
+                    )];
+                    add_application_entries(&mut application_entries, &stripe_entries);
+                    mod_entries.extend(stripe_entries.iter().cloned());
+                }
+                if google_enabled {
+                    let google_entries = [meta_data(
+                        "com.google.android.gms.wallet.api.enabled",
+                        "true",
+                    )];
+                    add_application_entries(&mut application_entries, &google_entries);
+                    mod_entries.extend(google_entries.iter().cloned());
                 }
             }
             "speech" => {
@@ -726,6 +809,21 @@ fn has_report_value(
         .unwrap_or(false)
 }
 
+fn payment_provider_enabled_for_manifest(
+    manifest: Option<&serde_json::Value>,
+    provider_note: &str,
+) -> bool {
+    manifest
+        .map(|manifest| {
+            crate::commands::module::android_module_artifact_enabled_for_manifest(
+                "payment",
+                &format!("payment-provider.aar ({})", provider_note),
+                Some(manifest),
+            )
+        })
+        .unwrap_or(true)
+}
+
 fn module_placeholders(
     module: &crate::commands::module::AndroidModuleConfigModule,
 ) -> HashMap<String, String> {
@@ -792,7 +890,7 @@ fn qq_auth_activity(scheme: &str) -> String {
     use crate::commands::android::types::indent_manifest_fragment;
     indent_manifest_fragment(
         &format!(
-            r#"<activity android:name="com.tencent.tauth.AuthActivity" android:launchMode="singleTask" android:noHistory="true">
+            r#"<activity android:name="com.tencent.tauth.AuthActivity" android:exported="true" android:launchMode="singleTask" android:noHistory="true">
     <intent-filter>
         <action android:name="android.intent.action.VIEW" />
         <category android:name="android.intent.category.DEFAULT" />
@@ -809,7 +907,7 @@ fn qq_auth_activity(scheme: &str) -> String {
 fn qq_assist_activity() -> String {
     use crate::commands::android::types::indent_manifest_fragment;
     indent_manifest_fragment(
-        r#"<activity android:name="com.tencent.connect.common.AssistActivity" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:configChanges="keyboardHidden|orientation" android:screenOrientation="behind" />"#,
+        r#"<activity android:name="com.tencent.connect.common.AssistActivity" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:screenOrientation="portrait" />"#,
         8,
     )
 }
@@ -867,6 +965,119 @@ mod tests {
         assert!(patches
             .application_entries
             .contains("com.example.demo.wxapi.WXPayEntryActivity"));
+    }
+
+    #[test]
+    fn all_selected_payment_providers_include_official_manifest_entries() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "Payment".to_string(),
+                template_key: "payment".to_string(),
+                category: "payment".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: vec![
+                    AndroidModuleConfigField {
+                        key: "WX_APPID".to_string(),
+                        value: Some("wx-demo".to_string()),
+                        ..Default::default()
+                    },
+                    AndroidModuleConfigField {
+                        key: "PAYPAL_RETURN_SCHEME".to_string(),
+                        value: Some("paypal-demo".to_string()),
+                        ..Default::default()
+                    },
+                ],
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "sdkConfigs": {
+                        "payment": {
+                            "alipay": {},
+                            "weixin": {},
+                            "paypal": {},
+                            "stripe": {},
+                            "google": {}
+                        }
+                    }
+                }
+            }
+        });
+
+        let (patches, _) = render_android_module_manifest_patches_for_manifest_impl(
+            Some(&report),
+            Some(&manifest),
+            "com.example.demo",
+            "",
+        );
+
+        for expected in [
+            "io.dcloud.feature.payment.weixin.WXPayProcessMeadiatorActivity",
+            "@style/ProjectDialogTheme",
+            "com.example.demo.wxapi.WXPayEntryActivity",
+            "com.paypal.openid.RedirectUriReceiverActivity",
+            "com.paypal.pyplcheckout.home.view.activities.PYPLInitiateCheckoutActivity",
+            r#"android:scheme="${PAYPAL_RETURN_SCHEME}""#,
+            r#"android:value="${PAYPAL_RETURN_SCHEME}://paypalpay""#,
+            "io.dcloud.feature.payment.stripe.TransparentActivity",
+            "com.google.android.gms.wallet.api.enabled",
+        ] {
+            assert!(patches.application_entries.contains(expected), "{expected}");
+        }
+    }
+
+    #[test]
+    fn payment_manifest_entries_follow_selected_providers() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "Payment".to_string(),
+                template_key: "payment".to_string(),
+                category: "payment".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: Vec::new(),
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "sdkConfigs": {
+                        "payment": {
+                            "alipay": {}
+                        }
+                    }
+                }
+            }
+        });
+
+        let (patches, _) = render_android_module_manifest_patches_for_manifest_impl(
+            Some(&report),
+            Some(&manifest),
+            "com.example.demo",
+            "",
+        );
+
+        assert!(patches.permissions.contains("android.permission.INTERNET"));
+        for unexpected in [
+            "WXPayEntryActivity",
+            "RedirectUriReceiverActivity",
+            "TransparentActivity",
+            "com.google.android.gms.wallet.api.enabled",
+        ] {
+            assert!(
+                !patches.application_entries.contains(unexpected),
+                "{unexpected}"
+            );
+        }
+        assert!(!patches
+            .permissions
+            .contains("android.permission.MODIFY_AUDIO_SETTINGS"));
     }
 
     #[test]
@@ -1014,6 +1225,52 @@ mod tests {
     }
 
     #[test]
+    fn livepusher_alone_includes_documented_permissions_and_features() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "LivePusher".to_string(),
+                template_key: "livepusher".to_string(),
+                category: "livepusher".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: Vec::new(),
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, groups) =
+            render_android_module_manifest_patches_impl(Some(&report), "com.example.demo", "");
+
+        for permission in [
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.READ_EXTERNAL_STORAGE",
+            "android.permission.RECORD_AUDIO",
+            "android.permission.MODIFY_AUDIO_SETTINGS",
+            "android.permission.BLUETOOTH",
+            "android.permission.CAMERA",
+            "android.permission.READ_PHONE_STATE",
+        ] {
+            assert!(patches.permissions.contains(permission));
+        }
+        for feature in [
+            r#"<uses-feature android:name="android.hardware.Camera" />"#,
+            r#"<uses-feature android:name="android.hardware.camera.autofocus" />"#,
+        ] {
+            assert!(patches.permissions.contains(feature));
+        }
+
+        let group = groups
+            .iter()
+            .find(|group| group.module_name == "livepusher")
+            .expect("livepusher patch group");
+        assert_eq!(group.permissions.len(), 12);
+    }
+
+    #[test]
     fn push_manifest_patches_include_unipush_and_oppo_intent_filters() {
         let report = AndroidModuleConfigReport {
             modules: vec![AndroidModuleConfigModule {
@@ -1127,5 +1384,138 @@ mod tests {
                 && entry.contains(r#"android:value="${GY_APP_ID}""#)
                 && entry.contains(r#"tools:replace="android:value""#)
         }));
+    }
+
+    #[test]
+    fn share_sina_manifest_entries_follow_official_config() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "Share".to_string(),
+                template_key: "share".to_string(),
+                category: "share".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: ["SINA_APPKEY", "SINA_SECRET", "SINA_REDIRECT_URI"]
+                    .into_iter()
+                    .map(|key| AndroidModuleConfigField {
+                        key: key.to_string(),
+                        value: Some(format!("{}-value", key)),
+                        ..Default::default()
+                    })
+                    .collect(),
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, groups) =
+            render_android_module_manifest_patches_impl(Some(&report), "com.example.demo", "");
+
+        for permission in [
+            "android.permission.CHANGE_WIFI_STATE",
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.ACCESS_NETWORK_STATE",
+        ] {
+            assert!(patches.permissions.contains(permission));
+        }
+        for expected in [
+            r#"<meta-data android:name="SINA_APPKEY" android:value="_${SINA_APPKEY}""#,
+            r#"<meta-data android:name="SINA_SECRET" android:value="${SINA_SECRET}""#,
+            r#"<meta-data android:name="SINA_REDIRECT_URI" android:value="${SINA_REDIRECT_URI}""#,
+            "com.sina.weibo.sdk.web.WeiboSdkWebActivity",
+            r#"<activity android:name="com.sina.weibo.sdk.share.WbShareTransActivity" android:exported="true""#,
+            "com.sina.weibo.sdk.action.ACTION_SDK_REQ_ACTIVITY",
+        ] {
+            assert!(patches.application_entries.contains(expected), "{expected}");
+        }
+
+        let share_group = groups
+            .iter()
+            .find(|group| group.module_name == "share")
+            .expect("share manifest patch group");
+        assert!(share_group
+            .application_entries
+            .iter()
+            .any(|entry| entry.contains("ACTION_SDK_REQ_ACTIVITY")));
+    }
+
+    #[test]
+    fn oauth_manifest_entries_follow_current_android_and_official_value_formats() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "OAuth".to_string(),
+                template_key: "login".to_string(),
+                category: "oauth".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: ["QQ_APPID", "SINA_APPKEY", "SINA_REDIRECT_URI", "MIUI_APPID"]
+                    .into_iter()
+                    .map(|key| AndroidModuleConfigField {
+                        key: key.to_string(),
+                        value: Some(format!("{}-value", key)),
+                        ..Default::default()
+                    })
+                    .collect(),
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, _) =
+            render_android_module_manifest_patches_impl(Some(&report), "com.example.demo", "");
+
+        assert!(patches.application_entries.contains(
+            r#"<activity android:name="com.tencent.tauth.AuthActivity" android:exported="true""#
+        ));
+        assert!(patches.application_entries.contains(
+            r#"<activity android:name="com.tencent.connect.common.AssistActivity" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:screenOrientation="portrait" />"#
+        ));
+        assert!(!patches
+            .application_entries
+            .contains(r#"android:screenOrientation="behind""#));
+        assert!(patches
+            .application_entries
+            .contains(r#"<meta-data android:name="SINA_APPKEY" android:value="_${SINA_APPKEY}""#));
+        assert!(patches
+            .application_entries
+            .contains(r#"<meta-data android:name="MIUI_APPID" android:value="_${MIUI_APPID}""#));
+        assert!(patches
+            .permissions
+            .contains("com.xiaomi.permission.AUTH_SERVICE"));
+    }
+
+    #[test]
+    fn oauth_without_miui_does_not_add_xiaomi_auth_permission() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "OAuth".to_string(),
+                template_key: "login".to_string(),
+                category: "oauth".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: vec![AndroidModuleConfigField {
+                    key: "QQ_APPID".to_string(),
+                    value: Some("qq-value".to_string()),
+                    ..Default::default()
+                }],
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, groups) =
+            render_android_module_manifest_patches_impl(Some(&report), "com.example.demo", "");
+
+        assert!(!patches
+            .permissions
+            .contains("com.xiaomi.permission.AUTH_SERVICE"));
+        let login_group = groups
+            .iter()
+            .find(|group| group.module_name == "login")
+            .expect("login manifest patch group");
+        assert!(!login_group
+            .permissions
+            .iter()
+            .any(|permission| permission == "com.xiaomi.permission.AUTH_SERVICE"));
     }
 }

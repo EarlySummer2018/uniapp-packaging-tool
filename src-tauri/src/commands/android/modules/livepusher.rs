@@ -24,17 +24,33 @@ pub fn render_patches(
     add_permissions(
         permissions,
         &[
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.READ_EXTERNAL_STORAGE",
             "android.permission.BLUETOOTH",
             "android.permission.CAMERA",
             "android.permission.RECORD_AUDIO",
             "android.permission.MODIFY_AUDIO_SETTINGS",
+            "android.permission.READ_PHONE_STATE",
+            r#"<uses-feature android:name="android.hardware.Camera" />"#,
+            r#"<uses-feature android:name="android.hardware.camera.autofocus" />"#,
         ],
     );
     mod_perms.extend([
+        "android.permission.INTERNET".to_string(),
+        "android.permission.ACCESS_NETWORK_STATE".to_string(),
+        "android.permission.ACCESS_WIFI_STATE".to_string(),
+        "android.permission.WRITE_EXTERNAL_STORAGE".to_string(),
+        "android.permission.READ_EXTERNAL_STORAGE".to_string(),
         "android.permission.BLUETOOTH".to_string(),
         "android.permission.CAMERA".to_string(),
         "android.permission.RECORD_AUDIO".to_string(),
         "android.permission.MODIFY_AUDIO_SETTINGS".to_string(),
+        "android.permission.READ_PHONE_STATE".to_string(),
+        r#"<uses-feature android:name="android.hardware.Camera" />"#.to_string(),
+        r#"<uses-feature android:name="android.hardware.camera.autofocus" />"#.to_string(),
     ]);
 
     if has_report_value(module, "LIVEPUSH_LICENSE_URL") {

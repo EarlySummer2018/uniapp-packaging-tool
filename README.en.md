@@ -2,6 +2,8 @@
 
 > A desktop automation tool for uni-app offline packaging across Android, iOS, and HarmonyOS.
 
+- The current tool verification is based on a single UniApp project, and there may be differences in module combinations, dependency versions, or manifest configurations across different projects. **If you encounter any packaging issues, please feel free to submit feedback via [Issues](https://github.com/EarlySummer2018/uniapp-packaging-tool/issues). The project will continue to be optimized and improved. **
+
 English | [中文](./README.md)
 
 UniPack Tool is a Tauri + Vue 3 + TypeScript + Rust desktop application. It brings together SDK setup, project configuration, resource import, module detection, signing settings, build logs, and artifact management so uni-app offline packaging can be easier to repeat and debug.
@@ -69,7 +71,7 @@ npm run tauri build
 
 ## Supported Packaging Modules
 
-The following modules have been **tested and verified on Android** and are ready for offline packaging configuration:
+The following **22 modules** have been **tested and verified on Android** and are ready for offline packaging configuration:
 
 ### Core Features
 
@@ -80,6 +82,14 @@ The following modules have been **tested and verified on Android** and are ready
 - **Fingerprint Recognition** — device fingerprint biometric authentication
 - **iBeacon** — iBeacon device scanning and proximity detection
 - **Video Player** — play local and online video content
+- **Audio Recorder** — audio recording
+- **Geolocation** — system location, Baidu location, Amap (Gaode) location, Tencent location (with auto permission injection and multi-provider support)
+- **Maps** — Amap (Gaode) maps, Baidu maps, Google maps (with vue/nvue page type switching)
+- **Speech Recognition** — iFlytek speech, Baidu speech, Aliyun speech recognition
+- **gcanvas** — Weex Canvas binding graphics engine
+- **SQLite Database** — local SQLite data storage
+- **Messaging (SMS / MMS / Email)** — send SMS, MMS, and email messages
+- **X5 WebView Kernel** — Tencent TBS kernel to replace system WebView for better compatibility
 
 ### Authentication & Security
 
@@ -88,27 +98,28 @@ The following modules have been **tested and verified on Android** and are ready
 ### Communication
 
 - **Live Pusher** — audio/video live streaming push (Tencent Cloud LiteAVSDK)
-- **Messaging (SMS / MMS / Email)** — send SMS, MMS, and email messages
-- **Push Notifications** — uniPush push notifications (supports Xiaomi, Meizu, Huawei, OPPO, vivo, Honor, and other vendor channels)
+- **Push Notifications (uniPush)** — push notifications (supports Xiaomi, Meizu, Huawei, OPPO, vivo, Honor, and other vendor channels)
 
 ### Social & Sharing
 
-- **Sharing** — share to WeChat (text, images, links, mini-programs, etc.)
+- **Sharing** — share to WeChat, QQ, Sina Weibo (text, images, links, mini-programs, etc.)
 
 ### Login & Authentication
 
-- **One-click Login** — carrier-based one-click login (一键登录)
-- **WeChat Login** — WeChat Open Platform OAuth login
+- **Login** — WeChat login, QQ login, Apple Sign-In, one-click carrier login, Xiaomi login, Google login, Facebook login
 
 ### Payment
 
-- **Alipay Payment** — Alipay mobile payment
-- **WeChat Pay** — WeChat mobile payment
+- **Payment** — Alipay payment, WeChat Pay, PayPal, Stripe, Google Pay
+
+### Analytics & Statistics
+
+- **Statistics & Analytics** — Umeng, Tencent MTA, Baidu Analytics, DCloud Stats, Google Firebase
 
 > **Notes:**
 >
-> - All modules listed above have been verified through actual Android offline build processes.
-> - Other modules (e.g., Maps, Geolocation, Speech Recognition, Analytics, Advertising, etc.) have template definitions in the codebase but are **untested** and may have uncertainties.
+> - All 22 modules listed above have been verified through actual Android offline build processes.
+> - The Advertising module (uni-AD) has template definitions in the codebase but is **untested** and may have uncertainties.
 > - **iOS and HarmonyOS module-level packaging configuration is not yet supported**; support will be added in future releases.
 
 ## Repository Layout

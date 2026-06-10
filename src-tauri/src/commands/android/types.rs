@@ -154,12 +154,13 @@ pub fn render_gradle_dependency_line(dep: &str) -> String {
     }
 
     match dep {
+        _ if dep.contains("${") => {
+            format!("    implementation \"{}\"", dep)
+        }
         _ if dep.starts_with("com.amap.api:3dmap-location-search:") => {
             format!("    implementation \"{}\"", dep)
         }
-        _ if dep
-            .starts_with("com.tencent.map.geolocation:TencentLocationSdk-openplatform:") =>
-        {
+        _ if dep.starts_with("com.tencent.map.geolocation:TencentLocationSdk-openplatform:") => {
             format!("    implementation('{}')", dep)
         }
         "com.getui:gtsdk:3.3.7.0" => {
@@ -167,7 +168,8 @@ pub fn render_gradle_dependency_line(dep: &str) -> String {
                 .to_string()
         }
         "com.getui:gysdk:3.1.7.0" => {
-            "    implementation('com.getui:gysdk:3.1.7.0'){ exclude(group: 'com.getui', module: 'gtc') }".to_string()
+            "    implementation('com.getui:gysdk:3.1.7.0'){ exclude(group: 'com.getui') }"
+                .to_string()
         }
         _ => format!("    implementation '{}'", dep),
     }
@@ -215,6 +217,24 @@ mod tests {
                 "com.amap.api:3dmap-location-search:10.0.700_loc6.4.5_sea9.7.2"
             ),
             "    implementation \"com.amap.api:3dmap-location-search:10.0.700_loc6.4.5_sea9.7.2\""
+        );
+    }
+
+    #[test]
+    fn android_x_dependency_using_root_project_version_keeps_interpolation() {
+        assert_eq!(
+            render_gradle_dependency_line(
+                "androidx.appcompat:appcompat:${rootProject.ext.androidxVersion}"
+            ),
+            "    implementation \"androidx.appcompat:appcompat:${rootProject.ext.androidxVersion}\""
+        );
+    }
+
+    #[test]
+    fn univerify_dependency_excludes_getui_group_as_officially_documented() {
+        assert_eq!(
+            render_gradle_dependency_line("com.getui:gysdk:3.1.7.0"),
+            "    implementation('com.getui:gysdk:3.1.7.0'){ exclude(group: 'com.getui') }"
         );
     }
 

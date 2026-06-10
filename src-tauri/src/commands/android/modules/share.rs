@@ -56,10 +56,21 @@ pub fn render_patches(
         mod_entries.extend(qq_share_entries.iter().cloned());
     }
     if has_report_value(module, "SINA_APPKEY") {
+        add_permissions(
+            permissions,
+            &[
+                "android.permission.ACCESS_WIFI_STATE",
+                "android.permission.ACCESS_NETWORK_STATE",
+            ],
+        );
+        mod_perms.extend([
+            "android.permission.ACCESS_WIFI_STATE".to_string(),
+            "android.permission.ACCESS_NETWORK_STATE".to_string(),
+        ]);
         let sina_share_entries = [
             meta_data(
                 "SINA_APPKEY",
-                &placeholder_value(placeholders, "SINA_APPKEY"),
+                &format!("_{}", placeholder_value(placeholders, "SINA_APPKEY")),
             ),
             meta_data(
                 "SINA_SECRET",
@@ -73,7 +84,12 @@ pub fn render_patches(
                 r#"<activity android:name="com.sina.weibo.sdk.web.WeiboSdkWebActivity" android:configChanges="keyboardHidden|orientation" android:exported="false" android:windowSoftInputMode="adjustResize" />"#,
             ),
             service_entry(
-                r#"<activity android:name="com.sina.weibo.sdk.share.WbShareTransActivity" android:launchMode="singleTask" android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen" />"#,
+                r#"<activity android:name="com.sina.weibo.sdk.share.WbShareTransActivity" android:exported="true" android:launchMode="singleTask" android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen">
+    <intent-filter>
+        <action android:name="com.sina.weibo.sdk.action.ACTION_SDK_REQ_ACTIVITY" />
+        <category android:name="android.intent.category.DEFAULT" />
+    </intent-filter>
+</activity>"#,
             ),
         ];
         add_application_entries(application_entries, &sina_share_entries);

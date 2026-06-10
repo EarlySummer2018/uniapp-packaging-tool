@@ -236,7 +236,7 @@ const androidMissingRequired = computed(() => {
   return report.modules
     .filter(mod => isAndroidConfigModuleSelected(mod))
     .flatMap(mod => mod.fields
-      .filter(field => field.required && !androidFieldValue(field).trim())
+      .filter(field => field.required && !androidFieldValue(mod, field).trim())
       .map(field => ({ moduleName: mod.name, key: field.key, label: field.label })))
 })
 const canBuild = computed(() => {
@@ -605,6 +605,10 @@ function androidConfigModuleKey(mod: AndroidModuleConfigModule) {
   return moduleKeyParts(mod.name, mod.category, mod.platforms, mod.source)
 }
 
+function androidModuleFieldValueKey(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
+  return `${mod.templateKey}.${field.key}`
+}
+
 function isManifestModuleSelected(mod: DetectedModule) {
   return selectedManifestModuleKeys.value.has(manifestModuleKey(mod))
 }
@@ -636,16 +640,16 @@ function manifestConfigModule(mod: DetectedModule) {
   return androidConfigModulesByKey.value.get(manifestModuleKey(mod)) || null
 }
 
-function configFieldFilled(field: AndroidModuleConfigField) {
-  return androidFieldValue(field).trim().length > 0
+function configFieldFilled(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
+  return androidFieldValue(mod, field).trim().length > 0
 }
 
 function configModuleMissingRequiredCount(mod: AndroidModuleConfigModule) {
-  return mod.fields.filter(field => field.required && !configFieldFilled(field)).length
+  return mod.fields.filter(field => field.required && !configFieldFilled(mod, field)).length
 }
 
 function configModuleFilledCount(mod: AndroidModuleConfigModule) {
-  return mod.fields.filter(field => configFieldFilled(field)).length
+  return mod.fields.filter(field => configFieldFilled(mod, field)).length
 }
 
 function configModuleStatusTone(mod: AndroidModuleConfigModule): ModuleStatusTone {
@@ -817,9 +821,11 @@ async function ensureAndroidModuleConfigReadyForBuild() {
 
 function mergeAndroidModuleConfigDefaults(report: AndroidModuleConfigReport) {
   const next: Record<string, string> = {}
+  const cached = cachedAndroidModuleConfig()
   for (const mod of report.modules) {
     for (const field of mod.fields) {
-      next[field.key] = field.value || ''
+      const scopedKey = androidModuleFieldValueKey(mod, field)
+      next[scopedKey] = cached[scopedKey] ?? field.value ?? cached[field.key] ?? ''
     }
   }
   androidModuleConfigValues.value = next
@@ -827,21 +833,30 @@ function mergeAndroidModuleConfigDefaults(report: AndroidModuleConfigReport) {
   scheduleAndroidModuleConfigCacheSave()
 }
 
-function androidFieldValue(field: AndroidModuleConfigField) {
-  return androidModuleConfigValues.value[field.key] ?? field.value ?? ''
+function androidFieldValue(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
+  return androidModuleConfigValues.value[androidModuleFieldValueKey(mod, field)]
+    ?? androidModuleConfigValues.value[field.key]
+    ?? field.value
+    ?? ''
 }
 
-function updateAndroidField(field: AndroidModuleConfigField, value: string) {
+function updateAndroidField(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField, value: string) {
   if (isBuildLocked.value) return
   androidModuleConfigValues.value = {
     ...androidModuleConfigValues.value,
-    [field.key]: value
+    [androidModuleFieldValueKey(mod, field)]: value
   }
   syncAndroidModuleConfigCache()
   scheduleAndroidModuleConfigCacheSave()
 }
 
-async function pickAndroidFileField(field: AndroidModuleConfigField) {
+function updateActiveAndroidField(field: AndroidModuleConfigField, value: string) {
+  const mod = activeAndroidConfigModule.value
+  if (!mod) return
+  updateAndroidField(mod, field, value)
+}
+
+async function pickAndroidFileField(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
   if (isBuildLocked.value) {
     message.warning('已有构建任务进行中，暂不能修改模块配置')
     return
@@ -858,15 +873,15 @@ async function pickAndroidFileField(field: AndroidModuleConfigField) {
     let binary = ''
     for (let i = 0; i < content.length; i++) binary += String.fromCharCode(content[i])
     const base64 = btoa(binary)
-    updateAndroidField(field, base64)
+    updateAndroidField(mod, field, base64)
   } catch (e) {
     message.error('读取文件失败: ' + String(e))
   }
 }
 
-function clearAndroidFileField(field: AndroidModuleConfigField) {
+function clearAndroidFileField(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
   if (isBuildLocked.value) return
-  updateAndroidField(field, '')
+  updateAndroidField(mod, field, '')
 }
 
 function isFileField(field: AndroidModuleConfigField): boolean {
@@ -904,8 +919,19 @@ function formatFileSize(base64Value: string): string {
 
 function buildAndroidModuleConfigPayload() {
   const payload: Record<string, string> = {}
-  for (const [key, value] of Object.entries(androidModuleConfigValues.value)) {
-    if (value.trim()) payload[key] = value.trim()
+  const report = androidModuleConfigReport.value
+  if (!report) {
+    for (const [key, value] of Object.entries(androidModuleConfigValues.value)) {
+      if (value.trim()) payload[key] = value.trim()
+    }
+    return payload
+  }
+  for (const mod of report.modules) {
+    if (!isAndroidConfigModuleSelected(mod)) continue
+    for (const field of mod.fields) {
+      const value = androidFieldValue(mod, field).trim()
+      if (value) payload[androidModuleFieldValueKey(mod, field)] = value
+    }
   }
   return payload
 }
@@ -921,9 +947,9 @@ function syncAndroidModuleConfigCache() {
   const next: Record<string, string> = {}
   for (const mod of report.modules) {
     for (const field of mod.fields) {
-      const value = androidModuleConfigValues.value[field.key]?.trim()
+      const value = androidFieldValue(mod, field).trim()
       if (value && field.valueSource !== 'manifest') {
-        next[field.key] = value
+        next[androidModuleFieldValueKey(mod, field)] = value
       }
     }
   }
@@ -931,16 +957,16 @@ function syncAndroidModuleConfigCache() {
   return true
 }
 
-function fieldStatusType(field: AndroidModuleConfigField) {
-  const value = androidFieldValue(field).trim()
+function fieldStatusType(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
+  const value = androidFieldValue(mod, field).trim()
   if (!value && field.required) return 'error'
   if (field.valueSource === 'manifest' && value) return 'success'
   if (value) return 'info'
   return 'default'
 }
 
-function fieldStatusLabel(field: AndroidModuleConfigField) {
-  const value = androidFieldValue(field).trim()
+function fieldStatusLabel(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
+  const value = androidFieldValue(mod, field).trim()
   if (!value && field.required) return '必填'
   if (!value) return '可选'
   if (field.valueSource === 'manifest') return 'manifest'
@@ -956,25 +982,33 @@ function manifestLogLines(info: UniappManifestInfo) {
   const moduleNames = info.detectedModules.map(mod => formatModuleWithPlatforms(mod))
   const lines = [
     `[info] 已读取 manifest.json: ${info.manifestPath}`,
-    `[info] manifest 应用名称: ${info.appName || '-'}`,
-    `[info] manifest UniApp AppId: ${info.appId || '-'}`,
-    `[info] manifest 版本: ${info.versionName || '-'} / ${info.versionCode ?? '-'}`,
-    `[info] manifest Android 图标: ${info.androidIcons ? Object.keys(info.androidIcons.android || {}).join(', ') : '-'}`,
-    // `[info] manifest Android 包名: ${info.android.packageName || '-'}`,
-    `[info] manifest Android SDK: min ${info.android.minSdkVersion ?? '-'}, target ${info.android.targetSdkVersion ?? '-'}, compile ${info.android.compileSdkVersion ?? '-'}`,
-    `[info] manifest 模块: ${moduleNames.length ? moduleNames.join(', ') : '无'}`
+    `[info] manifest 摘要: ${info.appName || '-'} / ${info.appId || '-'} / v${info.versionName || '-'} (${info.versionCode ?? '-'})`,
+    `[info] Android SDK: min ${info.android.minSdkVersion ?? '-'}, target ${info.android.targetSdkVersion ?? '-'}, compile ${info.android.compileSdkVersion ?? '-'}`,
+    `[info] manifest 模块 (${moduleNames.length}): ${moduleNames.length ? moduleNames.join(', ') : '无'}`
   ]
   const report = androidModuleConfigReport.value
   const configurableModules = report?.modules.filter(mod => mod.fields.length > 0) || []
   if (configurableModules.length) {
-    lines.push(`[info] Android 模块配置清单: ${configurableModules.map(mod => `${mod.name}(${mod.fields.length})`).join(', ')}`)
+    let totalFields = 0
+    let configuredFields = 0
+    const missingRequired: string[] = []
+    const missingOptional: string[] = []
     for (const mod of configurableModules) {
       for (const field of mod.fields) {
-        const value = androidFieldValue(field).trim()
-        const source = field.valueSource === 'manifest' ? 'manifest' : value ? '构建中心' : field.required ? '缺失' : '可选未填'
-        lines.push(`[info] Android 模块配置 ${mod.name} / ${field.label}: ${source}`)
+        totalFields += 1
+        const value = androidFieldValue(mod, field).trim()
+        if (value) {
+          configuredFields += 1
+        } else if (field.required) {
+          missingRequired.push(`${mod.name} / ${field.label}`)
+        } else {
+          missingOptional.push(`${mod.name} / ${field.label}`)
+        }
       }
     }
+    lines.push(`[info] Android 模块配置: ${configurableModules.length} 个模块，${configuredFields}/${totalFields} 项已填写`)
+    for (const item of missingRequired) lines.push(`[warn] 缺失 Android 必填配置: ${item}`)
+    if (missingOptional.length) lines.push(`[info] 未填写可选配置: ${missingOptional.join('、')}`)
   }
   return lines
 }
@@ -1303,39 +1337,39 @@ function goBack() {
             </div>
             <n-grid :cols="2" :x-gap="14" :y-gap="10" responsive="screen">
               <n-gi v-for="field in activeAndroidConfigModule.fields" :key="activeAndroidConfigModule.templateKey + field.key">
-                <n-form-item :label="field.label" :feedback="field.required && !androidFieldValue(field).trim() ? '必填项，未填写时不能开始打包' : undefined">
+                <n-form-item :label="field.label" :feedback="field.required && !androidFieldValue(activeAndroidConfigModule, field).trim() ? '必填项，未填写时不能开始打包' : undefined">
                   <template #label>
                     <n-space align="center" :size="6">
                       <n-text>{{ field.label }}</n-text>
-                      <n-tag size="tiny" :type="fieldStatusType(field)">{{ fieldStatusLabel(field) }}</n-tag>
+                      <n-tag size="tiny" :type="fieldStatusType(activeAndroidConfigModule, field)">{{ fieldStatusLabel(activeAndroidConfigModule, field) }}</n-tag>
                     </n-space>
                   </template>
                   <template v-if="isFileField(field)">
                     <n-space :size="8" align="center" class="file-field-row">
-                      <n-button size="small" :disabled="isBuildLocked" @click="pickAndroidFileField(field)">选择文件</n-button>
-                      <n-text v-if="androidFieldValue(field)" depth="3" class="file-field-hint">
-                        已选择 ({{ formatFileSize(androidFieldValue(field)) }})
+                      <n-button size="small" :disabled="isBuildLocked" @click="pickAndroidFileField(activeAndroidConfigModule, field)">选择文件</n-button>
+                      <n-text v-if="androidFieldValue(activeAndroidConfigModule, field)" depth="3" class="file-field-hint">
+                        已选择 ({{ formatFileSize(androidFieldValue(activeAndroidConfigModule, field)) }})
                       </n-text>
-                      <n-button v-if="androidFieldValue(field)" size="small" quaternary type="error" :disabled="isBuildLocked" @click="clearAndroidFileField(field)">清除</n-button>
+                      <n-button v-if="androidFieldValue(activeAndroidConfigModule, field)" size="small" quaternary type="error" :disabled="isBuildLocked" @click="clearAndroidFileField(activeAndroidConfigModule, field)">清除</n-button>
                       <n-text v-else depth="3" class="file-field-hint">{{ field.placeholder }}</n-text>
                     </n-space>
                   </template>
                   <n-select
                     v-else-if="isSelectField(field)"
-                    :value="androidFieldValue(field)"
+                    :value="androidFieldValue(activeAndroidConfigModule, field)"
                     :options="selectFieldOptions(activeAndroidConfigModule, field)"
                     :placeholder="field.placeholder"
                     :disabled="isBuildLocked"
-                    @update:value="(value: string) => updateAndroidField(field, value)"
+                    @update:value="(value: string) => updateActiveAndroidField(field, value)"
                   />
                   <n-input
                     v-else
-                    :value="androidFieldValue(field)"
+                    :value="androidFieldValue(activeAndroidConfigModule, field)"
                     :placeholder="field.placeholder"
                     :type="field.secret ? 'password' : 'text'"
                     :show-password-on="field.secret ? 'click' : undefined"
                     :disabled="isBuildLocked"
-                    @update:value="(value: string) => updateAndroidField(field, value)"
+                    @update:value="(value: string) => updateActiveAndroidField(field, value)"
                   />
                 </n-form-item>
               </n-gi>

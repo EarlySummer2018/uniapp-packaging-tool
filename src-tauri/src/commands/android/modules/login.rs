@@ -23,17 +23,8 @@ pub fn render_patches(
     let mut mod_perms: Vec<String> = Vec::new();
     let mut mod_entries: Vec<String> = Vec::new();
 
-    add_permissions(
-        permissions,
-        &[
-            "android.permission.MODIFY_AUDIO_SETTINGS",
-            "com.xiaomi.permission.AUTH_SERVICE",
-        ],
-    );
-    mod_perms.extend([
-        "android.permission.MODIFY_AUDIO_SETTINGS".to_string(),
-        "com.xiaomi.permission.AUTH_SERVICE".to_string(),
-    ]);
+    add_permissions(permissions, &["android.permission.MODIFY_AUDIO_SETTINGS"]);
+    mod_perms.push("android.permission.MODIFY_AUDIO_SETTINGS".to_string());
 
     if has_report_value(module, "WX_APPID") {
         let wx_appid = placeholder_value(placeholders, "WX_APPID");
@@ -68,7 +59,7 @@ pub fn render_patches(
         let sina_login_entries = [
             meta_data(
                 "SINA_APPKEY",
-                &placeholder_value(placeholders, "SINA_APPKEY"),
+                &format!("_{}", placeholder_value(placeholders, "SINA_APPKEY")),
             ),
             meta_data(
                 "SINA_REDIRECT_URI",
@@ -82,8 +73,13 @@ pub fn render_patches(
         mod_entries.extend(sina_login_entries.iter().cloned());
     }
     if has_report_value(module, "MIUI_APPID") {
+        add_permissions(permissions, &["com.xiaomi.permission.AUTH_SERVICE"]);
+        mod_perms.push("com.xiaomi.permission.AUTH_SERVICE".to_string());
         let miui_entries = [
-            meta_data("MIUI_APPID", &placeholder_value(placeholders, "MIUI_APPID")),
+            meta_data(
+                "MIUI_APPID",
+                &format!("_{}", placeholder_value(placeholders, "MIUI_APPID")),
+            ),
             meta_data(
                 "MIUI_APPSECRET",
                 &placeholder_value(placeholders, "MIUI_APPSECRET"),

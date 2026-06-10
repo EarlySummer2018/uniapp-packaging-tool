@@ -512,9 +512,9 @@ dependencies {
 **application节点下：**
 ```xml
 <!-- Share - 新浪微博分享 -->
-<meta-data android:name="SINA_APPKEY" android:value="%新浪微博开放平台申请应用的AppKey%"/>
+<meta-data android:name="SINA_APPKEY" android:value="_%新浪微博开放平台申请应用的Appkey，注意前面要添加下划线%"/>
 <meta-data android:name="SINA_SECRET" android:value="%新浪微博开放平台申请应用的Secret%"/>
-<meta-data android:name="SINA_REDIRECT_URI" android:value="%新浪微博开放平台申请应用的RedirectUrl%"/>
+<meta-data android:name="SINA_REDIRECT_URI" android:value="%新浪微博开放平台申请应用配置的回调地址%"/>
 <activity 
     android:name="com.sina.weibo.sdk.web.WeiboSdkWebActivity"
     android:configChanges="keyboardHidden|orientation"
@@ -523,6 +523,7 @@ dependencies {
 </activity>
 <activity 
     android:name="com.sina.weibo.sdk.share.WbShareTransActivity"
+    android:exported="true"
     android:launchMode="singleTask"
     android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen">
     <intent-filter>

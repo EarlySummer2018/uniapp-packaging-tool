@@ -2,7 +2,10 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::android::project_mod::gradle::ensure_android_gradle_plugin_supports_kotlin_22;
+    use crate::commands::android::project_mod::gradle::{
+        ensure_android_gradle_plugin_supports_kotlin_22, set_or_insert_androidx_version_extra,
+        set_or_insert_root_project_name,
+    };
     use crate::commands::android::project_mod::manifest::{
         entry_identity, fix_manifest_xml_structure,
     };
@@ -17,6 +20,17 @@ mod tests {
             appid: "__UNI__TEST".to_string(),
             dcloud_appkey: "test-app-key".to_string(),
             app_name: "Test App".to_string(),
+            string_resources: vec![
+                ("facebook_app_id".to_string(), "123456".to_string()),
+                (
+                    "fb_login_protocol_scheme".to_string(),
+                    "fb123456".to_string(),
+                ),
+                (
+                    "facebook_client_token".to_string(),
+                    "client-token".to_string(),
+                ),
+            ],
             version_code: 178,
             version_name: "1.7.8".to_string(),
             compile_sdk: 36,
@@ -27,6 +41,7 @@ mod tests {
             key_password: "keypass".to_string(),
             store_password: "storepass".to_string(),
             android_allow_backup: "false".to_string(),
+            androidx_version: Some("1.0.0".to_string()),
             extra_repositories: vec!["maven { url 'https://jitpack.io' }".to_string()],
             extra_dependencies: vec!["implementation 'androidx.core:core:1.12.0'".to_string()],
             project_buildscript_dependencies: vec![
@@ -193,6 +208,62 @@ dependencies {
     }
 
     #[test]
+    fn root_gradle_missing_androidx_version_gets_configured_extra_property() {
+        let root_gradle = r#"buildscript {
+    repositories {
+        google()
+    }
+}
+"#;
+        let patched = set_or_insert_androidx_version_extra(root_gradle, "1.6.1");
+        assert!(patched.contains("androidxVersion = '1.6.1'"));
+
+        let patched_twice = set_or_insert_androidx_version_extra(&patched, "1.6.1");
+        assert_eq!(patched_twice.matches("androidxVersion").count(), 1);
+    }
+
+    #[test]
+    fn existing_androidx_version_extra_property_is_updated() {
+        let root_gradle = r#"ext {
+    androidxVersion = '1.6.1'
+}
+"#;
+        let patched = set_or_insert_androidx_version_extra(root_gradle, "1.7.0");
+        assert!(patched.contains("androidxVersion = '1.7.0'"));
+        assert!(!patched.contains("androidxVersion = '1.6.1'"));
+    }
+
+    #[test]
+    fn root_project_name_is_inserted_after_complete_plugin_management_block() {
+        let settings = r#"pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+include ':simpleDemo'
+"#;
+
+        let patched = set_or_insert_root_project_name(settings, "Demo App");
+        let name_idx = patched.find("rootProject.name = 'Demo App'").unwrap();
+        let dependency_idx = patched.find("dependencyResolutionManagement").unwrap();
+
+        assert!(name_idx < dependency_idx);
+        assert!(patched.contains("gradlePluginPortal()\n    }\n}\nrootProject.name"));
+        assert!(!patched.contains("gradlePluginPortal()\n    }\nrootProject.name"));
+    }
+
+    #[test]
     fn official_project_patch_is_idempotent_without_template_markers() {
         let workspace =
             std::env::temp_dir().join(format!("unipack-android-mod-{}", uuid::Uuid::new_v4()));
@@ -226,8 +297,19 @@ dependencies {
         );
         assert_eq!(build_gradle.matches("manifestPlaceholders").count(), 1);
 
+        let strings = std::fs::read_to_string(
+            workspace
+                .join(MODULE_NAME)
+                .join("src/main/res/values/strings.xml"),
+        )
+        .unwrap();
+        assert!(strings.contains(r#"<string name="facebook_app_id">123456</string>"#));
+        assert!(strings.contains(r#"<string name="fb_login_protocol_scheme">fb123456</string>"#));
+        assert!(strings.contains(r#"<string name="facebook_client_token">client-token</string>"#));
+
         let root_gradle = std::fs::read_to_string(workspace.join("build.gradle")).unwrap();
         assert!(root_gradle.contains("classpath 'com.android.tools.build:gradle:8.10.0'"));
+        assert!(root_gradle.contains("androidxVersion = '1.0.0'"));
         assert!(root_gradle.contains("classpath 'com.example:demo-gradle-plugin:1.0.0'"));
         assert!(!root_gradle.contains("allprojects"));
 
@@ -326,6 +408,38 @@ dependencies {
             std::fs::read_to_string(workspace.join(MODULE_NAME).join("build.gradle")).unwrap();
         assert!(app_gradle.contains("apply plugin: 'com.huawei.agconnect'"));
         assert!(app_gradle.contains("implementation 'com.huawei.hms:push:6.11.0.300'"));
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn google_oauth_injects_google_services_buildscript_configuration() {
+        let workspace =
+            std::env::temp_dir().join(format!("unipack-google-oauth-{}", uuid::Uuid::new_v4()));
+        write_official_like_project(&workspace);
+        std::fs::write(
+            workspace.join("build.gradle"),
+            r#"buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.7.3'
+    }
+}
+"#,
+        )
+        .unwrap();
+        let modifier = AndroidProjectModifier::new(workspace.clone()).unwrap();
+        let mut ctx = test_context();
+        ctx.project_buildscript_dependencies =
+            vec!["classpath 'com.google.gms:google-services:4.2.0'".to_string()];
+
+        modifier.apply_all_modifications(&ctx).unwrap();
+
+        let root_gradle = std::fs::read_to_string(workspace.join("build.gradle")).unwrap();
+        assert!(root_gradle.contains("google()"));
+        assert!(root_gradle.contains("classpath 'com.google.gms:google-services:4.2.0'"));
 
         let _ = std::fs::remove_dir_all(workspace);
     }

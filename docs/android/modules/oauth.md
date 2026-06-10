@@ -2,7 +2,7 @@
 
 > **适用版本**：HBuilderX 5.0+
 > **平台**：Android
-> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/androidModuleConfig/
+> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/androidModuleConfig/oauth.html
 
 ## 4. Oauth（登录鉴权）
 
@@ -131,7 +131,7 @@ dependencies {
 ```xml
 <!-- Oauth QQ start -->
 <meta-data android:value="%appid%" android:name="QQ_APPID"/> 
-<activity android:name="com.tencent.tauth.AuthActivity" android:launchMode="singleTask" android:noHistory="true"> 
+<activity android:name="com.tencent.tauth.AuthActivity" android:exported="true" android:launchMode="singleTask" android:noHistory="true">
     <intent-filter>
         <action android:name="android.intent.action.VIEW"/> 
         <category android:name="android.intent.category.DEFAULT"/> 
@@ -142,6 +142,8 @@ dependencies {
 <activity android:name="com.tencent.connect.common.AssistActivity" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:screenOrientation="portrait"/>
 <!-- Oauth QQ end -->
 ```
+
+> `AuthActivity` 带有 `intent-filter`。面向 Android 12 及以上构建时必须显式设置 `android:exported="true"`，否则 Manifest 合并会失败。
 
 #### dcloud_properties.xml配置
 

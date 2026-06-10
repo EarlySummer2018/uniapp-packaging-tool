@@ -2,7 +2,7 @@
 
 > **适用版本**：HBuilderX 5.0+
 > **平台**：Android
-> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/androidModuleConfig/
+> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/androidModuleConfig/pay.html
 
 ## 6. Payment（支付）
 
@@ -106,7 +106,7 @@ allprojects {
             url "https://cardinalcommerceprod.jfrog.io/artifactory/android"
             credentials {
                 username 'paypal_sgerritz'
-                password '<YOUR_PAYPAL_JFROG_API_KEY>'
+                password 'YOUR_JFROG_PASSWORD_HERE'
             }
         }
     }
@@ -149,7 +149,7 @@ dependencies {
     </intent-filter>
 </activity>
 
-<meta-data android:name="returnUrl" android:value="%YOUR-CUSTOM-SCHEME%//paypalpay"/>
+<meta-data android:name="returnUrl" android:value="%YOUR-CUSTOM-SCHEME%://paypalpay"/>
 ```
 
 #### 需要拷贝的文件 & dcloud_properties.xml
@@ -183,6 +183,8 @@ dependencies {
     implementation 'com.stripe:stripe-android:18.2.0'
 }
 ```
+
+`androidxVersion` 由构建中心支付模块配置生成，默认 `1.0.0`，启用 Stripe 或 Google Pay 时可修改。
 
 #### AndroidManifest.xml配置
 

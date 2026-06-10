@@ -386,6 +386,27 @@ fn collect_features_to_add(
                         "io.dcloud.feature.payment.weixin.WeiXinPay",
                     );
                 }
+                if payment.paypal.is_some() {
+                    push_module_once(
+                        &mut modules,
+                        "Payment-Paypal",
+                        "io.dcloud.feature.payment.paypal.PaypalPay",
+                    );
+                }
+                if payment.stripe.is_some() {
+                    push_module_once(
+                        &mut modules,
+                        "Payment-Stripe",
+                        "io.dcloud.feature.payment.stripe.StripePay",
+                    );
+                }
+                if payment.google.is_some() {
+                    push_module_once(
+                        &mut modules,
+                        "Payment-Google",
+                        "io.dcloud.feature.payment.google.GooglePay",
+                    );
+                }
                 features.push(DCloudPropertyFeature {
                     name: "Payment".to_string(),
                     xml_fragment: feature_xml(
@@ -456,18 +477,26 @@ fn collect_features_to_add(
     if module_is_enabled(enabled_modules, "statistic") {
         if let Some(ref stat) = config.statistic {
             if stat.enabled {
-                let provider_module = match stat.provider.as_str() {
-                    "umeng" => "Umeng",
-                    "mta" => "MTA",
-                    "baidu" => "Baidu",
-                    _ => "DCloud",
-                };
+                let xml_fragment =
+                    match stat.provider.to_ascii_lowercase().as_str() {
+                        "umeng" => feature_xml(
+                            "Statistic",
+                            Some("io.dcloud.feature.statistics.StatisticsFeatureImpl"),
+                            &[(
+                                "Statistic-Umeng",
+                                "io.dcloud.feature.statistics.umeng.UmengStatistics",
+                            )],
+                        ),
+                        "mta" => "<feature name=\"Statistic\"><module name=\"MTA\"/></feature>"
+                            .to_string(),
+                        "baidu" => "<feature name=\"Statistic\"><module name=\"Baidu\"/></feature>"
+                            .to_string(),
+                        _ => "<feature name=\"Statistic\"><module name=\"DCloud\"/></feature>"
+                            .to_string(),
+                    };
                 features.push(DCloudPropertyFeature {
                     name: "Statistic".to_string(),
-                    xml_fragment: format!(
-                        "<feature name=\"Statistic\"><module name=\"{}\"/></feature>",
-                        provider_module
-                    ),
+                    xml_fragment,
                 });
             }
         }
@@ -696,12 +725,41 @@ fn collect_services_to_add(
         }
     }
 
+    if module_is_enabled(enabled_modules, "statistic") {
+        if let Some(ref stat) = config.statistic {
+            if stat.enabled && stat.provider.eq_ignore_ascii_case("umeng") {
+                services.push(DCloudPropertyService {
+                    name: "Statistic-Umeng".to_string(),
+                    xml_fragment: "<service name=\"Statistic-Umeng\" value=\"io.dcloud.feature.statistics.umeng.StatisticsBootImpl\"/>".to_string(),
+                });
+            }
+        }
+    }
+
     services
 }
 
 fn map_module_enabled(config: &ModuleConfigTree, enabled_modules: &[String]) -> bool {
     module_is_enabled(enabled_modules, "map")
         && config.map.as_ref().map(|map| map.enabled).unwrap_or(false)
+}
+
+fn statistic_module_enabled(config: &ModuleConfigTree, enabled_modules: &[String]) -> bool {
+    module_is_enabled(enabled_modules, "statistic")
+        && config
+            .statistic
+            .as_ref()
+            .map(|statistic| statistic.enabled)
+            .unwrap_or(false)
+}
+
+fn payment_module_enabled(config: &ModuleConfigTree, enabled_modules: &[String]) -> bool {
+    module_is_enabled(enabled_modules, "payment")
+        && config
+            .payment
+            .as_ref()
+            .map(|payment| payment.enabled)
+            .unwrap_or(false)
 }
 
 fn remove_feature_from_xml(content: &str, feature_name: &str) -> String {
@@ -753,6 +811,14 @@ pub fn generate_dcloud_properties(
     if map_module_enabled(config, enabled_modules) {
         result = remove_feature_from_xml(&result, "Maps");
         result = remove_service_from_xml(&result, "Maps");
+    }
+    if statistic_module_enabled(config, enabled_modules) {
+        result = remove_feature_from_xml(&result, "Statistic");
+        result = remove_service_from_xml(&result, "Statistic");
+        result = remove_service_from_xml(&result, "Statistic-Umeng");
+    }
+    if payment_module_enabled(config, enabled_modules) {
+        result = remove_feature_from_xml(&result, "Payment");
     }
     for feature in &features_to_add {
         if !feature_exists(&result, &feature.name) {

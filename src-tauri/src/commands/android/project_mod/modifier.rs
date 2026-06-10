@@ -11,7 +11,8 @@ use super::gradle::{
     remove_allprojects_repositories, render_aapt_options, render_packaging_options,
     render_signing_configs, render_source_sets, replace_or_insert_android_assignment,
     replace_or_insert_default_config_assignment, set_manifest_placeholders,
-    set_or_insert_root_project_name, validate_base_gradle_dependencies,
+    set_or_insert_androidx_version_extra, set_or_insert_root_project_name,
+    validate_base_gradle_dependencies,
 };
 use super::manifest::{
     child_identity, entry_identity, escape_xml_attr, fix_manifest_xml_structure,
@@ -85,6 +86,9 @@ impl AndroidProjectModifier {
 
         let mut content = self.read_file(&path)?;
         content = ensure_android_gradle_plugin_supports_kotlin_22(&content);
+        if let Some(androidx_version) = ctx.androidx_version.as_deref() {
+            content = set_or_insert_androidx_version_extra(&content, androidx_version);
+        }
         if self.settings_prefers_settings_repositories() {
             content = remove_allprojects_repositories(&content);
         } else if !ctx.extra_repositories.is_empty() {
@@ -100,6 +104,9 @@ impl AndroidProjectModifier {
                 &content,
                 "classpath 'com.huawei.agconnect:agcp:1.9.1.301'",
             );
+        }
+        if uses_google_services(ctx) {
+            content = ensure_buildscript_repository(&content, "google()");
         }
         for dependency in &ctx.project_buildscript_dependencies {
             content = ensure_buildscript_dependency(&content, dependency);
@@ -563,7 +570,10 @@ impl AndroidProjectModifier {
             .join(MODULE_NAME)
             .join("src/main/res/values/strings.xml");
         let content = self.read_file(&path)?;
-        let modified = set_string_resource(&content, "app_name", &ctx.app_name)?;
+        let mut modified = set_string_resource(&content, "app_name", &ctx.app_name)?;
+        for (name, value) in &ctx.string_resources {
+            modified = set_string_resource(&modified, name, value)?;
+        }
         self.write_file(&path, &modified)
     }
 
@@ -613,8 +623,18 @@ fn uses_huawei_agconnect(ctx: &BuildModificationContext) -> bool {
     })
 }
 
+fn uses_google_services(ctx: &BuildModificationContext) -> bool {
+    ctx.project_buildscript_dependencies
+        .iter()
+        .any(|dependency| dependency.contains("com.google.gms:google-services:"))
+}
+
 fn dependency_repositories_with_defaults(ctx: &BuildModificationContext) -> Vec<String> {
-    let mut repositories = vec!["google()".to_string(), "mavenCentral()".to_string()];
+    let mut repositories = vec![
+        "google()".to_string(),
+        "maven { url 'https://maven.aliyun.com/repository/public' }".to_string(),
+        "mavenCentral()".to_string(),
+    ];
     for repository in &ctx.extra_repositories {
         let repository = repository.trim();
         if repository.is_empty() {

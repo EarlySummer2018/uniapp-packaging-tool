@@ -49,6 +49,16 @@ const D8_REWRITE_RE = /WARNING:\s*D8:\s*Unexpected error during rewriting of Kot
 const D8_INTERNAL_RE = /^\s*(com\.android\.tools\.r8\.internal\.|at\s+com\.android\.tools\.r8\.|at\s+com\.android\.builder\.dexing\.|at\s+org\.gradle\.|at\s+java\.|at\s+com\.google\.common\.|at\s+org\.jetbrains\.)/
 const KOTLIN_METADATA_MISMATCH_RE = /Module was compiled with an incompatible version of Kotlin\..*binary version of its metadata is .*expected version is/i
 const SETTINGS_REPOSITORY_WARNING_RE = /Build was configured to prefer settings repositories over project repositories but repository '([^']+)' was added by build file 'build\.gradle'/i
+const GRADLE_TASK_RE = /^> Task /
+const GRADLE_FAILED_TASK_RE = /^> Task .* FAILED$/
+const D8_EXPECTED_STACK_MAP_RE = /WARNING:\s+.*\.jar:\s*D8:\s*Expected stack map table for method with non-linear control flow/i
+const MANIFEST_WARNING_HEADER_RE = /AndroidManifest\.xml(?::\d[^ ]*)? Warning:$/
+const MANIFEST_NOOP_RE = /tagged at AndroidManifest\.xml.*(?:replace|remove) other declarations but no other declaration present$/i
+const USES_SDK_IGNORED_RE = /uses-sdk:(?:minSdkVersion|targetSdkVersion).*specified in the manifest file is ignored/i
+const MULTIPLE_SUBSTITUTIONS_RE = /Multiple substitutions specified in non-positional format of string resource string\/([^\s.]+)/
+const UNABLE_TO_STRIP_RE = /^Unable to strip the following libraries, packaging them as they are:\s*(.+?)\.\s*Run with --info option/i
+const AGCONNECT_NO_CONFIG_RE = /^(?:--I- there's no config file|--W- The variant: ([^,]+), There's no json file)$/i
+const GRADLE_HELPER_NOISE_RE = /^(?:\[Incubating\] Problems report is available at:|You can use '--warning-mode all'|For more on this, please refer to https:\/\/docs\.gradle\.org\/|\d+ actionable tasks:)/
 
 export const useBuildStore = defineStore('build', () => {
   const builds = ref<Record<string, BuildTask>>({})
@@ -275,13 +285,15 @@ export const useBuildStore = defineStore('build', () => {
     const build = builds.value[buildId]
     if (!build || !lines.length) return null
 
+    const uniqueLines: string[] = []
     for (const line of lines) {
+      if (!rememberEmittedLine(buildId, line)) continue
       const parsed = parseLogLine(line)
       addLog(buildId, parsed.level, parsed.message)
-      rememberEmittedLine(buildId, line)
+      uniqueLines.push(line)
     }
 
-    return writeBuildLogLines(buildId, lines)
+    return writeBuildLogLines(buildId, uniqueLines)
   }
 
   async function flushBuildLogs(buildId?: string) {
@@ -367,30 +379,16 @@ export const useBuildStore = defineStore('build', () => {
       if (entry.progress != null) updateProgress(entry.buildId, entry.progress)
     }
 
-    const build = builds.value[buildId]
-    let lastMsg = build?.logs?.length ? build.logs[build.logs.length - 1] : null
-
-    for (const entry of compactedEntries) {
-      if (lastMsg && lastMsg.level === entry.level && lastMsg.message === entry.message) {
-        continue
-      }
+    const uniqueEntries = compactedEntries.filter(entry =>
+      rememberEmittedLine(buildId, `[${entry.level}] ${entry.message}`)
+    )
+    for (const entry of uniqueEntries) {
       addLog(entry.buildId, entry.level, entry.message)
-      lastMsg = { level: entry.level, message: entry.message } as BuildLog
     }
 
-    const rawLines: string[] = []
-    for (let i = 0; i < compactedEntries.length; i++) {
-      const entry = compactedEntries[i]
-      if (i > 0) {
-        const prev = compactedEntries[i - 1]
-        if (prev.level === entry.level && prev.message === entry.message) continue
-      }
-      rawLines.push(`[${entry.level}] ${entry.message}`)
-    }
-
-    const uniqueLines = rawLines.filter(line => rememberEmittedLine(buildId, line))
-    if (uniqueLines.length) {
-      await writeBuildLogLines(buildId, uniqueLines)
+    const rawLines = uniqueEntries.map(entry => `[${entry.level}] ${entry.message}`)
+    if (rawLines.length) {
+      await writeBuildLogLines(buildId, rawLines)
     }
   }
 
@@ -443,12 +441,20 @@ export const useBuildStore = defineStore('build', () => {
     const result: BufferedLog[] = []
     const stackBuffer: BufferedLog[] = []
     const d8Classes = new Set<string>()
+    const d8ExpectedStackMaps = new Map<string, number>()
     const kotlinModules = new Set<string>()
     const settingsRepositoryWarnings = new Set<string>()
+    const resourceSubstitutionWarnings = new Set<string>()
+    const unstrippedLibraries = new Set<string>()
+    const agconnectMissingVariants = new Set<string>()
     let d8WarningCount = 0
     let d8SuppressedLines = 0
     let kotlinMismatchCount = 0
     let settingsRepositoryWarningCount = 0
+    let d8ExpectedStackMapCount = 0
+    let resourceSubstitutionWarningCount = 0
+    let unstrippedWarningCount = 0
+    let agconnectNoConfigCount = 0
     let suppressingD8Details = false
 
     function pushEntry(entry: BufferedLog) {
@@ -516,8 +522,81 @@ export const useBuildStore = defineStore('build', () => {
       settingsRepositoryWarningCount = 0
     }
 
+    function flushGradleNoiseSummaries() {
+      if (d8ExpectedStackMapCount) {
+        const dependencies = Array.from(d8ExpectedStackMaps.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([dependency, count]) => `${dependency} ×${count}`)
+          .join('、')
+        result.push({
+          buildId,
+          level: 'warn',
+          message: `D8 stack map 警告已折叠: ${d8ExpectedStackMapCount} 条；涉及 ${dependencies}。`,
+        })
+      }
+      if (resourceSubstitutionWarningCount) {
+        result.push({
+          buildId,
+          level: 'warn',
+          message: `Android 字符串格式警告已折叠: ${resourceSubstitutionWarningCount} 条；涉及 ${Array.from(resourceSubstitutionWarnings).join('、')}。`,
+        })
+      }
+      if (unstrippedWarningCount) {
+        const libraries = Array.from(unstrippedLibraries)
+        const shown = libraries.slice(0, 6).join('、')
+        result.push({
+          buildId,
+          level: 'info',
+          message: `原生库调试符号剥离提示已折叠: ${unstrippedWarningCount} 条，涉及 ${libraries.length} 个库${shown ? `，示例: ${shown}${libraries.length > 6 ? ' 等' : ''}` : ''}。`,
+        })
+      }
+      if (agconnectNoConfigCount) {
+        const variants = Array.from(agconnectMissingVariants).join('、')
+        result.push({
+          buildId,
+          level: 'warn',
+          message: `AGConnect 未发现配置文件${variants ? `，影响变体: ${variants}` : ''}；请确认 agconnect-services.json 注入位置。`,
+        })
+      }
+    }
+
     for (const entry of entries) {
       const message = entry.message.trimEnd()
+      if (!message || GRADLE_HELPER_NOISE_RE.test(message)) continue
+      if (GRADLE_TASK_RE.test(message) && !GRADLE_FAILED_TASK_RE.test(message)) continue
+      if (MANIFEST_WARNING_HEADER_RE.test(message) || MANIFEST_NOOP_RE.test(message) || USES_SDK_IGNORED_RE.test(message)) continue
+
+      if (D8_EXPECTED_STACK_MAP_RE.test(message)) {
+        const dependency = extractD8Dependency(message)
+        d8ExpectedStackMaps.set(dependency, (d8ExpectedStackMaps.get(dependency) || 0) + 1)
+        d8ExpectedStackMapCount += 1
+        continue
+      }
+
+      const resourceSubstitution = message.match(MULTIPLE_SUBSTITUTIONS_RE)?.[1]
+      if (resourceSubstitution) {
+        resourceSubstitutionWarnings.add(resourceSubstitution)
+        resourceSubstitutionWarningCount += 1
+        continue
+      }
+
+      const unstripped = message.match(UNABLE_TO_STRIP_RE)?.[1]
+      if (unstripped) {
+        for (const library of unstripped.split(',')) {
+          const normalized = library.trim()
+          if (normalized) unstrippedLibraries.add(normalized)
+        }
+        unstrippedWarningCount += 1
+        continue
+      }
+
+      const agconnectNoConfig = message.match(AGCONNECT_NO_CONFIG_RE)
+      if (agconnectNoConfig) {
+        if (agconnectNoConfig[1]) agconnectMissingVariants.add(agconnectNoConfig[1])
+        agconnectNoConfigCount += 1
+        continue
+      }
+
       const d8Class = message.match(D8_REWRITE_RE)?.[1]
       if (D8_METADATA_RE.test(message) || d8Class) {
         flushStack()
@@ -566,7 +645,13 @@ export const useBuildStore = defineStore('build', () => {
     flushD8Summary()
     flushKotlinMismatchSummary()
     flushSettingsRepositorySummary()
+    flushGradleNoiseSummaries()
     return result
+  }
+
+  function extractD8Dependency(message: string): string {
+    const jar = message.match(/[\\/]([^\\/]+)\.jar:\s*D8:/i)?.[1]
+    return jar?.replace(/^jetified-/, '').replace(/-runtime$/, '') || 'unknown'
   }
 
   function extractKotlinMismatchModule(message: string): string {

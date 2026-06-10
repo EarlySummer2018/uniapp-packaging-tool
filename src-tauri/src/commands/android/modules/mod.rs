@@ -176,7 +176,13 @@ pub fn render_all_patches(
 
     let permissions_str = permissions
         .into_iter()
-        .map(|permission| format!("    <uses-permission android:name=\"{}\" />", permission))
+        .map(|permission| {
+            if permission.trim_start().starts_with('<') {
+                format!("    {}", permission)
+            } else {
+                format!("    <uses-permission android:name=\"{}\" />", permission)
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let application_entries_str = application_entries
@@ -196,4 +202,139 @@ pub fn render_all_patches(
     let groups: Vec<crate::commands::android::project_mod::ManifestPatchGroup> =
         groups_map.into_values().collect();
     (patches, groups)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::shared::module::types::{
+        AndroidModuleConfigField, AndroidModuleConfigModule, AndroidModuleConfigReport,
+    };
+
+    #[test]
+    fn livepusher_patches_include_documented_permissions_and_features() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "LivePusher".to_string(),
+                template_key: "livepusher".to_string(),
+                category: "livepusher".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: Vec::new(),
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, groups) = render_all_patches(Some(&report), "com.example.demo", "");
+
+        for permission in [
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.READ_EXTERNAL_STORAGE",
+            "android.permission.RECORD_AUDIO",
+            "android.permission.MODIFY_AUDIO_SETTINGS",
+            "android.permission.BLUETOOTH",
+            "android.permission.CAMERA",
+            "android.permission.READ_PHONE_STATE",
+        ] {
+            assert!(patches.permissions.contains(permission));
+        }
+        for feature in [
+            r#"<uses-feature android:name="android.hardware.Camera" />"#,
+            r#"<uses-feature android:name="android.hardware.camera.autofocus" />"#,
+        ] {
+            assert!(patches.permissions.contains(feature));
+        }
+        assert!(!patches
+            .permissions
+            .contains(r#"<uses-permission android:name="<uses-feature"#));
+
+        let group = groups
+            .iter()
+            .find(|group| group.module_name == "livepusher")
+            .expect("livepusher patch group");
+        assert_eq!(group.permissions.len(), 12);
+    }
+
+    #[test]
+    fn oauth_without_miui_does_not_add_xiaomi_auth_permission() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "OAuth".to_string(),
+                template_key: "login".to_string(),
+                category: "oauth".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: vec![],
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, groups) = render_all_patches(Some(&report), "com.example.demo", "");
+
+        assert!(!patches
+            .permissions
+            .contains("com.xiaomi.permission.AUTH_SERVICE"));
+        let login_group = groups
+            .iter()
+            .find(|group| group.module_name == "login")
+            .expect("login manifest patch group");
+        assert!(!login_group
+            .permissions
+            .iter()
+            .any(|permission| permission == "com.xiaomi.permission.AUTH_SERVICE"));
+    }
+
+    #[test]
+    fn share_sina_patches_include_official_manifest_entries() {
+        let report = AndroidModuleConfigReport {
+            modules: vec![AndroidModuleConfigModule {
+                name: "Share".to_string(),
+                template_key: "share".to_string(),
+                category: "share".to_string(),
+                platforms: vec!["android".to_string()],
+                source: "manifest.json".to_string(),
+                fields: ["SINA_APPKEY", "SINA_SECRET", "SINA_REDIRECT_URI"]
+                    .into_iter()
+                    .map(|key| AndroidModuleConfigField {
+                        key: key.to_string(),
+                        value: Some(format!("{}-value", key)),
+                        ..Default::default()
+                    })
+                    .collect(),
+            }],
+            all_configured: true,
+            ..Default::default()
+        };
+
+        let (patches, groups) = render_all_patches(Some(&report), "com.example.demo", "");
+
+        for permission in [
+            "android.permission.CHANGE_WIFI_STATE",
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.ACCESS_NETWORK_STATE",
+        ] {
+            assert!(patches.permissions.contains(permission));
+        }
+        for expected in [
+            r#"<meta-data android:name="SINA_APPKEY" android:value="_${SINA_APPKEY}""#,
+            r#"<meta-data android:name="SINA_SECRET" android:value="${SINA_SECRET}""#,
+            r#"<activity android:name="com.sina.weibo.sdk.share.WbShareTransActivity" android:exported="true""#,
+            "com.sina.weibo.sdk.action.ACTION_SDK_REQ_ACTIVITY",
+        ] {
+            assert!(patches.application_entries.contains(expected), "{expected}");
+        }
+        let share_group = groups
+            .iter()
+            .find(|group| group.module_name == "share")
+            .expect("share manifest patch group");
+        assert!(share_group
+            .application_entries
+            .iter()
+            .any(|entry| entry.contains("ACTION_SDK_REQ_ACTIVITY")));
+    }
 }

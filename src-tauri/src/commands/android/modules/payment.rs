@@ -1,6 +1,6 @@
 //! 支付模块 (payment) manifest 补丁
 //!
-//! 支持微信支付、支付宝。
+//! 支持支付宝、微信支付、PayPal、Stripe、Google Pay。
 
 #![allow(dead_code)]
 
@@ -49,7 +49,7 @@ pub fn render_patches(
         let wx_pay_entries = [
             meta_data("WX_APPID", &placeholder_value(placeholders, "WX_APPID")),
             service_entry(
-                r#"<activity android:name="io.dcloud.feature.payment.weixin.WXPayProcessMeadiatorActivity" android:exported="false" android:excludeFromRecents="true" android:theme="@style/TranslucentTheme" />"#,
+                r#"<activity android:name="io.dcloud.feature.payment.weixin.WXPayProcessMeadiatorActivity" android:exported="false" android:excludeFromRecents="true" android:theme="@style/ProjectDialogTheme" />"#,
             ),
             service_entry(&format!(
                 r#"<activity android:name="{}.wxapi.WXPayEntryActivity" android:exported="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:launchMode="singleTop" />"#,
@@ -59,6 +59,44 @@ pub fn render_patches(
         add_application_entries(application_entries, &wx_pay_entries);
         mod_entries.extend(wx_pay_entries.iter().cloned());
     }
+    if has_report_value(module, "PAYPAL_RETURN_SCHEME") {
+        let scheme = placeholder_value(placeholders, "PAYPAL_RETURN_SCHEME");
+        let paypal_entries = [
+            service_entry(&format!(
+                r#"<activity android:name="com.paypal.openid.RedirectUriReceiverActivity" android:excludeFromRecents="true" android:exported="true" android:theme="@style/PYPLAppTheme">
+    <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:host="paypalpay" android:scheme="{}" />
+    </intent-filter>
+</activity>"#,
+                scheme
+            )),
+            service_entry(&format!(
+                r#"<activity android:name="com.paypal.pyplcheckout.home.view.activities.PYPLInitiateCheckoutActivity" android:exported="true" android:theme="@style/AppFullScreenTheme">
+    <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:host="paypalxo" android:scheme="{}" />
+    </intent-filter>
+</activity>"#,
+                scheme
+            )),
+            meta_data("returnUrl", &format!("{}://paypalpay", scheme)),
+        ];
+        add_application_entries(application_entries, &paypal_entries);
+        mod_entries.extend(paypal_entries.iter().cloned());
+    }
+    let provider_entries = [
+        service_entry(
+            r#"<activity android:name="io.dcloud.feature.payment.stripe.TransparentActivity" android:excludeFromRecents="true" android:exported="false" android:theme="@style/TranslucentTheme" />"#,
+        ),
+        meta_data("com.google.android.gms.wallet.api.enabled", "true"),
+    ];
+    add_application_entries(application_entries, &provider_entries);
+    mod_entries.extend(provider_entries.iter().cloned());
 
     // 写入 patch group
     let group_name = module.template_key.clone();

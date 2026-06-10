@@ -356,7 +356,7 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
             AndroidConfigFieldSpec {
                 key: "SINA_APPKEY",
                 label: "微博登录 AppKey",
-                required: false,
+                required: true,
                 secret: true,
                 placeholder: "启用微博登录时填写",
                 aliases: &["SINA_APPKEY", "sina_appkey", "appkey", "appKey"],
@@ -366,7 +366,7 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
             AndroidConfigFieldSpec {
                 key: "SINA_REDIRECT_URI",
                 label: "微博登录 Redirect URI",
-                required: false,
+                required: true,
                 secret: false,
                 placeholder: "启用微博登录时填写",
                 aliases: &["SINA_REDIRECT_URI", "redirect_uri", "redirectUri"],
@@ -376,7 +376,7 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
             AndroidConfigFieldSpec {
                 key: "MIUI_APPID",
                 label: "小米登录 AppID",
-                required: false,
+                required: true,
                 secret: false,
                 placeholder: "启用小米登录时填写",
                 aliases: &["MIUI_APPID", "miui_appid", "appid", "appId"],
@@ -386,7 +386,7 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
             AndroidConfigFieldSpec {
                 key: "MIUI_APPSECRET",
                 label: "小米登录 AppSecret",
-                required: false,
+                required: true,
                 secret: true,
                 placeholder: "启用小米登录时填写",
                 aliases: &["MIUI_APPSECRET", "miui_appsecret", "appsecret", "appSecret"],
@@ -396,7 +396,7 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
             AndroidConfigFieldSpec {
                 key: "MIUI_REDIRECT_URI",
                 label: "小米登录 RegURL",
-                required: false,
+                required: true,
                 secret: false,
                 placeholder: "启用小米登录时填写",
                 aliases: &["MIUI_REDIRECT_URI", "redirect_uri", "redirectUri", "regUrl"],
@@ -406,7 +406,7 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
             AndroidConfigFieldSpec {
                 key: "FACEBOOK_APP_ID",
                 label: "Facebook App ID",
-                required: false,
+                required: true,
                 secret: false,
                 placeholder: "启用 Facebook 登录时填写",
                 aliases: &["FACEBOOK_APP_ID", "facebook_app_id", "appId", "appid"],
@@ -416,7 +416,7 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
             AndroidConfigFieldSpec {
                 key: "FACEBOOK_CLIENT_TOKEN",
                 label: "Facebook Client Token",
-                required: false,
+                required: true,
                 secret: true,
                 placeholder: "启用 Facebook 登录时填写",
                 aliases: &[
@@ -493,6 +493,7 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
                     "GOOGLE_MAPS_API_KEY",
                     "com.google.android.geo.API_KEY",
                     "google_maps_api_key",
+                    "APIKey_android",
                     "apiKey",
                     "key",
                 ],
@@ -532,7 +533,7 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
             AndroidConfigFieldSpec {
                 key: "PAYPAL_RETURN_SCHEME",
                 label: "PayPal Return Scheme",
-                required: false,
+                required: true,
                 secret: false,
                 placeholder: "启用 PayPal 时填写",
                 aliases: &[
@@ -544,6 +545,16 @@ pub(crate) fn android_config_field_specs(template_key: &str) -> &'static [Androi
                     "scheme",
                 ],
                 path_hints: &["payment", "pay", "paypal"],
+                field_type: "text",
+            },
+            AndroidConfigFieldSpec {
+                key: "androidxVersion",
+                label: "AndroidX 版本",
+                required: false,
+                secret: false,
+                placeholder: "1.0.0",
+                aliases: &["androidxVersion", "ANDROIDX_VERSION", "androidx_version"],
+                path_hints: &["payment", "pay", "stripe", "google", "googlepay"],
                 field_type: "text",
             },
         ],

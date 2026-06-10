@@ -5,12 +5,13 @@ use crate::commands::resource::DetectedModule;
 use crate::commands::shared::module::analysis::{
     analyze_android_module_config_sync, android_module_artifact_enabled_for_manifest,
     android_module_config_report_from_value, android_module_gradle_dependency_enabled_for_manifest,
+    android_module_gradle_repositories_for_manifest,
 };
 use crate::commands::shared::module::parsing::module_config_from_detected_modules;
 use crate::commands::shared::module::properties::generate_dcloud_properties;
 use crate::commands::shared::module::types::{
     LoginModuleConfig, LoginProvider, MapModuleConfig, ModuleConfigTree, PaymentModuleConfig,
-    PushModuleConfig, ShareModuleConfig, SimpleModuleConfig,
+    PushModuleConfig, ShareModuleConfig, SimpleModuleConfig, StatisticModuleConfig,
 };
 use crate::commands::shared::resource::parse_uniapp_manifest;
 
@@ -63,6 +64,47 @@ fn manifest_modules_generate_dcloud_properties() {
     assert!(content.contains(r#"<feature name="Share""#));
     assert_eq!(content.matches("<features>").count(), 1);
     assert_eq!(content.matches("</features>").count(), 1);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn dcloud_properties_payment_replaces_defaults_and_includes_all_providers() {
+    let path = temp_file("unipack-all-payment-properties");
+    std::fs::write(
+        &path,
+        r#"<properties>
+    <features>
+        <feature name="Payment"><module name="AliPay"/></feature>
+    </features>
+</properties>"#,
+    )
+    .unwrap();
+    let config = ModuleConfigTree {
+        payment: Some(PaymentModuleConfig {
+            enabled: true,
+            weixin: Some(HashMap::new()),
+            alipay: Some(HashMap::new()),
+            paypal: Some(HashMap::new()),
+            stripe: Some(HashMap::new()),
+            google: Some(HashMap::new()),
+        }),
+        ..Default::default()
+    };
+
+    generate_dcloud_properties(&path, &config, &["Payment".to_string()]).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+
+    for provider in [
+        "AliPay",
+        "Payment-Weixin",
+        "Payment-Paypal",
+        "Payment-Stripe",
+        "Payment-Google",
+    ] {
+        assert!(content.contains(&format!(r#"<module name="{}""#, provider)));
+    }
+    assert_eq!(content.matches(r#"<feature name="Payment""#).count(), 1);
 
     let _ = std::fs::remove_file(path);
 }
@@ -200,6 +242,54 @@ fn dcloud_properties_push_adds_feature_and_service() {
 }
 
 #[test]
+fn dcloud_properties_umeng_statistic_replaces_template_defaults() {
+    let path = temp_file("unipack-umeng-statistic-properties");
+    std::fs::write(
+        &path,
+        r#"<properties>
+	<features>
+		<feature name="Statistic" value="io.dcloud.feature.statistics.StatisticsFeatureImpl"/>
+	</features>
+	<services>
+		<service name="Statistic" value="io.dcloud.feature.statistics.StatisticsBootImpl"/>
+	</services>
+</properties>"#,
+    )
+    .unwrap();
+    let mut config = ModuleConfigTree::default();
+    config.statistic = Some(StatisticModuleConfig {
+        enabled: true,
+        provider: "umeng".to_string(),
+        umeng: Some(HashMap::new()),
+        mta: None,
+        baidu: None,
+    });
+    let enabled = vec!["Statistic".to_string()];
+
+    generate_dcloud_properties(&path, &config, &enabled).unwrap();
+    generate_dcloud_properties(&path, &config, &enabled).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+
+    assert!(content.contains(
+        r#"<feature name="Statistic" value="io.dcloud.feature.statistics.StatisticsFeatureImpl">"#
+    ));
+    assert!(content.contains(
+        r#"<module name="Statistic-Umeng" value="io.dcloud.feature.statistics.umeng.UmengStatistics"/>"#
+    ));
+    assert!(content.contains(
+        r#"<service name="Statistic-Umeng" value="io.dcloud.feature.statistics.umeng.StatisticsBootImpl"/>"#
+    ));
+    assert!(!content.contains(r#"<service name="Statistic" "#));
+    assert_eq!(content.matches(r#"feature name="Statistic""#).count(), 1);
+    assert_eq!(
+        content.matches(r#"service name="Statistic-Umeng""#).count(),
+        1
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn dcloud_properties_adds_canonical_oauth_and_share_features() {
     let path = temp_file("unipack-oauth-share-properties");
     let mut config = ModuleConfigTree::default();
@@ -319,6 +409,76 @@ fn android_config_report_prefers_manifest_and_lists_missing() {
         .missing_required
         .iter()
         .any(|missing| missing.key == "QQ_APPID"));
+    assert!(report.all_configured);
+}
+
+#[test]
+fn android_config_report_uses_scoped_user_values_for_duplicate_keys() {
+    let modules = vec![
+        DetectedModule {
+            name: "Share".to_string(),
+            category: "share".to_string(),
+            platforms: vec!["android".to_string()],
+            configured: false,
+            required_keys: vec![],
+            source: "manifest.json".to_string(),
+        },
+        DetectedModule {
+            name: "OAuth".to_string(),
+            category: "login".to_string(),
+            platforms: vec!["android".to_string()],
+            configured: false,
+            required_keys: vec![],
+            source: "manifest.json".to_string(),
+        },
+    ];
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "share": { "sinaweibo": {} },
+                    "oauth": { "sinaweibo": {} }
+                }
+            }
+        }
+    });
+    let mut user = HashMap::new();
+    user.insert("share.SINA_APPKEY".to_string(), "share-key".to_string());
+    user.insert("share.SINA_SECRET".to_string(), "share-secret".to_string());
+    user.insert(
+        "share.SINA_REDIRECT_URI".to_string(),
+        "share-redirect".to_string(),
+    );
+    user.insert("login.SINA_APPKEY".to_string(), "login-key".to_string());
+    user.insert(
+        "login.SINA_REDIRECT_URI".to_string(),
+        "login-redirect".to_string(),
+    );
+
+    let report = android_module_config_report_from_value(&modules, Some(&manifest), Some(&user));
+    let share = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "share")
+        .unwrap();
+    let login = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "login")
+        .unwrap();
+
+    for (module, key, expected) in [
+        (share, "SINA_APPKEY", "share-key"),
+        (share, "SINA_SECRET", "share-secret"),
+        (share, "SINA_REDIRECT_URI", "share-redirect"),
+        (login, "SINA_APPKEY", "login-key"),
+        (login, "SINA_REDIRECT_URI", "login-redirect"),
+    ] {
+        let field = module.fields.iter().find(|field| field.key == key).unwrap();
+        assert_eq!(field.value.as_deref(), Some(expected));
+        assert_eq!(field.value_source.as_deref(), Some("user"));
+        assert!(field.required);
+    }
     assert!(report.all_configured);
 }
 
@@ -507,6 +667,53 @@ fn android_config_report_shows_only_enabled_oauth_provider_fields() {
 }
 
 #[test]
+fn enabled_oauth_providers_require_their_official_configuration_fields() {
+    let modules = vec![DetectedModule {
+        name: "OAuth".to_string(),
+        category: "login".to_string(),
+        platforms: vec!["android".to_string()],
+        configured: false,
+        required_keys: vec![],
+        source: "manifest.json".to_string(),
+    }];
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "oauth": {
+                        "sinaweibo": {},
+                        "miui": {},
+                        "facebook": {}
+                    }
+                }
+            }
+        }
+    });
+
+    let report = android_module_config_report_from_value(&modules, Some(&manifest), None);
+
+    for key in [
+        "SINA_APPKEY",
+        "SINA_REDIRECT_URI",
+        "MIUI_APPID",
+        "MIUI_APPSECRET",
+        "MIUI_REDIRECT_URI",
+        "FACEBOOK_APP_ID",
+        "FACEBOOK_CLIENT_TOKEN",
+    ] {
+        assert!(report
+            .modules
+            .iter()
+            .flat_map(|module| module.fields.iter())
+            .any(|field| field.key == key && field.required));
+        assert!(report
+            .missing_required
+            .iter()
+            .any(|missing| missing.key == key));
+    }
+}
+
+#[test]
 fn android_config_report_honors_nested_push_and_platform_providers() {
     let modules = vec![
         DetectedModule {
@@ -587,6 +794,198 @@ fn android_config_report_honors_nested_push_and_platform_providers() {
         .collect::<Vec<_>>();
     assert_eq!(payment_keys, vec!["PAYPAL_RETURN_SCHEME"]);
     assert_eq!(payment.fields[0].value.as_deref(), Some("paypal-demo"));
+}
+
+#[test]
+fn paypal_payment_requires_return_scheme_and_official_repository() {
+    let modules = vec![DetectedModule {
+        name: "Payment".to_string(),
+        category: "payment".to_string(),
+        platforms: vec!["android".to_string()],
+        configured: false,
+        required_keys: vec![],
+        source: "manifest.json".to_string(),
+    }];
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {
+                        "paypal": {}
+                    }
+                }
+            }
+        }
+    });
+
+    let report = android_module_config_report_from_value(&modules, Some(&manifest), None);
+    let field = report
+        .modules
+        .iter()
+        .flat_map(|module| module.fields.iter())
+        .find(|field| field.key == "PAYPAL_RETURN_SCHEME")
+        .expect("PayPal return scheme field");
+    assert!(field.required);
+    assert!(report
+        .missing_required
+        .iter()
+        .any(|missing| missing.key == "PAYPAL_RETURN_SCHEME"));
+
+    let repositories = android_module_gradle_repositories_for_manifest("payment", Some(&manifest));
+    assert_eq!(repositories.len(), 2);
+    assert!(repositories[0].contains("maven.aliyun.com/repository/public"));
+    assert!(repositories[1].contains("cardinalcommerceprod.jfrog.io"));
+    assert!(repositories[1].contains("paypal_sgerritz"));
+}
+
+#[test]
+fn stripe_payment_adds_maven_central_mirror_repository() {
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {
+                        "stripe": {}
+                    }
+                }
+            }
+        }
+    });
+
+    let repositories = android_module_gradle_repositories_for_manifest("payment", Some(&manifest));
+
+    assert_eq!(repositories, vec![
+        "maven { url 'https://maven.aliyun.com/repository/public' }"
+    ]);
+}
+
+#[test]
+fn all_selected_payment_providers_enable_their_artifacts_and_dependencies() {
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {
+                        "alipay": {},
+                        "weixin": {},
+                        "paypal": {},
+                        "stripe": {},
+                        "googlepay": {}
+                    }
+                }
+            }
+        }
+    });
+
+    for artifact in [
+        "payment-alipay-release.aar (支付宝)",
+        "payment-weixin-release.aar (微信支付)",
+        "payment-paypal-release.aar (PayPal)",
+        "payment-stripe-release.aar (Stripe)",
+        "payment-google-release.aar (Google Pay)",
+    ] {
+        assert!(android_module_artifact_enabled_for_manifest(
+            "payment",
+            artifact,
+            Some(&manifest),
+        ));
+    }
+    for dependency in [
+        "com.alipay.sdk:alipaysdk-android:15.8.11 (支付宝)",
+        "com.tencent.mm.opensdk:wechat-sdk-android-without-mta:6.8.0 (微信支付)",
+        "com.paypal.checkout:android-sdk:0.6.2 (PayPal)",
+        "androidx.legacy:legacy-support-v4:${rootProject.ext.androidxVersion} (Stripe)",
+        "com.stripe:stripe-android:18.2.0 (Stripe)",
+        "com.google.android.gms:play-services-wallet:18.1.3 (Google Pay)",
+    ] {
+        assert!(android_module_gradle_dependency_enabled_for_manifest(
+            "payment",
+            dependency,
+            Some(&manifest),
+        ));
+    }
+}
+
+#[test]
+fn payment_androidx_version_is_shown_for_stripe_or_google_pay_with_default_and_user_override() {
+    let modules = vec![DetectedModule {
+        name: "Payment".to_string(),
+        category: "payment".to_string(),
+        platforms: vec!["android".to_string()],
+        configured: false,
+        required_keys: vec![],
+        source: "manifest.json".to_string(),
+    }];
+    let stripe_manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {
+                        "stripe": {}
+                    }
+                }
+            }
+        }
+    });
+    let google_manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {
+                        "googlepay": {}
+                    }
+                }
+            }
+        }
+    });
+    let paypal_manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {
+                        "paypal": {}
+                    }
+                }
+            }
+        }
+    });
+
+    let default_report =
+        android_module_config_report_from_value(&modules, Some(&stripe_manifest), None);
+    let default_version = default_report.modules[0]
+        .fields
+        .iter()
+        .find(|field| field.key == "androidxVersion")
+        .unwrap();
+    assert_eq!(default_version.value.as_deref(), Some("1.0.0"));
+    assert_eq!(default_version.value_source.as_deref(), Some("default"));
+    assert!(!default_version.required);
+
+    let google_report =
+        android_module_config_report_from_value(&modules, Some(&google_manifest), None);
+    assert!(google_report.modules[0]
+        .fields
+        .iter()
+        .any(|field| field.key == "androidxVersion"));
+
+    let paypal_report =
+        android_module_config_report_from_value(&modules, Some(&paypal_manifest), None);
+    assert!(!paypal_report.modules[0]
+        .fields
+        .iter()
+        .any(|field| field.key == "androidxVersion"));
+
+    let mut user = HashMap::new();
+    user.insert("androidxVersion".to_string(), "1.7.0".to_string());
+    let user_report =
+        android_module_config_report_from_value(&modules, Some(&stripe_manifest), Some(&user));
+    let user_version = user_report.modules[0]
+        .fields
+        .iter()
+        .find(|field| field.key == "androidxVersion")
+        .unwrap();
+    assert_eq!(user_version.value.as_deref(), Some("1.7.0"));
+    assert_eq!(user_version.value_source.as_deref(), Some("user"));
 }
 
 #[test]
@@ -811,6 +1210,77 @@ fn geolocation_artifacts_and_dependencies_follow_enabled_provider() {
 }
 
 #[test]
+fn univerify_login_adds_getui_repository_without_push() {
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "oauth": {
+                        "univerify": {}
+                    }
+                }
+            }
+        }
+    });
+
+    assert_eq!(
+        android_module_gradle_repositories_for_manifest("login", Some(&manifest)),
+        vec!["maven { url 'https://mvn.getui.com/nexus/content/repositories/releases' }"]
+    );
+}
+
+#[test]
+fn statistic_artifacts_keep_umeng_variants_mutually_exclusive() {
+    let umeng_manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "statistic": {
+                        "umeng": {
+                            "appkey": "umeng-demo"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let umeng_google_play_manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "statistic": {
+                        "umeng-gp": {
+                            "appkey": "umeng-gp-demo"
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    assert!(android_module_artifact_enabled_for_manifest(
+        "statistic",
+        "statistic-umeng-release.aar (友盟统计)",
+        Some(&umeng_manifest),
+    ));
+    assert!(!android_module_artifact_enabled_for_manifest(
+        "statistic",
+        "statistic-umeng-gp-release.aar (友盟 Google Play)",
+        Some(&umeng_manifest),
+    ));
+    assert!(!android_module_artifact_enabled_for_manifest(
+        "statistic",
+        "statistic-umeng-release.aar (友盟统计)",
+        Some(&umeng_google_play_manifest),
+    ));
+    assert!(android_module_artifact_enabled_for_manifest(
+        "statistic",
+        "statistic-umeng-gp-release.aar (友盟 Google Play)",
+        Some(&umeng_google_play_manifest),
+    ));
+}
+
+#[test]
 fn amap_map_replaces_amap_geolocation_sdk_integration() {
     let modules = vec![
         DetectedModule {
@@ -942,6 +1412,67 @@ fn map_page_type_defaults_to_vue_and_allows_amap_nvue() {
         Some("10.0.700_loc6.4.5_sea9.7.2")
     );
     assert_eq!(version_field.value_source.as_deref(), Some("default"));
+}
+
+#[test]
+fn google_map_reads_dcloud_android_api_key_from_manifest() {
+    let modules = vec![DetectedModule {
+        name: "Maps".to_string(),
+        category: "map".to_string(),
+        platforms: vec!["android".to_string()],
+        configured: false,
+        required_keys: vec![],
+        source: "manifest.json".to_string(),
+    }];
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "maps": {
+                        "google": {
+                            "APIKey_ios": "ios-google-key",
+                            "APIKey_android": "android-google-key"
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let report = android_module_config_report_from_value(&modules, Some(&manifest), None);
+    let map = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "map")
+        .unwrap();
+    let key = map
+        .fields
+        .iter()
+        .find(|field| field.key == "GOOGLE_MAPS_API_KEY")
+        .unwrap();
+    let page_type = map
+        .fields
+        .iter()
+        .find(|field| field.key == "MAP_PAGE_TYPE")
+        .unwrap();
+
+    assert_eq!(key.value.as_deref(), Some("android-google-key"));
+    assert_eq!(key.value_source.as_deref(), Some("manifest"));
+    assert_eq!(page_type.value.as_deref(), Some("nvue"));
+    assert!(!report
+        .missing_required
+        .iter()
+        .any(|missing| missing.key == "GOOGLE_MAPS_API_KEY"));
+    assert!(android_module_artifact_enabled_for_manifest(
+        "map",
+        "weex_google-map-release.aar (Google nvue 页面)",
+        Some(&manifest),
+    ));
+    assert!(android_module_gradle_dependency_enabled_for_manifest(
+        "map",
+        "com.google.android.gms:play-services-maps:18.0.1 (Google地图)",
+        Some(&manifest),
+    ));
 }
 
 #[test]
@@ -1095,6 +1626,9 @@ fn module_config_with_camera_share_oauth_payment() -> ModuleConfigTree {
         enabled: true,
         weixin: Some(HashMap::new()),
         alipay: Some(HashMap::new()),
+        paypal: Some(HashMap::new()),
+        stripe: Some(HashMap::new()),
+        google: Some(HashMap::new()),
     });
     config
 }

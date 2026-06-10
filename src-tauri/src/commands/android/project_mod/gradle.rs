@@ -27,16 +27,12 @@ pub(crate) fn set_or_insert_root_project_name(content: &str, project_name: &str)
         Regex::new(r#"(?m)^\s*rootProject\.name\s*=\s*['"][^'"]*['"]\s*$"#).expect("valid regex");
     if re.is_match(content) {
         re.replace(content, replacement).to_string()
-    } else if content.contains("pluginManagement") {
-        let plugin_mgmt_end = content
-            .find('}')
-            .and_then(|close_brace| {
-                content[close_brace..]
-                    .find('\n')
-                    .map(|nl_offset| close_brace + nl_offset + 1)
-            })
-            .unwrap_or(0);
-        let (before, after) = content.split_at(plugin_mgmt_end);
+    } else if let Some(plugin_management) = find_named_block(content, "pluginManagement", 0) {
+        let mut insert_at = plugin_management.close_brace + 1;
+        if content.as_bytes().get(insert_at) == Some(&b'\n') {
+            insert_at += 1;
+        }
+        let (before, after) = content.split_at(insert_at);
         format!(
             "{}{}\n{}",
             before,
@@ -305,6 +301,32 @@ pub(crate) fn ensure_android_gradle_plugin_supports_kotlin_22(content: &str) -> 
         }
     })
     .to_string()
+}
+
+pub(crate) fn set_or_insert_androidx_version_extra(content: &str, version: &str) -> String {
+    let version = version.trim();
+    if version.is_empty() {
+        return content.to_string();
+    }
+    let escaped_version = escape_gradle_single_quoted(version);
+    let assignment_re = Regex::new(
+        r#"(?m)^([ \t]*)((?:(?:rootProject\.)?ext\.)?androidxVersion)\s*=\s*['"][^'"]*['"]\s*$"#,
+    )
+    .expect("valid androidxVersion assignment regex");
+    if assignment_re.is_match(content) {
+        return assignment_re
+            .replace_all(content, |caps: &regex::Captures| {
+                let indent = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+                let lhs = caps.get(2).map(|m| m.as_str()).unwrap_or("androidxVersion");
+                format!("{}{} = '{}'", indent, lhs, escaped_version)
+            })
+            .to_string();
+    }
+
+    append_statement(
+        content,
+        &format!("ext {{\n    androidxVersion = '{}'\n}}", escaped_version),
+    )
 }
 
 fn version_is_less_than(current: &str, minimum: &str) -> bool {

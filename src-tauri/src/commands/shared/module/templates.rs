@@ -181,6 +181,9 @@ fn payment_manifest_config() -> PaymentModuleConfig {
         enabled: true,
         weixin: Some(HashMap::new()),
         alipay: Some(HashMap::new()),
+        paypal: Some(HashMap::new()),
+        stripe: Some(HashMap::new()),
+        google: Some(HashMap::new()),
     }
 }
 
@@ -384,7 +387,7 @@ fn get_share_template() -> ModuleTemplate {
                 HashMap::from([("android:name".to_string(), "WX_APPID".to_string()), ("android:value".to_string(), "${WX_APPID}".to_string())]),
                 HashMap::from([("android:name".to_string(), "WX_SECRET".to_string()), ("android:value".to_string(), "${WX_SECRET}".to_string())]),
                 HashMap::from([("android:name".to_string(), "QQ_APPID".to_string()), ("android:value".to_string(), "${QQ_APPID}".to_string())]),
-                HashMap::from([("android:name".to_string(), "SINA_APPKEY".to_string()), ("android:value".to_string(), "${SINA_APPKEY}".to_string())]),
+                HashMap::from([("android:name".to_string(), "SINA_APPKEY".to_string()), ("android:value".to_string(), "_${SINA_APPKEY}".to_string())]),
                 HashMap::from([("android:name".to_string(), "SINA_SECRET".to_string()), ("android:value".to_string(), "${SINA_SECRET}".to_string())]),
                 HashMap::from([("android:name".to_string(), "SINA_REDIRECT_URI".to_string()), ("android:value".to_string(), "${SINA_REDIRECT_URI}".to_string())]),
             ],
@@ -393,7 +396,8 @@ fn get_share_template() -> ModuleTemplate {
                 ".wxapi.WXPayActivity (微信支付)".to_string(),
                 "com.tencent.tauth.AuthActivity (QQ授权)".to_string(),
                 "com.tencent.connect.common.AssistActivity (QQ辅助)".to_string(),
-                "cn.sharesdk.wechat.friends.WXFriendActivity (微博分享页)".to_string(),
+                "com.sina.weibo.sdk.web.WeiboSdkWebActivity (微博网页授权)".to_string(),
+                "com.sina.weibo.sdk.share.WbShareTransActivity (微博分享回调)".to_string(),
             ],
             properties_xml: "<feature name=\"Share\" value=\"io.dcloud.share.ShareFeatureImpl\"><module name=\"Weixin\"/><module name=\"QQ\"/><module name=\"SinaWeibo\"/></feature>".to_string(),
         },
@@ -470,7 +474,7 @@ fn get_geolocation_template() -> ModuleTemplate {
 fn get_payment_template() -> ModuleTemplate {
     ModuleTemplate {
         module_name: "Payment".to_string(),
-        description: "支付模块（微信支付/支付宝）".to_string(),
+        description: "支付模块（支付宝/微信/PayPal/Stripe/Google Pay）".to_string(),
         android_config: AndroidModuleTemplate {
             required_aars: vec![
                 "payment-alipay-release.aar (支付宝)".to_string(),
@@ -484,17 +488,22 @@ fn get_payment_template() -> ModuleTemplate {
                 "com.alipay.sdk:alipaysdk-android:15.8.11 (支付宝)".to_string(),
                 "com.tencent.mm.opensdk:wechat-sdk-android-without-mta:6.8.0 (微信支付)".to_string(),
                 "com.paypal.checkout:android-sdk:0.6.2 (PayPal)".to_string(),
+                "androidx.appcompat:appcompat:${rootProject.ext.androidxVersion} (Stripe)".to_string(),
+                "androidx.legacy:legacy-support-v4:${rootProject.ext.androidxVersion} (Stripe)".to_string(),
                 "com.stripe:stripe-android:18.2.0 (Stripe)".to_string(),
+                "androidx.appcompat:appcompat:${rootProject.ext.androidxVersion} (Google Pay)".to_string(),
                 "com.google.android.gms:play-services-wallet:18.1.3 (Google Pay)".to_string(),
             ],
             manifest_placeholders: vec![
                 "WX_APPID (微信支付复用分享的 WX_APPID)".to_string(),
+                "androidxVersion (AndroidX 版本，默认 1.0.0；Stripe/Google Pay 使用，构建中心可修改)"
+                    .to_string(),
             ],
             manifest_meta_data: vec![],
             activities: vec![
                 ".wxapi.WXPayEntryActivity (微信支付回调)".to_string(),
             ],
-            properties_xml: "<feature name=\"Payment\"><module name=\"WeixinPay\"/><module name=\"Alipay\"/></feature>".to_string(),
+            properties_xml: "<feature name=\"Payment\" value=\"io.dcloud.feature.payment.PaymentFeatureImpl\"><module name=\"AliPay\" value=\"io.dcloud.feature.payment.alipay.AliPay\"/><module name=\"Payment-Weixin\" value=\"io.dcloud.feature.payment.weixin.WeiXinPay\"/><module name=\"Payment-Paypal\" value=\"io.dcloud.feature.payment.paypal.PaypalPay\"/><module name=\"Payment-Stripe\" value=\"io.dcloud.feature.payment.stripe.StripePay\"/><module name=\"Payment-Google\" value=\"io.dcloud.feature.payment.google.GooglePay\"/></feature>".to_string(),
         },
         ios_config: IosModuleTemplate {
             required_frameworks: vec![
@@ -652,7 +661,7 @@ fn get_statistic_template() -> ModuleTemplate {
                 HashMap::from([("android:name".to_string(), "UMENG_CHANNEL".to_string()), ("android:value".to_string(), "${UMENG_CHANNEL}".to_string())]),
             ],
             activities: vec![],
-            properties_xml: "<feature name=\"Statistic\"><module name=\"Umeng\"/></feature>".to_string(),
+            properties_xml: "<feature name=\"Statistic\" value=\"io.dcloud.feature.statistics.StatisticsFeatureImpl\"><module name=\"Statistic-Umeng\" value=\"io.dcloud.feature.statistics.umeng.UmengStatistics\"/></feature><service name=\"Statistic-Umeng\" value=\"io.dcloud.feature.statistics.umeng.StatisticsBootImpl\"/>".to_string(),
         },
         ios_config: IosModuleTemplate {
             required_frameworks: vec![

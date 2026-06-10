@@ -84,6 +84,12 @@ pub struct PaymentModuleConfig {
     pub enabled: bool,
     pub weixin: Option<HashMap<String, String>>,
     pub alipay: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub paypal: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub stripe: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub google: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

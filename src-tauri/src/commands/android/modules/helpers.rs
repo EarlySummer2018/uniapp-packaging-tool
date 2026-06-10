@@ -100,7 +100,7 @@ pub(crate) fn wx_entry_activity(package_name: &str, scheme: &str) -> String {
 pub(crate) fn qq_auth_activity(scheme: &str) -> String {
     indent_manifest_fragment(
         &format!(
-            r#"<activity android:name="com.tencent.tauth.AuthActivity" android:launchMode="singleTask" android:noHistory="true">
+            r#"<activity android:name="com.tencent.tauth.AuthActivity" android:exported="true" android:launchMode="singleTask" android:noHistory="true">
     <intent-filter>
         <action android:name="android.intent.action.VIEW" />
         <category android:name="android.intent.category.DEFAULT" />
@@ -117,7 +117,7 @@ pub(crate) fn qq_auth_activity(scheme: &str) -> String {
 /// QQ AssistActivity 声明
 pub(crate) fn qq_assist_activity() -> String {
     indent_manifest_fragment(
-        r#"<activity android:name="com.tencent.connect.common.AssistActivity" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:configChanges="keyboardHidden|orientation" android:screenOrientation="behind" />"#,
+        r#"<activity android:name="com.tencent.connect.common.AssistActivity" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:screenOrientation="portrait" />"#,
         8,
     )
 }
