@@ -49,6 +49,8 @@ pub struct AndroidManifestConfig {
 pub struct SplashscreenConfig {
     pub android_style: Option<String>,
     pub android: BTreeMap<String, String>,
+    pub ios_style: Option<String>,
+    pub ios_storyboard: Option<String>,
     pub use_original_msgbox: Option<bool>,
 }
 
@@ -1140,7 +1142,7 @@ fn find_manifest_ios_privacy_descriptions(
     map.iter()
         .filter_map(|(key, value)| {
             let key = key.trim();
-            if key.is_empty() || key == "NSUserTrackingUsageDescription" {
+            if !is_supported_ios_privacy_description_key(key) {
                 return None;
             }
             let value = value.as_str().map(str::trim).filter(|v| !v.is_empty())?;
@@ -1148,6 +1150,37 @@ fn find_manifest_ios_privacy_descriptions(
         })
         .collect()
 }
+
+fn is_supported_ios_privacy_description_key(key: &str) -> bool {
+    IOS_PRIVACY_DESCRIPTION_KEYS.contains(&key)
+}
+
+const IOS_PRIVACY_DESCRIPTION_KEYS: &[&str] = &[
+    "NSPhotoLibraryUsageDescription",
+    "NSPhotoLibraryAddUsageDescription",
+    "NSCameraUsageDescription",
+    "NSMicrophoneUsageDescription",
+    "NSLocationWhenInUseUsageDescription",
+    "NSLocationAlwaysUsageDescription",
+    "NSLocationAlwaysAndWhenInUseUsageDescription",
+    "NSCalendarsUsageDescription",
+    "NSContactsUsageDescription",
+    "NSBluetoothPeripheralUsageDescription",
+    "NSBluetoothAlwaysUsageDescription",
+    "NSSpeechRecognitionUsageDescription",
+    "NSRemindersUsageDescription",
+    "NSMotionUsageDescription",
+    "NSHealthUpdateUsageDescription",
+    "NSHealthShareUsageDescription",
+    "NSAppleMusicUsageDescription",
+    "NFCReaderUsageDescription",
+    "NSHealthClinicalHealthRecordsShareUsageDescription",
+    "NSHomeKitUsageDescription",
+    "NSSiriUsageDescription",
+    "NSFaceIDUsageDescription",
+    "NSLocalNetworkUsageDescription",
+    "NSUserTrackingUsageDescription",
+];
 
 fn find_manifest_push_icons(
     manifest: &serde_json::Value,
@@ -1253,11 +1286,18 @@ fn find_manifest_splashscreen(
     let config = SplashscreenConfig {
         android_style: string_field(value, &["androidStyle", "android_style"]),
         android,
+        ios_style: string_field(value, &["iosStyle", "ios_style"]),
+        ios_storyboard: value
+            .get("ios")
+            .and_then(|ios| string_field(ios, &["storyboard"]))
+            .map(|path| resolve_manifest_asset_path(&path, project_root)),
         use_original_msgbox: bool_field(value, &["useOriginalMsgbox", "use_original_msgbox"]),
     };
 
     if config.android_style.is_none()
         && config.android.is_empty()
+        && config.ios_style.is_none()
+        && config.ios_storyboard.is_none()
         && config.use_original_msgbox.is_none()
     {
         None
@@ -1366,7 +1406,46 @@ mod tests {
     }
 
     #[test]
-    fn parse_manifest_reads_ios_privacy_descriptions_without_idfa() {
+    fn parse_manifest_reads_ios_storyboard_splashscreen() {
+        let project_root =
+            std::env::temp_dir().join(format!("unipack-ios-splash-{}", uuid::Uuid::new_v4()));
+        let manifest = serde_json::json!({
+            "app-plus": {
+                "distribute": {
+                    "splashscreen": {
+                        "iosStyle": "storyboard",
+                        "ios": {
+                            "storyboard": "static/storyboard/storyboard.zip"
+                        }
+                    }
+                }
+            }
+        });
+
+        let info = parse_uniapp_manifest(
+            &manifest,
+            &project_root.join("manifest.json"),
+            &project_root,
+            None,
+        );
+        let splash = info
+            .splashscreen
+            .expect("iOS splashscreen should be parsed");
+
+        assert_eq!(splash.ios_style.as_deref(), Some("storyboard"));
+        assert_eq!(
+            splash.ios_storyboard.as_deref(),
+            Some(
+                project_root
+                    .join("static/storyboard/storyboard.zip")
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+    }
+
+    #[test]
+    fn parse_manifest_reads_all_non_empty_ios_privacy_descriptions() {
         let project_root =
             std::env::temp_dir().join(format!("unipack-ios-privacy-{}", uuid::Uuid::new_v4()));
         let manifest = serde_json::json!({
@@ -1374,9 +1453,13 @@ mod tests {
                 "distribute": {
                     "ios": {
                         "privacyDescription": {
-                            "NSCameraUsageDescription": "用于上传头像",
-                            "NSUserTrackingUsageDescription": "广告跟踪本轮不处理",
-                            "NSLocationWhenInUseUsageDescription": ""
+                            "NSPhotoLibraryUsageDescription": "在上传头像或发布内容时，开启相册权限便于您保存图片或选择图片上传",
+                            "NSPhotoLibraryAddUsageDescription": "该应用需要读取您的相册，以便您使用应用生成海报时保存到相册",
+                            "NSCameraUsageDescription": "在上传头像或发布内容时，开启相机权限便于您拍照上传图片",
+                            "NSLocalNetworkUsageDescription": "请允许访问本地网络，以便更好的体验应用",
+                            "NSContactsUsageDescription": "用于拨通客服热线",
+                            "NSLocationWhenInUseUsageDescription": "",
+                            "NSUnsupportedUsageDescription": "不应写入"
                         }
                     }
                 }
@@ -1392,15 +1475,35 @@ mod tests {
 
         assert_eq!(
             info.ios_privacy_descriptions
+                .get("NSPhotoLibraryUsageDescription"),
+            Some(&"在上传头像或发布内容时，开启相册权限便于您保存图片或选择图片上传".to_string())
+        );
+        assert_eq!(
+            info.ios_privacy_descriptions
+                .get("NSPhotoLibraryAddUsageDescription"),
+            Some(&"该应用需要读取您的相册，以便您使用应用生成海报时保存到相册".to_string())
+        );
+        assert_eq!(
+            info.ios_privacy_descriptions
                 .get("NSCameraUsageDescription"),
-            Some(&"用于上传头像".to_string())
+            Some(&"在上传头像或发布内容时，开启相机权限便于您拍照上传图片".to_string())
+        );
+        assert_eq!(
+            info.ios_privacy_descriptions
+                .get("NSLocalNetworkUsageDescription"),
+            Some(&"请允许访问本地网络，以便更好的体验应用".to_string())
+        );
+        assert_eq!(
+            info.ios_privacy_descriptions
+                .get("NSContactsUsageDescription"),
+            Some(&"用于拨通客服热线".to_string())
         );
         assert!(!info
             .ios_privacy_descriptions
-            .contains_key("NSUserTrackingUsageDescription"));
+            .contains_key("NSLocationWhenInUseUsageDescription"));
         assert!(!info
             .ios_privacy_descriptions
-            .contains_key("NSLocationWhenInUseUsageDescription"));
+            .contains_key("NSUnsupportedUsageDescription"));
     }
 
     #[test]

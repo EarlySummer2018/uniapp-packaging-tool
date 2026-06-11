@@ -75,6 +75,8 @@ interface PlatformPackages {
 interface SplashscreenConfig {
   androidStyle?: string | null
   android: Record<string, string>
+  iosStyle?: string | null
+  iosStoryboard?: string | null
   useOriginalMsgbox?: boolean | null
 }
 
@@ -475,7 +477,7 @@ async function buildIosIpa(
   buildStore.setActiveEventBuildId(buildId)
   const startedAt = new Date()
   await createBuildRecord(buildId, platform, startedAt, runProjectId, runProjectName, importedResourcePath)
-  await appendManifestLog(buildId, buildManifestInfo)
+  await appendManifestLog(buildId, buildManifestInfo, platform)
   await buildStore.appendBuildLogLines(buildId, [
     '[info] iOS 离线 SDK 流程: 复制 SDK 自带 HBuilder-Hello* 并配置 workspace 副本',
     `[info] iOS 图标配置: ${iosIconCount.value} 项，隐私描述: ${iosPrivacyDescriptionCount.value} 项`
@@ -521,7 +523,7 @@ async function buildStandardPackage(
   buildStore.setActiveEventBuildId(buildId)
   const startedAt = new Date()
   await createBuildRecord(buildId, platform, startedAt, runProjectId, runProjectName, importedResourcePath)
-  await appendManifestLog(buildId, buildManifestInfo)
+  await appendManifestLog(buildId, buildManifestInfo, platform)
   try {
     const command = platform === 'android' ? 'build_android_apk' : 'build_harmony_hap'
     const artifact = await invoke<BuildArtifact>(command, {
@@ -590,7 +592,7 @@ async function generateIosOfflineProject() {
   buildStore.setActiveEventBuildId(buildId)
   const startedAt = new Date()
   await createBuildRecord(buildId, 'ios', startedAt, runProjectId, runProjectName, importedResourcePath)
-  await appendManifestLog(buildId, buildManifestInfo)
+  await appendManifestLog(buildId, buildManifestInfo, 'ios')
   await buildStore.appendBuildLogLines(buildId, [
     '[info] iOS 工程生成: 复制 SDK 自带 HBuilder-Hello* 后配置 workspace 副本',
     `[info] iOS 图标配置: ${iosIconCount.value} 项，隐私描述: ${iosPrivacyDescriptionCount.value} 项`
@@ -645,7 +647,7 @@ async function generateNativeProject(platform: NonIosPlatform) {
   buildStore.setActiveEventBuildId(buildId)
   const startedAt = new Date()
   await createBuildRecord(buildId, platform, startedAt, runProjectId, runProjectName, importedResourcePath)
-  await appendManifestLog(buildId, buildManifestInfo)
+  await appendManifestLog(buildId, buildManifestInfo, platform)
   try {
     const payload: Record<string, unknown> = {
       projectId: runProjectId,
@@ -1107,16 +1109,20 @@ function androidFieldType(field: AndroidModuleConfigField): string {
   return field.fieldType || field.field_type || 'text'
 }
 
-function manifestLogLines(info: UniappManifestInfo) {
+function manifestLogLines(info: UniappManifestInfo, platform: Platform) {
   const moduleNames = info.detectedModules.map(mod => formatModuleWithPlatforms(mod))
   const lines = [
     `[info] 已读取 manifest.json: ${info.manifestPath}`,
-    `[info] manifest 摘要: ${info.appName || '-'} / ${info.appId || '-'} / v${info.versionName || '-'} (${info.versionCode ?? '-'})`,
-    `[info] Android SDK: min ${info.android.minSdkVersion ?? '-'}, target ${info.android.targetSdkVersion ?? '-'}, compile ${info.android.compileSdkVersion ?? '-'}`,
-    `[info] manifest 模块 (${moduleNames.length}): ${moduleNames.length ? moduleNames.join(', ') : '无'}`
+    `[info] manifest 摘要: ${info.appName || '-'} / ${info.appId || '-'} / v${info.versionName || '-'} (${info.versionCode ?? '-'})`
   ]
+  if (platform === 'android') {
+    lines.push(`[info] Android SDK: min ${info.android.minSdkVersion ?? '-'}, target ${info.android.targetSdkVersion ?? '-'}, compile ${info.android.compileSdkVersion ?? '-'}`)
+  }
+  lines.push(`[info] manifest 模块 (${moduleNames.length}): ${moduleNames.length ? moduleNames.join(', ') : '无'}`)
   const report = androidModuleConfigReport.value
-  const configurableModules = report?.modules.filter(mod => mod.fields.length > 0) || []
+  const configurableModules = platform === 'android'
+    ? report?.modules.filter(mod => mod.fields.length > 0) || []
+    : []
   if (configurableModules.length) {
     let totalFields = 0
     let configuredFields = 0
@@ -1142,8 +1148,8 @@ function manifestLogLines(info: UniappManifestInfo) {
   return lines
 }
 
-async function appendManifestLog(buildId: string, info: UniappManifestInfo) {
-  await buildStore.appendBuildLogLines(buildId, manifestLogLines(info))
+async function appendManifestLog(buildId: string, info: UniappManifestInfo, platform: Platform) {
+  await buildStore.appendBuildLogLines(buildId, manifestLogLines(info, platform))
 }
 
 async function appendFinalLog(buildId: string, status: 'success' | 'failed', errorMessage?: string) {
