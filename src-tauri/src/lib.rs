@@ -66,6 +66,7 @@ pub fn run() {
             crate::commands::shared::module::properties::save_module_config,
             crate::commands::shared::module::parsing::get_module_template,
             crate::commands::shared::module::analysis::analyze_android_module_config,
+            crate::commands::shared::module::analysis::analyze_ios_module_config,
             android::certificate::analyze_android_keystore,
             android::certificate::generate_android_keystore,
             build_history::get_build_history,

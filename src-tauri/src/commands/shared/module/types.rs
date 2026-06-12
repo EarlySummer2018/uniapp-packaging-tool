@@ -200,6 +200,37 @@ pub struct AndroidModuleMissingConfig {
     pub label: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct IosModuleConfigReport {
+    pub modules: Vec<IosModuleConfigModule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct IosModuleConfigModule {
+    pub name: String,
+    pub template_key: String,
+    pub category: String,
+    pub platforms: Vec<String>,
+    pub source: String,
+    pub fields: Vec<IosModuleConfigField>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct IosModuleConfigField {
+    pub key: String,
+    pub label: String,
+    pub required: bool,
+    pub secret: bool,
+    pub value: Option<String>,
+    pub value_source: Option<String>,
+    pub placeholder: String,
+    #[serde(default)]
+    pub field_type: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AndroidModuleTemplate {
     pub required_aars: Vec<String>,

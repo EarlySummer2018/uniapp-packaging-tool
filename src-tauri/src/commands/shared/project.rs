@@ -82,6 +82,8 @@ pub struct ProjectConfig {
     pub harmony: HarmonyConfig,
     #[serde(default)]
     pub android_module_config: HashMap<String, String>,
+    #[serde(default)]
+    pub ios_module_config: HashMap<String, String>,
     pub output_dir: String,
     pub created_at: String,
     pub updated_at: String,
@@ -140,6 +142,7 @@ impl Default for ProjectConfig {
                 },
             },
             android_module_config: HashMap::new(),
+            ios_module_config: HashMap::new(),
             output_dir: dirs::desktop_dir()
                 .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
                 .join("unipack-output")

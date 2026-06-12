@@ -12,8 +12,22 @@ iOS 平台支持 uniPush 消息推送服务，集成个推 SDK 和 APNs（Apple 
 
 | 框架 | 说明 |
 |------|------|
-| UserNotifications.framework | 用户通知框架 |
+| UserNotifications.framework | 用户通知框架，需设置为 Optional |
+| Security.framework | 安全服务 |
+| MobileCoreServices.framework | 系统服务 |
+| SystemConfiguration.framework | 网络配置 |
+| CoreLocation.framework | 位置信息 |
+| AVFoundation.framework | 音视频能力 |
 | CoreTelephony.framework | 核心电话框架（用于获取运营商信息） |
+
+## 需要引入的系统库
+
+| 系统库 | 说明 |
+|--------|------|
+| libc++.tbd | C++ 运行库 |
+| libsqlite3.tbd | SQLite |
+| libz.tbd | zlib |
+| libresolv.tbd | DNS 解析 |
 
 ## Info.plist 配置
 
@@ -27,8 +41,15 @@ iOS 平台支持 uniPush 消息推送服务，集成个推 SDK 和 APNs（Apple 
 </array>
 
 <!-- 个推配置 -->
-<key>GETUI_APPID</key>
-<string>%您的个推AppID%</string>
+<key>getui</key>
+<dict>
+    <key>appid</key>
+    <string>%您的个推AppID%</string>
+    <key>appkey</key>
+    <string>%您的个推AppKey%</string>
+    <key>appsecret</key>
+    <string>%您的个推AppSecret%</string>
+</dict>
 
 <!-- 如果使用 FCM -->
 <key>GOOGLE_APP_ID</key>
@@ -47,7 +68,35 @@ pod 'GTSDK', '~> 2.x.x'  # 个推SDK
 
 | 路径 | 文件 |
 |------|------|
-| SDK/libs | `GTPush.framework` 或相关静态库文件 |
+| SDK/libs | `liblibPush.a` |
+| SDK/libs | `libGeTuiPush.a` |
+| SDK/libs | `libUniPush.a` |
+| SDK/libs | `GTSDK.xcframework` |
+
+## feature.plist 配置
+
+在 `PandoraApi.bundle/feature.plist` 中添加或覆盖 `Push` 节点：
+
+```xml
+<key>Push</key>
+<dict>
+    <key>autostart</key>
+    <true/>
+    <key>baseclass</key>
+    <string>PGPush</string>
+    <key>class</key>
+    <string>PGPushActualize</string>
+    <key>global</key>
+    <true/>
+    <key>server</key>
+    <dict>
+        <key>class</key>
+        <string>PGPushServerAct</string>
+        <key>identifier</key>
+        <string>com.pushserver</string>
+    </dict>
+</dict>
+```
 
 ## Objective-C 代码集成
 

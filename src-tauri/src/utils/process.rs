@@ -78,10 +78,8 @@ pub async fn run_command_streaming_with_env(
     app_handle: tauri::AppHandle,
     channel: &str,
 ) -> Result<CommandOutput> {
-    run_command_streaming_with_env_internal(
-        program, args, cwd, env_vars, app_handle, channel, None,
-    )
-    .await
+    run_command_streaming_with_env_internal(program, args, cwd, env_vars, app_handle, channel, None)
+        .await
 }
 
 pub async fn run_command_streaming_with_env_tagged(

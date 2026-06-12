@@ -21,14 +21,16 @@ pub fn android_module_template_key(module_name: &str) -> Option<&'static str> {
         | "FaceRecognitionVerify"
         | "FacialRecognitionVerify"
         | "facialRecognitionVerify" => Some("face_recognition"),
+        "FaceID" | "FaceId" | "faceID" | "faceId" | "face_id" => Some("face_id"),
         "UniAD" | "uni-ad" | "uniAD" | "ad" | "Ad" => Some("uni_ad"),
         "X5Webview" | "X5TBS" | "Webview-x5" | "webview-x5" | "Android X5 Webview" | "x5"
         | "x5_tbs" => Some("x5_tbs"),
+        "UIWebview" | "UIWebView" | "uiWebview" | "uiWebView" | "ui_webview" => Some("ui_webview"),
         "LivePusher" | "livepusher" | "livePusher" => Some("livepusher"),
         "Camera" | "camera" => Some("camera"),
         "VideoPlayer" | "videoplayer" | "videoPlayer" => Some("video_player"),
-        "Barcode" | "barcode" => Some("barcode"),
-        "Bluetooth" | "bluetooth" => Some("bluetooth"),
+        "Barcode" | "BarCode" | "barcode" | "barCode" => Some("barcode"),
+        "Bluetooth" | "bluetooth" | "Blutooth" | "blutooth" => Some("bluetooth"),
         "iBeacon" | "IBeacon" | "ibeacon" => Some("ibeacon"),
         "Contacts" | "Contact" | "contacts" | "contact" => Some("contacts"),
         "Fingerprint" | "fingerprint" => Some("fingerprint"),
@@ -254,6 +256,14 @@ pub fn module_applies_to_android(platforms: &[String]) -> bool {
         })
 }
 
+pub fn module_applies_to_ios(platforms: &[String]) -> bool {
+    platforms.is_empty()
+        || platforms.iter().any(|platform| {
+            let platform = platform.to_ascii_lowercase();
+            platform == "all" || platform == "ios" || platform == "app"
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Template getters
 // ---------------------------------------------------------------------------
@@ -272,6 +282,18 @@ pub fn get_module_template_sync(module_name: &str) -> Result<ModuleTemplate, Str
         "uni_ad" => Ok(get_uniad_template()),
         "x5_tbs" => Ok(get_x5_template()),
         "livepusher" => Ok(get_livepusher_template()),
+        "face_id" => Ok(simple_android_module_template(
+            "FaceID",
+            "Face ID 模块",
+            &[],
+            "",
+        )),
+        "ui_webview" => Ok(simple_android_module_template(
+            "UIWebview",
+            "iOS UIWebview 模块",
+            &[],
+            "",
+        )),
         "camera" => Ok(get_camera_template()),
         "video_player" => Ok(get_videoplayer_template()),
         "barcode" => Ok(get_barcode_template()),
@@ -343,21 +365,33 @@ fn get_push_template() -> ModuleTemplate {
         },
         ios_config: IosModuleTemplate {
             required_frameworks: vec![
-                "UserNotifications.framework".to_string(),
+                "GTSDK.xcframework".to_string(),
+                "UserNotifications.framework (Optional)".to_string(),
                 "Security.framework".to_string(),
-                "CoreTelephony.framework".to_string(),
+                "MobileCoreServices.framework".to_string(),
                 "SystemConfiguration.framework".to_string(),
+                "CoreLocation.framework".to_string(),
+                "AVFoundation.framework".to_string(),
+                "CoreTelephony.framework".to_string(),
             ],
             required_libraries: vec![
+                "liblibPush.a".to_string(),
+                "libGeTuiPush.a".to_string(),
+                "libUniPush.a".to_string(),
                 "libc++.tbd".to_string(),
                 "libsqlite3.tbd".to_string(),
                 "libz.tbd".to_string(),
+                "libresolv.tbd".to_string(),
             ],
             info_plist_keys: HashMap::from([
-                ("getui".to_string(), "{appid, appkey, appsecret} (个推/uniPush)".to_string()),
+                (
+                    "getui".to_string(),
+                    "{appid, appkey, appsecret} (个推)".to_string(),
+                ),
+                ("UIBackgroundModes".to_string(), "remote-notification".to_string()),
             ]),
             url_schemes: vec![],
-            plist_entry: "<key>getui</key><dict><key>appid</key><string></string></dict>".to_string(),
+            plist_entry: "<key>getui</key><dict><key>appid</key><string></string><key>appkey</key><string></string><key>appsecret</key><string></string></dict><key>UIBackgroundModes</key><array><string>remote-notification</string></array>".to_string(),
         },
     }
 }
@@ -459,12 +493,34 @@ fn get_geolocation_template() -> ModuleTemplate {
         ios_config: IosModuleTemplate {
             required_frameworks: vec![
                 "CoreLocation.framework".to_string(),
-                "Security.framework (百度)".to_string(),
+                "Foundation.framework (系统定位)".to_string(),
+                "Security.framework (百度/高德)".to_string(),
+                "SystemConfiguration.framework (百度/高德)".to_string(),
+                "CoreTelephony.framework (百度/高德)".to_string(),
+                "ExternalAccessory.framework (高德)".to_string(),
+                "GLKit.framework (高德)".to_string(),
+                "AMapFoundationKit.framework (高德)".to_string(),
+                "AMapLocationKit.framework (高德)".to_string(),
+                "BaiduMapAPI_Utils.framework (百度)".to_string(),
+                "BaiduMapAPI_Base.framework (百度)".to_string(),
+                "BaiduMapAPI_Search.framework (百度)".to_string(),
+                "BMKLocationKit.framework (百度)".to_string(),
             ],
             required_libraries: vec![
+                "liblibGeolocation.a".to_string(),
+                "libAMapLocationPlugin.a (高德)".to_string(),
+                "libBaiduLocationPlugin.a (百度)".to_string(),
+                "libBaiduKeyVerify.a (百度)".to_string(),
+                "libssl.a (百度)".to_string(),
                 "libcrypto.a (百度)".to_string(),
+                "libc++.tbd (百度/高德)".to_string(),
+                "libsqlite3.0.tbd (百度)".to_string(),
+                "libz.tbd (高德)".to_string(),
             ],
-            info_plist_keys: HashMap::new(),
+            info_plist_keys: HashMap::from([
+                ("amap".to_string(), "{appkey} (高德定位)".to_string()),
+                ("baidu".to_string(), "{appkey} (百度定位)".to_string()),
+            ]),
             url_schemes: vec![],
             plist_entry: "NSLocationWhenInUseUsageDescription / NSLocationAlwaysAndWhenInUseUsageDescription 必须配置".to_string(),
         },

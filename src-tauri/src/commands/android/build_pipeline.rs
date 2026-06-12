@@ -30,6 +30,10 @@ use crate::commands::android::types::{
     emit_log_for_build, render_gradle_dependency_line, timestamp, AndroidBuildEnvironment,
     AndroidManifestPatches, UTS_RUNTIME_DEPS,
 };
+use crate::commands::module::{
+    manifest_push_unipush_v2_enabled, manifest_push_unsupported_version,
+    PUSH_UNSUPPORTED_VERSION_MESSAGE,
+};
 
 const DEFAULT_ANDROIDX_VERSION: &str = "1.0.0";
 
@@ -81,10 +85,8 @@ fn push_small_icon_manifest_entry() -> &'static str {
     r#"        <meta-data android:name="com.getui.push.notification.smallIcon" android:resource="@drawable/push_icon" />"#
 }
 
-fn push_module_enabled_for(modules: &[crate::commands::shared::resource::DetectedModule]) -> bool {
-    modules.iter().any(|module| {
-        crate::commands::module::android_module_template_key(&module.name) == Some("push")
-    })
+fn push_module_enabled_for(manifest: Option<&serde_json::Value>) -> bool {
+    manifest.is_some_and(manifest_push_unipush_v2_enabled)
 }
 
 fn push_small_icon_configured_for(
@@ -104,10 +106,10 @@ fn push_small_icon_configured_for(
 }
 
 fn should_apply_push_small_icon_for(
-    modules: &[crate::commands::shared::resource::DetectedModule],
+    manifest: Option<&serde_json::Value>,
     push_icons: Option<&crate::commands::resource::PushIconsConfig>,
 ) -> bool {
-    push_module_enabled_for(modules) && push_small_icon_configured_for(push_icons)
+    push_module_enabled_for(manifest) && push_small_icon_configured_for(push_icons)
 }
 
 fn manifest_value_for_build_context(
@@ -347,13 +349,26 @@ impl BuildContext {
             .unwrap_or(self.scan.detected_modules.clone());
         self.merged_module_config =
             merged_android_module_config(&self.config, self.module_config.take());
+        self.manifest_value = manifest_value_for_build_context(self.manifest_info.as_ref());
+        if self
+            .manifest_value
+            .as_ref()
+            .is_some_and(manifest_push_unsupported_version)
+        {
+            emit_log_for_build(
+                window,
+                &self.build_id,
+                "warn",
+                PUSH_UNSUPPORTED_VERSION_MESSAGE,
+                Some(24),
+            );
+        }
         self.module_config_report = self.manifest_info.as_ref().map(|info| {
             crate::commands::module::analyze_android_module_config_sync(
                 info,
                 self.merged_module_config.as_ref(),
             )
         });
-        self.manifest_value = manifest_value_for_build_context(self.manifest_info.as_ref());
         if let Some(report) = &self.module_config_report {
             if !report.all_configured {
                 let missing = report
@@ -424,7 +439,9 @@ impl BuildContext {
         )?;
 
         // 注入华为推送所需的 agconnect-services.json 文件
-        inject_huawei_agconnect_json(&self.merged_module_config, &self.workspace, window)?;
+        if self.push_module_enabled() {
+            inject_huawei_agconnect_json(&self.merged_module_config, &self.workspace, window)?;
+        }
 
         Ok(())
     }
@@ -728,12 +745,12 @@ impl BuildContext {
     }
 
     fn push_module_enabled(&self) -> bool {
-        push_module_enabled_for(&self.manifest_modules)
+        push_module_enabled_for(self.manifest_value.as_ref())
     }
 
     fn should_apply_push_small_icon(&self) -> bool {
         should_apply_push_small_icon_for(
-            &self.manifest_modules,
+            self.manifest_value.as_ref(),
             self.manifest_info
                 .as_ref()
                 .and_then(|info| info.push_icons.as_ref()),
@@ -819,34 +836,51 @@ impl BuildContext {
 mod tests {
     use super::*;
 
-    fn detected_module(name: &str) -> crate::commands::resource::DetectedModule {
-        crate::commands::resource::DetectedModule {
-            name: name.to_string(),
-            category: name.to_ascii_lowercase(),
-            platforms: vec!["android".to_string()],
-            configured: true,
-            required_keys: vec![],
-            source: "test".to_string(),
-        }
-    }
-
     #[test]
     fn push_small_icon_requires_push_module_and_icon_config() {
         let push_icons = crate::commands::resource::PushIconsConfig {
             small: Some("/tmp/push.png".to_string()),
             ..Default::default()
         };
+        let valid_manifest = serde_json::json!({
+            "app-plus": {
+                "modules": {
+                    "Push": {}
+                },
+                "distribute": {
+                    "push": {
+                        "unipush": {
+                            "version": "2"
+                        }
+                    }
+                }
+            }
+        });
+        let invalid_manifest = serde_json::json!({
+            "app-plus": {
+                "modules": {
+                    "Push": {}
+                },
+                "distribute": {
+                    "push": {
+                        "unipush": {
+                            "version": "1"
+                        }
+                    }
+                }
+            }
+        });
 
         assert!(should_apply_push_small_icon_for(
-            &[detected_module("Push")],
+            Some(&valid_manifest),
             Some(&push_icons),
         ));
         assert!(!should_apply_push_small_icon_for(
-            &[detected_module("Payment")],
+            Some(&invalid_manifest),
             Some(&push_icons),
         ));
         assert!(!should_apply_push_small_icon_for(
-            &[detected_module("Push")],
+            Some(&valid_manifest),
             None,
         ));
     }

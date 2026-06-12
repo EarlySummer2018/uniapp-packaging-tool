@@ -111,6 +111,18 @@ interface AndroidModuleConfigField {
   field_type?: string
 }
 
+interface IosModuleConfigField {
+  key: string
+  label: string
+  required: boolean
+  secret: boolean
+  value?: string | null
+  valueSource?: string | null
+  placeholder: string
+  fieldType?: string
+  field_type?: string
+}
+
 interface AndroidModuleConfigModule {
   name: string
   templateKey: string
@@ -130,6 +142,19 @@ interface AndroidModuleConfigReport {
   modules: AndroidModuleConfigModule[]
   missingRequired: AndroidModuleMissingConfig[]
   allConfigured: boolean
+}
+
+interface IosModuleConfigModule {
+  name: string
+  templateKey: string
+  category: string
+  platforms: string[]
+  source: string
+  fields: IosModuleConfigField[]
+}
+
+interface IosModuleConfigReport {
+  modules: IosModuleConfigModule[]
 }
 
 interface ResourceScanResult {
@@ -198,11 +223,16 @@ const manifestReadWarning = ref('')
 const androidModuleConfigReport = ref<AndroidModuleConfigReport | null>(null)
 const androidModuleConfigValues = ref<Record<string, string>>({})
 const androidModuleConfigLoading = ref(false)
+const iosModuleConfigReport = ref<IosModuleConfigReport | null>(null)
+const iosModuleConfigLoading = ref(false)
+const iosModuleConfigValues = ref<Record<string, string>>({})
 const selectedManifestModuleKeys = ref<Set<string>>(new Set())
 const manifestModuleSelectionTouched = ref(false)
 const activeAndroidConfigModuleKey = ref<string | null>(null)
+const activeIosConfigModuleKey = ref<string | null>(null)
 
 let androidModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
+let iosModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 const platforms = [
   { key: 'android' as const, label: 'Android', icon: LogoAndroid, description: 'APK 安装包', color: '#2f9e44', bgColor: '#e8f5e9' },
@@ -244,6 +274,15 @@ const androidMissingRequired = computed(() => {
       .filter(field => field.required && !androidFieldValue(mod, field).trim())
       .map(field => ({ moduleName: mod.name, key: field.key, label: field.label })))
 })
+const iosModuleMissingRequired = computed(() => {
+  const report = iosModuleConfigReport.value
+  if (!report) return []
+  return report.modules
+    .filter(mod => isIosConfigModuleSelected(mod))
+    .flatMap(mod => mod.fields
+      .filter(field => field.required && !iosFieldValue(mod, field).trim())
+      .map(field => ({ moduleName: mod.name, key: field.key, label: field.label })))
+})
 const iosMissingRequired = computed(() => {
   if (!selectedNeedsIosConfig.value) return []
   const ios = currentProject.value?.ios
@@ -257,10 +296,24 @@ const iosMissingRequired = computed(() => {
 })
 const iosBuildReady = computed(() => !selectedNeedsIosConfig.value || iosMissingRequired.value.length === 0)
 const iosIconCount = computed(() => Object.keys(latestManifestInfo.value?.iosIcons?.ios || {}).length)
-const iosPrivacyDescriptionCount = computed(() => Object.keys(latestManifestInfo.value?.iosPrivacyDescriptions || {}).length)
+const iosPrivacyDescriptionCount = computed(() => {
+  const values = {
+    ...(latestManifestInfo.value?.iosPrivacyDescriptions || {}),
+    ...buildIosPrivacyDescriptionPayload()
+  }
+  return Object.keys(values).length
+})
+const iosModuleSummaryLabel = computed(() => {
+  if (iosModuleConfigLoading.value) return '正在分析'
+  if (!latestManifestInfo.value) return '未读取 manifest'
+  if (!iosConfigurableModules.value.length) return '无 iOS 模块配置'
+  return `${iosConfigurableModules.value.length} 个模块需配置`
+})
 const canBuild = computed(() => {
   if (!scanResult.value || selectedPlatforms.value.length === 0 || isBuildLocked.value) return false
   if (selectedNeedsAndroidConfig.value && !androidModulesReady.value) return false
+  if (selectedNeedsIosConfig.value && iosModuleConfigLoading.value) return false
+  if (selectedNeedsIosConfig.value && iosModuleMissingRequired.value.length) return false
   if (!iosBuildReady.value) return false
   return true
 })
@@ -289,6 +342,10 @@ const buildDisabledReason = computed(() => {
   if (isBuildLocked.value) return '正在构建中'
   if (selectedNeedsIosConfig.value && iosMissingRequired.value.length) {
     return `还有 ${iosMissingRequired.value.length} 个 iOS 必填配置未填写`
+  }
+  if (selectedNeedsIosConfig.value && iosModuleConfigLoading.value) return '正在分析 iOS 模块配置'
+  if (selectedNeedsIosConfig.value && iosModuleMissingRequired.value.length) {
+    return `还有 ${iosModuleMissingRequired.value.length} 个 iOS 模块必填配置未填写`
   }
   if (selectedNeedsAndroidConfig.value) {
     if (!latestManifestInfo.value && !currentProject.value?.localPath) {
@@ -340,6 +397,18 @@ const activeAndroidConfigModule = computed(() => {
   if (!activeAndroidConfigModuleKey.value) return null
   return androidConfigurableModules.value.find(mod => androidConfigModuleKey(mod) === activeAndroidConfigModuleKey.value) || null
 })
+const iosConfigModulesByKey = computed(() => {
+  const modules = iosModuleConfigReport.value?.modules || []
+  return new Map(modules.map(mod => [iosConfigModuleKey(mod), mod]))
+})
+const iosConfigurableModules = computed(() => {
+  const modules = iosModuleConfigReport.value?.modules || []
+  return modules.filter(mod => mod.fields.length > 0 && isIosConfigModuleSelected(mod))
+})
+const activeIosConfigModule = computed(() => {
+  if (!activeIosConfigModuleKey.value) return null
+  return iosConfigurableModules.value.find(mod => iosConfigModuleKey(mod) === activeIosConfigModuleKey.value) || null
+})
 
 watch(manifestModules, modules => {
   selectedManifestModuleKeys.value = new Set(modules.map(mod => manifestModuleKey(mod)))
@@ -356,6 +425,16 @@ watch(androidConfigurableModules, modules => {
   activeAndroidConfigModuleKey.value = androidConfigModuleKey(preferredAndroidConfigModule(modules))
 }, { immediate: true })
 
+watch(iosConfigurableModules, modules => {
+  if (!modules.length) {
+    activeIosConfigModuleKey.value = null
+    return
+  }
+  const currentKey = activeIosConfigModuleKey.value
+  if (currentKey && modules.some(mod => iosConfigModuleKey(mod) === currentKey)) return
+  activeIosConfigModuleKey.value = iosConfigModuleKey(preferredIosConfigModule(modules))
+}, { immediate: true })
+
 onMounted(async () => {
   if (!projectsStore.projects.length) await projectsStore.loadProjects()
   projectsStore.setCurrentProject(projectId.value)
@@ -368,7 +447,12 @@ onUnmounted(() => {
     clearTimeout(androidModuleConfigSaveTimer)
     androidModuleConfigSaveTimer = null
   }
+  if (iosModuleConfigSaveTimer) {
+    clearTimeout(iosModuleConfigSaveTimer)
+    iosModuleConfigSaveTimer = null
+  }
   void persistAndroidModuleConfigCache()
+  void persistIosModuleConfigCache()
 })
 
 async function chooseResource() {
@@ -396,7 +480,9 @@ async function importResource(path: string) {
   latestManifestInfo.value = null
   manifestReadWarning.value = ''
   androidModuleConfigReport.value = null
+  iosModuleConfigReport.value = null
   androidModuleConfigValues.value = {}
+  iosModuleConfigValues.value = {}
   try {
     scanResult.value = await invoke<ResourceScanResult>('import_uniapp_resource', {
       projectId: projectId.value,
@@ -404,6 +490,7 @@ async function importResource(path: string) {
     })
     await refreshManifestFromLocalProject({ required: false, persist: true })
     await refreshAndroidModuleConfig()
+    await refreshIosModuleConfig()
     message.success(`已导入 ${insightAppId.value}`)
   } catch (e: any) {
     message.error(String(e))
@@ -441,9 +528,13 @@ async function startBuild() {
   if (!(await ensureAndroidModuleConfigReadyForBuild())) {
     return
   }
+  if (!(await ensureIosModuleConfigReadyForBuild())) {
+    return
+  }
   const buildManifestInfo = selectedManifestInfoForBuild(manifestInfo)
   const androidModuleConfig = buildAndroidModuleConfigPayload()
   await persistAndroidModuleConfigCache()
+  await persistIosModuleConfigCache()
   let lastBuildId: string | null = null
   const buildIds: string[] = []
   for (const platform of selectedPlatforms.value) {
@@ -567,7 +658,12 @@ async function generateHarmonyProject() {
 }
 
 function canGenerateIosProject() {
-  return !!scanResult.value && singleSelectedPlatform.value === 'ios' && !isBuildLocked.value && iosBuildReady.value
+  return !!scanResult.value
+    && singleSelectedPlatform.value === 'ios'
+    && !isBuildLocked.value
+    && !iosModuleConfigLoading.value
+    && iosModuleMissingRequired.value.length === 0
+    && iosBuildReady.value
 }
 
 async function generateIosOfflineProject() {
@@ -585,8 +681,12 @@ async function generateIosOfflineProject() {
     message.error(String(e))
     return
   }
+  if (!(await ensureIosModuleConfigReadyForBuild())) {
+    return
+  }
   const buildManifestInfo = selectedManifestInfoForBuild(manifestInfo)
   await persistAndroidModuleConfigCache()
+  await persistIosModuleConfigCache()
   const buildId = buildStore.startBuild(runProjectId, 'ios', 'generateIosProject')
   currentBuildId.value = buildId
   buildStore.setActiveEventBuildId(buildId)
@@ -642,6 +742,7 @@ async function generateNativeProject(platform: NonIosPlatform) {
   const buildManifestInfo = selectedManifestInfoForBuild(manifestInfo)
   const moduleConfig = platform === 'android' ? buildAndroidModuleConfigPayload() : undefined
   await persistAndroidModuleConfigCache()
+  await persistIosModuleConfigCache()
   const buildId = buildStore.startBuild(runProjectId, platform, generateProjectKind(platform))
   currentBuildId.value = buildId
   buildStore.setActiveEventBuildId(buildId)
@@ -695,6 +796,27 @@ function scheduleAndroidModuleConfigCacheSave() {
   }, 300)
 }
 
+async function persistIosModuleConfigCache() {
+  if (iosModuleConfigSaveTimer) {
+    clearTimeout(iosModuleConfigSaveTimer)
+    iosModuleConfigSaveTimer = null
+  }
+  const project = currentProject.value
+  if (!project) return
+  if (!syncIosModuleConfigCache()) return
+  await projectsStore.saveProject(project)
+}
+
+function scheduleIosModuleConfigCacheSave() {
+  if (iosModuleConfigSaveTimer) {
+    clearTimeout(iosModuleConfigSaveTimer)
+  }
+  iosModuleConfigSaveTimer = setTimeout(() => {
+    iosModuleConfigSaveTimer = null
+    void persistIosModuleConfigCache()
+  }, 300)
+}
+
 function getProjectName() {
   return currentProject.value?.name || currentProject.value?.app.name || projectId.value
 }
@@ -736,7 +858,15 @@ function androidConfigModuleKey(mod: AndroidModuleConfigModule) {
   return moduleKeyParts(mod.name, mod.category, mod.platforms, mod.source)
 }
 
+function iosConfigModuleKey(mod: IosModuleConfigModule) {
+  return moduleKeyParts(mod.name, mod.category, mod.platforms, mod.source)
+}
+
 function androidModuleFieldValueKey(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
+  return `${mod.templateKey}.${field.key}`
+}
+
+function iosModuleFieldValueKey(mod: IosModuleConfigModule, field: IosModuleConfigField) {
   return `${mod.templateKey}.${field.key}`
 }
 
@@ -746,6 +876,10 @@ function isManifestModuleSelected(mod: DetectedModule) {
 
 function isAndroidConfigModuleSelected(mod: AndroidModuleConfigModule) {
   return selectedManifestModuleKeys.value.has(androidConfigModuleKey(mod))
+}
+
+function isIosConfigModuleSelected(mod: IosModuleConfigModule) {
+  return selectedManifestModuleKeys.value.has(iosConfigModuleKey(mod))
 }
 
 function setManifestModuleSelected(mod: DetectedModule, checked: boolean) {
@@ -763,6 +897,15 @@ function setManifestModuleSelected(mod: DetectedModule, checked: boolean) {
   } else if (!checked && activeAndroidConfigModuleKey.value === key) {
     activeAndroidConfigModuleKey.value = androidConfigurableModules.value.length
       ? androidConfigModuleKey(preferredAndroidConfigModule(androidConfigurableModules.value))
+      : null
+  }
+
+  const iosConfigModule = iosConfigModulesByKey.value.get(key)
+  if (checked && iosConfigModule?.fields.length) {
+    activeIosConfigModuleKey.value = iosConfigModuleKey(iosConfigModule)
+  } else if (!checked && activeIosConfigModuleKey.value === key) {
+    activeIosConfigModuleKey.value = iosConfigurableModules.value.length
+      ? iosConfigModuleKey(preferredIosConfigModule(iosConfigurableModules.value))
       : null
   }
 }
@@ -803,6 +946,38 @@ function preferredAndroidConfigModule(modules: AndroidModuleConfigModule[]) {
     || modules[0]
 }
 
+function iosConfigFieldFilled(mod: IosModuleConfigModule, field: IosModuleConfigField) {
+  return iosFieldValue(mod, field).trim().length > 0
+}
+
+function iosConfigModuleMissingRequiredCount(mod: IosModuleConfigModule) {
+  return mod.fields.filter(field => field.required && !iosConfigFieldFilled(mod, field)).length
+}
+
+function iosConfigModuleFilledCount(mod: IosModuleConfigModule) {
+  return mod.fields.filter(field => iosConfigFieldFilled(mod, field)).length
+}
+
+function iosConfigModuleStatusTone(mod: IosModuleConfigModule): ModuleStatusTone {
+  if (!mod.fields.length) return 'success'
+  if (iosConfigModuleMissingRequiredCount(mod) === 0) return 'success'
+  return iosConfigModuleFilledCount(mod) > 0 ? 'warning' : 'error'
+}
+
+function iosConfigModuleStatusLabel(mod: IosModuleConfigModule) {
+  const missing = iosConfigModuleMissingRequiredCount(mod)
+  if (!mod.fields.length) return '已选'
+  if (missing === 0) return '已配置'
+  if (iosConfigModuleFilledCount(mod) > 0) return '部分配置'
+  return '需配置'
+}
+
+function preferredIosConfigModule(modules: IosModuleConfigModule[]) {
+  return modules.find(mod => iosConfigModuleStatusTone(mod) === 'error')
+    || modules.find(mod => iosConfigModuleStatusTone(mod) === 'warning')
+    || modules[0]
+}
+
 function manifestModuleStatusTone(mod: DetectedModule): ModuleStatusTone {
   if (!isManifestModuleSelected(mod)) return 'default'
   const configModule = manifestConfigModule(mod)
@@ -829,18 +1004,222 @@ function androidConfigModuleStatusType(mod: AndroidModuleConfigModule) {
   return configModuleStatusTone(mod)
 }
 
+function iosConfigModuleStatusType(mod: IosModuleConfigModule) {
+  return iosConfigModuleStatusTone(mod)
+}
+
 function openAndroidConfigModule(mod: AndroidModuleConfigModule) {
   activeAndroidConfigModuleKey.value = androidConfigModuleKey(mod)
 }
 
+function openIosConfigModule(mod: IosModuleConfigModule) {
+  activeIosConfigModuleKey.value = iosConfigModuleKey(mod)
+}
+
 function selectedManifestInfoForBuild(info: UniappManifestInfo): UniappManifestInfo {
-  if (!manifestModuleSelectionTouched.value && selectedManifestModuleKeys.value.size === 0) {
-    return info
+  const detectedModules = !manifestModuleSelectionTouched.value && selectedManifestModuleKeys.value.size === 0
+    ? info.detectedModules
+    : info.detectedModules.filter(mod => isManifestModuleSelected(mod))
+  return applyIosModuleConfigToManifestInfo({
+    ...info,
+    detectedModules
+  })
+}
+
+function applyIosModuleConfigToManifestInfo(info: UniappManifestInfo): UniappManifestInfo {
+  if (!selectedNeedsIosConfig.value) return info
+  const manifestValue = cloneJson(info.manifestValue || null)
+  if (manifestValue) {
+    applyIosGeolocationConfigToManifestValue(manifestValue)
+    applyIosPushConfigToManifestValue(manifestValue)
+    applyIosBluetoothConfigToManifestValue(manifestValue)
+    applyIosVideoPlayerConfigToManifestValue(manifestValue)
   }
   return {
     ...info,
-    detectedModules: info.detectedModules.filter(mod => isManifestModuleSelected(mod))
+    manifestValue,
+    iosPrivacyDescriptions: {
+      ...(info.iosPrivacyDescriptions || {}),
+      ...buildIosPrivacyDescriptionPayload()
+    }
   }
+}
+
+function applyIosGeolocationConfigToManifestValue(manifestValue: Record<string, any>) {
+  const geolocationModules = (iosModuleConfigReport.value?.modules || [])
+    .filter(mod => mod.templateKey === 'geolocation' && isIosConfigModuleSelected(mod))
+  if (!geolocationModules.length) return
+
+  const sdkConfigs = ensureObjectPath(manifestValue, ['app-plus', 'distribute', 'sdkConfigs'])
+  const geolocationConfig = ensureIosGeolocationSdkConfig(sdkConfigs)
+  for (const mod of geolocationModules) {
+    for (const field of mod.fields) {
+      if (field.key.startsWith('privacy.')) continue
+      const value = iosFieldValue(mod, field).trim()
+      if (!value) continue
+      if (field.key === 'baidu.appkey_ios') {
+        setIosGeolocationProviderValue(geolocationConfig, 'baidu', ['baidu', 'bd'], 'appkey_ios', value)
+      } else if (field.key === 'amap.appkey_ios') {
+        setIosGeolocationProviderValue(geolocationConfig, 'amap', ['amap', 'gaode'], 'appkey_ios', value)
+      }
+    }
+  }
+}
+
+function applyIosPushConfigToManifestValue(manifestValue: Record<string, any>) {
+  const pushModule = (iosModuleConfigReport.value?.modules || [])
+    .find(mod => mod.templateKey === 'push' && isIosConfigModuleSelected(mod))
+  if (!pushModule) return
+  const sdkConfigs = ensureObjectPath(manifestValue, ['app-plus', 'distribute', 'sdkConfigs'])
+  const pushConfig = ensureIosPushSdkConfig(sdkConfigs)
+  const getuiConfig = ensureIosGetuiConfig(pushConfig)
+  for (const field of pushModule.fields) {
+    const value = iosFieldValue(pushModule, field).trim()
+    if (!value) continue
+    if (field.key === 'getui.appid') getuiConfig.appid = value
+    else if (field.key === 'getui.appkey') getuiConfig.appkey = value
+    else if (field.key === 'getui.appsecret') getuiConfig.appsecret = value
+  }
+  if (!('__platform__' in getuiConfig)) getuiConfig.__platform__ = ['ios']
+}
+
+function applyIosBluetoothConfigToManifestValue(manifestValue: Record<string, any>) {
+  const bluetoothModule = (iosModuleConfigReport.value?.modules || [])
+    .find(mod => mod.templateKey === 'bluetooth' && isIosConfigModuleSelected(mod))
+  if (!bluetoothModule) return
+  const backgroundField = bluetoothModule.fields.find(field => field.key === 'backgroundBluetooth')
+  if (!backgroundField) return
+  const enabled = normalizeBooleanFieldValue(iosFieldValue(bluetoothModule, backgroundField))
+  const iosConfig = ensureObjectPath(manifestValue, ['app-plus', 'distribute', 'ios'])
+  setIosBluetoothBackgroundModes(iosConfig, enabled)
+}
+
+function setIosBluetoothBackgroundModes(iosConfig: Record<string, any>, enabled: boolean) {
+  const currentModes = collectStringValues(iosConfig.UIBackgroundModes)
+    .filter(mode => mode !== 'bluetooth-central' && mode !== 'bluetooth-peripheral')
+  if (enabled) {
+    currentModes.push('bluetooth-central', 'bluetooth-peripheral')
+  }
+  const modes = uniqueNonEmptyStrings(currentModes)
+  iosConfig.UIBackgroundModes = modes
+}
+
+function applyIosVideoPlayerConfigToManifestValue(manifestValue: Record<string, any>) {
+  const videoPlayerModule = (iosModuleConfigReport.value?.modules || [])
+    .find(mod => mod.templateKey === 'video_player' && isIosConfigModuleSelected(mod))
+  if (!videoPlayerModule) return
+  const atsField = videoPlayerModule.fields.find(field => field.key === 'allowArbitraryLoads')
+  if (!atsField) return
+  const enabled = normalizeBooleanFieldValue(iosFieldValue(videoPlayerModule, atsField))
+  const iosConfig = ensureObjectPath(manifestValue, ['app-plus', 'distribute', 'ios'])
+  setIosAllowsArbitraryLoads(iosConfig, enabled)
+}
+
+function setIosAllowsArbitraryLoads(iosConfig: Record<string, any>, enabled: boolean) {
+  const ats = isPlainRecord(iosConfig.NSAppTransportSecurity)
+    ? { ...iosConfig.NSAppTransportSecurity }
+    : {}
+  ats.NSAllowsArbitraryLoads = enabled
+  iosConfig.NSAppTransportSecurity = ats
+}
+
+function ensureIosGeolocationSdkConfig(sdkConfigs: Record<string, any>) {
+  if (isPlainRecord(sdkConfigs.geolocation)) return sdkConfigs.geolocation
+  const alias = findFirstObjectEntry(sdkConfigs, ['location', 'position'])
+  const next = alias ? cloneJson(alias.value) : {}
+  sdkConfigs.geolocation = next
+  return next
+}
+
+function ensureIosPushSdkConfig(sdkConfigs: Record<string, any>) {
+  if (isPlainRecord(sdkConfigs.push)) return sdkConfigs.push
+  const alias = findFirstObjectEntry(sdkConfigs, ['unipush', 'getui'])
+  const next = alias ? cloneJson(alias.value) : {}
+  sdkConfigs.push = next
+  return next
+}
+
+function ensureIosGetuiConfig(pushConfig: Record<string, any>) {
+  if (isPlainRecord(pushConfig.getui)) return pushConfig.getui
+  const alias = findFirstObjectEntry(pushConfig, ['getui', 'unipush', 'igt', 'ios'])
+  const next = alias ? cloneJson(alias.value) : {}
+  pushConfig.getui = next
+  return next
+}
+
+function setIosGeolocationProviderValue(
+  geolocationConfig: Record<string, any>,
+  canonicalProvider: string,
+  aliases: string[],
+  key: string,
+  value: string
+) {
+  let provider = isPlainRecord(geolocationConfig[canonicalProvider])
+    ? geolocationConfig[canonicalProvider]
+    : null
+  if (!provider) {
+    const alias = findFirstObjectEntry(geolocationConfig, aliases)
+    provider = alias ? cloneJson(alias.value) : {}
+    geolocationConfig[canonicalProvider] = provider
+  }
+  provider[key] = value
+  if (!('__platform__' in provider)) provider.__platform__ = ['ios']
+}
+
+function ensureObjectPath(root: Record<string, any>, keys: string[]) {
+  let current = root
+  for (const key of keys) {
+    if (!isPlainRecord(current[key])) current[key] = {}
+    current = current[key]
+  }
+  return current
+}
+
+function findFirstObjectEntry(root: Record<string, any>, keys: string[]) {
+  for (const key of keys) {
+    const direct = root[key]
+    if (isPlainRecord(direct)) return { key, value: direct }
+    const normalizedKey = normalizeManifestConfigKey(key)
+    const matchedKey = Object.keys(root).find(candidate => normalizeManifestConfigKey(candidate) === normalizedKey)
+    if (matchedKey && isPlainRecord(root[matchedKey])) return { key: matchedKey, value: root[matchedKey] }
+  }
+  return null
+}
+
+function isPlainRecord(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeManifestConfigKey(value: string) {
+  return value.replace(/[^a-z0-9]/gi, '').toLowerCase()
+}
+
+function collectStringValues(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(item => collectStringValues(item))
+  if (typeof value === 'string') {
+    return value.split(',').map(item => item.trim()).filter(Boolean)
+  }
+  return []
+}
+
+function uniqueNonEmptyStrings(values: string[]) {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    const item = value.trim()
+    if (!item || seen.has(item)) continue
+    seen.add(item)
+    result.push(item)
+  }
+  return result
+}
+
+function normalizeBooleanFieldValue(value: string) {
+  return ['1', 'true', 'yes', 'y', 'on', '是', '开启'].includes(value.trim().toLowerCase())
+}
+
+function cloneJson<T>(value: T): T {
+  return value == null ? value : JSON.parse(JSON.stringify(value))
 }
 
 async function refreshManifestFromLocalProject(options: { required: boolean; persist: boolean }) {
@@ -888,6 +1267,7 @@ function applyManifestInfoToProject(info: UniappManifestInfo) {
   if (typeof info.android.targetSdkVersion === 'number') project.android.targetSdkVersion = info.android.targetSdkVersion
   if (typeof info.android.compileSdkVersion === 'number') project.android.compileSdkVersion = info.android.compileSdkVersion
   if (!project.androidModuleConfig) project.androidModuleConfig = {}
+  if (!project.iosModuleConfig) project.iosModuleConfig = {}
 }
 
 function applyManifestInfoToScanResult(info: UniappManifestInfo) {
@@ -924,13 +1304,37 @@ async function refreshAndroidModuleConfig() {
   }
 }
 
+async function refreshIosModuleConfig() {
+  if (!latestManifestInfo.value) {
+    iosModuleConfigReport.value = null
+    return
+  }
+  iosModuleConfigLoading.value = true
+  try {
+    iosModuleConfigReport.value = await invoke<IosModuleConfigReport>('analyze_ios_module_config', {
+      manifestInfo: latestManifestInfo.value,
+      userConfig: cachedIosModuleConfig()
+    })
+    mergeIosModuleConfigDefaults(iosModuleConfigReport.value)
+  } catch (e: any) {
+    iosModuleConfigReport.value = null
+    manifestReadWarning.value = String(e)
+  } finally {
+    iosModuleConfigLoading.value = false
+  }
+}
+
 async function ensureManifestInfoLoaded(options: { persist: boolean } = { persist: true }): Promise<UniappManifestInfo> {
-  if (latestManifestInfo.value) return latestManifestInfo.value
+  if (latestManifestInfo.value) {
+    if (!iosModuleConfigReport.value) await refreshIosModuleConfig()
+    return latestManifestInfo.value
+  }
   const info = await refreshManifestFromLocalProject({ required: true, persist: options.persist })
   if (!info) {
     const warning = manifestReadWarning.value || '请先导入资源，并确保已从本地项目路径读取 manifest.json'
     throw new Error(warning)
   }
+  await refreshIosModuleConfig()
   return info
 }
 
@@ -950,6 +1354,22 @@ async function ensureAndroidModuleConfigReadyForBuild() {
   return true
 }
 
+async function ensureIosModuleConfigReadyForBuild() {
+  if (!selectedNeedsIosConfig.value) return true
+  if (!iosModuleConfigReport.value) {
+    await refreshIosModuleConfig()
+  }
+  if (!iosModuleConfigReport.value) {
+    message.error(manifestReadWarning.value || 'iOS 模块配置分析失败')
+    return false
+  }
+  if (iosModuleMissingRequired.value.length) {
+    message.error(`请先填写 iOS 模块配置: ${iosModuleMissingRequired.value.map(item => `${item.moduleName}-${item.label}`).join('、')}`)
+    return false
+  }
+  return true
+}
+
 function mergeAndroidModuleConfigDefaults(report: AndroidModuleConfigReport) {
   const next: Record<string, string> = {}
   const cached = cachedAndroidModuleConfig()
@@ -962,6 +1382,20 @@ function mergeAndroidModuleConfigDefaults(report: AndroidModuleConfigReport) {
   androidModuleConfigValues.value = next
   syncAndroidModuleConfigCache()
   scheduleAndroidModuleConfigCacheSave()
+}
+
+function mergeIosModuleConfigDefaults(report: IosModuleConfigReport) {
+  const next: Record<string, string> = {}
+  const cached = cachedIosModuleConfig()
+  for (const mod of report.modules) {
+    for (const field of mod.fields) {
+      const scopedKey = iosModuleFieldValueKey(mod, field)
+      next[scopedKey] = cached[scopedKey] ?? field.value ?? cached[field.key] ?? ''
+    }
+  }
+  iosModuleConfigValues.value = next
+  syncIosModuleConfigCache()
+  scheduleIosModuleConfigCacheSave()
 }
 
 function androidFieldValue(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
@@ -985,6 +1419,29 @@ function updateActiveAndroidField(field: AndroidModuleConfigField, value: string
   const mod = activeAndroidConfigModule.value
   if (!mod) return
   updateAndroidField(mod, field, value)
+}
+
+function iosFieldValue(mod: IosModuleConfigModule, field: IosModuleConfigField) {
+  return iosModuleConfigValues.value[iosModuleFieldValueKey(mod, field)]
+    ?? iosModuleConfigValues.value[field.key]
+    ?? field.value
+    ?? ''
+}
+
+function updateIosField(mod: IosModuleConfigModule, field: IosModuleConfigField, value: string) {
+  if (isBuildLocked.value) return
+  iosModuleConfigValues.value = {
+    ...iosModuleConfigValues.value,
+    [iosModuleFieldValueKey(mod, field)]: value
+  }
+  syncIosModuleConfigCache()
+  scheduleIosModuleConfigCacheSave()
+}
+
+function updateActiveIosField(field: IosModuleConfigField, value: string) {
+  const mod = activeIosConfigModule.value
+  if (!mod) return
+  updateIosField(mod, field, value)
 }
 
 async function pickAndroidFileField(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
@@ -1067,8 +1524,27 @@ function buildAndroidModuleConfigPayload() {
   return payload
 }
 
+function buildIosPrivacyDescriptionPayload() {
+  const payload: Record<string, string> = {}
+  const report = iosModuleConfigReport.value
+  if (!report) return payload
+  for (const mod of report.modules) {
+    if (!isIosConfigModuleSelected(mod)) continue
+    for (const field of mod.fields) {
+      if (!field.key.startsWith('privacy.')) continue
+      const value = iosFieldValue(mod, field).trim()
+      if (value) payload[field.key.slice('privacy.'.length)] = value
+    }
+  }
+  return payload
+}
+
 function cachedAndroidModuleConfig() {
   return currentProject.value?.androidModuleConfig || {}
+}
+
+function cachedIosModuleConfig() {
+  return currentProject.value?.iosModuleConfig || {}
 }
 
 function syncAndroidModuleConfigCache() {
@@ -1085,6 +1561,21 @@ function syncAndroidModuleConfigCache() {
     }
   }
   project.androidModuleConfig = next
+  return true
+}
+
+function syncIosModuleConfigCache() {
+  const project = currentProject.value
+  const report = iosModuleConfigReport.value
+  if (!project || !report) return false
+  const next: Record<string, string> = {}
+  for (const mod of report.modules) {
+    for (const field of mod.fields) {
+      const value = iosFieldValue(mod, field).trim()
+      if (value) next[iosModuleFieldValueKey(mod, field)] = value
+    }
+  }
+  project.iosModuleConfig = next
   return true
 }
 
@@ -1105,8 +1596,44 @@ function fieldStatusLabel(mod: AndroidModuleConfigModule, field: AndroidModuleCo
   return '已填写'
 }
 
+function iosFieldStatusType(mod: IosModuleConfigModule, field: IosModuleConfigField) {
+  const value = iosFieldValue(mod, field).trim()
+  if (!value && field.required) return 'error'
+  if (field.valueSource === 'manifest' && value) return 'success'
+  if (field.valueSource === 'default' && value) return 'default'
+  if (value) return 'info'
+  return 'default'
+}
+
+function iosFieldStatusLabel(mod: IosModuleConfigModule, field: IosModuleConfigField) {
+  const value = iosFieldValue(mod, field).trim()
+  if (!value && field.required) return '必填'
+  if (!value) return '可选'
+  if (field.valueSource === 'manifest') return 'manifest'
+  if (field.valueSource === 'default') return '默认'
+  return '已填写'
+}
+
 function androidFieldType(field: AndroidModuleConfigField): string {
   return field.fieldType || field.field_type || 'text'
+}
+
+function iosFieldType(field: IosModuleConfigField): string {
+  return field.fieldType || field.field_type || 'text'
+}
+
+function isIosSelectField(field: IosModuleConfigField): boolean {
+  return iosFieldType(field) === 'select'
+}
+
+function iosSelectFieldOptions(field: IosModuleConfigField) {
+  if (field.key === 'backgroundBluetooth' || field.key === 'allowArbitraryLoads') {
+    return [
+      { label: '否', value: 'false' },
+      { label: '是', value: 'true' }
+    ]
+  }
+  return []
 }
 
 function manifestLogLines(info: UniappManifestInfo, platform: Platform) {
@@ -1467,7 +1994,99 @@ function goBack() {
           <n-text depth="3">App 资源</n-text>
           <n-text code>Pandora/apps/{{ insightAppId }}</n-text>
           <n-text depth="3">模块处理</n-text>
-          <n-text code>本轮未启用</n-text>
+          <n-text code>{{ iosModuleSummaryLabel }}</n-text>
+        </div>
+        <div class="ios-module-panel">
+          <div class="ios-module-head">
+            <n-space align="center" :size="8">
+              <n-text strong>iOS 模块配置</n-text>
+              <n-tag size="small" type="info">{{ iosConfigurableModules.length }} 个模块</n-tag>
+            </n-space>
+            <n-text v-if="selectedManifestModules.length" depth="3">{{ selectedManifestModules.length }} 个 Manifest 模块已选</n-text>
+          </div>
+          <n-alert v-if="iosModuleConfigLoading" type="info">正在从 manifest 解析 iOS 模块配置...</n-alert>
+          <n-alert v-else-if="!latestManifestInfo" type="warning">
+            {{ manifestReadWarning || '请先在项目配置中设置本地项目路径，以便读取 manifest.json' }}
+          </n-alert>
+          <n-alert v-else-if="!iosConfigurableModules.length" type="success">
+            已选模块暂无需要额外配置项的 iOS 模块。
+          </n-alert>
+          <n-alert v-else :type="iosModuleMissingRequired.length ? 'warning' : 'success'">
+            <n-space vertical :size="6">
+              <n-text>
+                已选 {{ selectedManifestModules.length }} 个 Manifest 模块，其中 {{ iosConfigurableModules.length }} 个需要 iOS 配置。
+              </n-text>
+              <n-text v-if="iosModuleMissingRequired.length">
+                还有 {{ iosModuleMissingRequired.length }} 个必填项未填写，填写完成后才能生成 iOS 工程或 IPA。
+              </n-text>
+              <n-text v-else>模块配置已就绪，可以开始 iOS 构建。</n-text>
+            </n-space>
+          </n-alert>
+
+          <div v-if="iosConfigurableModules.length" class="android-config-list">
+            <n-space wrap :size="8" class="android-config-switcher">
+              <n-tag
+                v-for="mod in iosConfigurableModules"
+                :key="iosConfigModuleKey(mod)"
+                class="android-config-chip"
+                :class="{ 'android-config-chip--active': activeIosConfigModuleKey === iosConfigModuleKey(mod) }"
+                :type="iosConfigModuleStatusType(mod)"
+                :bordered="activeIosConfigModuleKey !== iosConfigModuleKey(mod)"
+                @click="openIosConfigModule(mod)"
+              >
+                {{ mod.name }} · {{ iosConfigModuleStatusLabel(mod) }}
+              </n-tag>
+            </n-space>
+
+            <div v-if="activeIosConfigModule" class="android-config-module">
+              <div class="android-config-head">
+                <n-space align="center" :size="8">
+                  <n-text strong>{{ activeIosConfigModule.name }}</n-text>
+                  <n-tag size="small" type="info">{{ activeIosConfigModule.category }}</n-tag>
+                  <n-tag v-if="formatPlatforms(activeIosConfigModule.platforms)" size="small" :type="activeIosConfigModule.platforms.includes('ios') ? 'success' : 'default'">{{ formatPlatforms(activeIosConfigModule.platforms) }}</n-tag>
+                </n-space>
+                <n-text depth="3">{{ activeIosConfigModule.fields.length }} 项配置</n-text>
+              </div>
+              <n-grid :cols="2" :x-gap="14" :y-gap="10" responsive="screen">
+                <n-gi v-for="field in activeIosConfigModule.fields" :key="activeIosConfigModule.templateKey + field.key">
+                  <n-form-item :label="field.label" :feedback="field.required && !iosFieldValue(activeIosConfigModule, field).trim() ? '必填项，未填写时不能开始打包' : undefined">
+                    <template #label>
+                      <n-space align="center" :size="6">
+                        <n-text>{{ field.label }}</n-text>
+                        <n-tag size="tiny" :type="iosFieldStatusType(activeIosConfigModule, field)">{{ iosFieldStatusLabel(activeIosConfigModule, field) }}</n-tag>
+                      </n-space>
+                    </template>
+                    <n-input
+                      v-if="iosFieldType(field) === 'textarea'"
+                      type="textarea"
+                      :autosize="{ minRows: 2, maxRows: 4 }"
+                      :value="iosFieldValue(activeIosConfigModule, field)"
+                      :placeholder="field.placeholder"
+                      :disabled="isBuildLocked"
+                      @update:value="(value: string) => updateActiveIosField(field, value)"
+                    />
+                    <n-select
+                      v-else-if="isIosSelectField(field)"
+                      :value="iosFieldValue(activeIosConfigModule, field)"
+                      :options="iosSelectFieldOptions(field)"
+                      :placeholder="field.placeholder"
+                      :disabled="isBuildLocked"
+                      @update:value="(value: string) => updateActiveIosField(field, value)"
+                    />
+                    <n-input
+                      v-else
+                      :value="iosFieldValue(activeIosConfigModule, field)"
+                      :placeholder="field.placeholder"
+                      :type="field.secret ? 'password' : 'text'"
+                      :show-password-on="field.secret ? 'click' : undefined"
+                      :disabled="isBuildLocked"
+                      @update:value="(value: string) => updateActiveIosField(field, value)"
+                    />
+                  </n-form-item>
+                </n-gi>
+              </n-grid>
+            </div>
+          </div>
         </div>
       </n-space>
     </n-card>
@@ -1839,6 +2458,19 @@ function goBack() {
   margin-bottom: 12px;
 }
 
+.ios-module-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ios-module-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
 .file-field-row {
   width: 100%;
 }
@@ -1857,6 +2489,7 @@ function goBack() {
 
 @media (max-width: 1180px) {
   .android-config-head,
+  .ios-module-head,
   .insight-head {
     align-items: flex-start;
     flex-direction: column;

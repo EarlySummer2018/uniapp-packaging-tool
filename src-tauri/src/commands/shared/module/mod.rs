@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod field_specs;
 pub mod parsing;
 pub mod properties;
+pub mod push;
 pub mod templates;
 pub mod types;
 
@@ -19,4 +20,8 @@ pub use analysis::{
 };
 pub use parsing::module_config_from_detected_modules;
 pub use properties::generate_dcloud_properties;
+pub use push::{
+    manifest_push_unipush_v2_enabled, manifest_push_unsupported_version,
+    PUSH_UNSUPPORTED_VERSION_MESSAGE,
+};
 pub use templates::{android_module_template_key, get_module_template_sync};

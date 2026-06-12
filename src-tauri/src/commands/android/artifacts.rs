@@ -129,6 +129,13 @@ pub(crate) fn apply_android_manifest_modules_internal(
             crate::commands::shared::module::templates::module_applies_to_android(&module.platforms)
                 && android_module_template_key(&module.name).is_some()
         })
+        .filter(|module| {
+            android_module_template_key(&module.name) != Some("push")
+                || manifest.is_some_and(|manifest| {
+                    crate::commands::module::manifest_push_unipush_v2_enabled(manifest)
+                })
+        })
+        .cloned()
         .collect::<Vec<_>>();
     if supported.is_empty() {
         emit_log(
@@ -151,7 +158,7 @@ pub(crate) fn apply_android_manifest_modules_internal(
     }
 
     let config = super::manifest_modules::module_config_tree_for_android_build(
-        modules,
+        &supported,
         config_report,
         manifest,
     );
@@ -170,7 +177,7 @@ pub(crate) fn apply_android_manifest_modules_internal(
 
     let mut processed_modules = 0usize;
     let mut copied_artifacts = 0usize;
-    for module in supported {
+    for module in &supported {
         let template_key = android_module_template_key(&module.name)
             .expect("supported modules are filtered by template key");
         let template = crate::commands::module::get_module_template_sync(template_key)?;

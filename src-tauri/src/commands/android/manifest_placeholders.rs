@@ -9,10 +9,9 @@ pub fn render_android_module_manifest_placeholders(
     detected_modules: &[crate::commands::resource::DetectedModule],
     package_name: &str,
 ) -> String {
+    let _ = detected_modules;
     let mut entries = BTreeMap::new();
-    let mut has_push_module = detected_modules
-        .iter()
-        .any(|module| super::artifacts::android_module_template_key(&module.name) == Some("push"));
+    let mut has_push_module = false;
 
     if let Some(report) = report {
         for module in &report.modules {
