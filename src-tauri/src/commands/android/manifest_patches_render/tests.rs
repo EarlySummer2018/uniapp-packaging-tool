@@ -10,9 +10,11 @@ fn valid_push_manifest() -> serde_json::Value {
                 "Push": {}
             },
             "distribute": {
-                "push": {
-                    "unipush": {
-                        "version": "2"
+                "sdkConfigs": {
+                    "push": {
+                        "unipush": {
+                            "version": "2"
+                        }
                     }
                 }
             }
@@ -475,9 +477,11 @@ fn push_manifest_patches_are_skipped_without_unipush_v2_gate() {
                 "Push": {}
             },
             "distribute": {
-                "push": {
-                    "unipush": {
-                        "version": "1"
+                "sdkConfigs": {
+                    "push": {
+                        "unipush": {
+                            "version": "1"
+                        }
                     }
                 }
             }

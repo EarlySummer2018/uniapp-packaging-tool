@@ -848,9 +848,11 @@ mod tests {
                     "Push": {}
                 },
                 "distribute": {
-                    "push": {
-                        "unipush": {
-                            "version": "2"
+                    "sdkConfigs": {
+                        "push": {
+                            "unipush": {
+                                "version": "2"
+                            }
                         }
                     }
                 }
@@ -862,9 +864,11 @@ mod tests {
                     "Push": {}
                 },
                 "distribute": {
-                    "push": {
-                        "unipush": {
-                            "version": "1"
+                    "sdkConfigs": {
+                        "push": {
+                            "unipush": {
+                                "version": "1"
+                            }
                         }
                     }
                 }

@@ -380,14 +380,10 @@ fn android_config_report_honors_nested_push_and_platform_providers() {
                 "Payment": {}
             },
             "distribute": {
-                "push": {
-                    "unipush": {
-                        "version": 2
-                    }
-                },
                 "sdkConfigs": {
                     "push": {
                         "unipush": {
+                            "version": 2,
                             "offline": true,
                             "mi": { "appid": "mi-app", "appkey": "mi-key" },
                             "hms": { "appid": "huawei-app" },
@@ -650,14 +646,10 @@ fn android_config_report_requires_enabled_push_vendor_fields() {
                 "Push": {}
             },
             "distribute": {
-                "push": {
-                    "unipush": {
-                        "version": "2"
-                    }
-                },
                 "sdkConfigs": {
                     "push": {
                         "unipush": {
+                            "version": "2",
                             "hms": {},
                             "oppo": {},
                             "vivo": false
@@ -704,14 +696,10 @@ fn android_config_report_skips_push_when_unipush_version_is_not_v2() {
                 "Push": {}
             },
             "distribute": {
-                "push": {
-                    "unipush": {
-                        "version": "1"
-                    }
-                },
                 "sdkConfigs": {
                     "push": {
                         "unipush": {
+                            "version": "1",
                             "hms": {}
                         }
                     }

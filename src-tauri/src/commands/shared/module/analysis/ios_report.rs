@@ -128,10 +128,20 @@ fn ios_push_module_config(
         platforms: module.platforms.clone(),
         source: module.source.clone(),
         fields: vec![
+            IosModuleConfigField {
+                key: "pushProvider".to_string(),
+                label: "推送服务".to_string(),
+                required: true,
+                secret: false,
+                value: Some("unipush".to_string()),
+                value_source: Some("default".to_string()),
+                placeholder: "默认 uniPush".to_string(),
+                field_type: "select".to_string(),
+            },
             ios_push_getui_field(
                 push_config,
-                "getui.appid",
-                "个推 AppID",
+                "unipush.appid",
+                "UniPush AppID",
                 &[
                     "appid_ios",
                     "appId_ios",
@@ -146,8 +156,8 @@ fn ios_push_module_config(
             ),
             ios_push_getui_field(
                 push_config,
-                "getui.appkey",
-                "个推 AppKey",
+                "unipush.appkey",
+                "UniPush AppKey",
                 &[
                     "appkey_ios",
                     "appKey_ios",
@@ -161,8 +171,8 @@ fn ios_push_module_config(
             ),
             ios_push_getui_field(
                 push_config,
-                "getui.appsecret",
-                "个推 AppSecret",
+                "unipush.appsecret",
+                "UniPush AppSecret",
                 &[
                     "appsecret_ios",
                     "appSecret_ios",
@@ -386,7 +396,7 @@ fn ios_geolocation_app_key_field(
 }
 
 fn ios_privacy_field(
-    template_key: &str,
+    _template_key: &str,
     field: &IosPrivacyFieldSpec,
     ios_privacy_descriptions: Option<&BTreeMap<String, String>>,
     user_config: Option<&HashMap<String, String>>,
@@ -394,7 +404,7 @@ fn ios_privacy_field(
     let key = field.key;
     let field_key = format!("privacy.{}", key);
     let (value, value_source) =
-        if let Some(value) = ios_user_config_field_value(user_config, template_key, &field_key) {
+        if let Some(value) = ios_user_config_field_value(user_config, "", &field_key) {
             (Some(value), Some("user".to_string()))
         } else if let Some(value) = ios_privacy_descriptions
             .and_then(|descriptions| descriptions.get(key))
@@ -619,9 +629,8 @@ fn ios_push_sdk_config(manifest: &serde_json::Value) -> Option<&serde_json::Valu
         .get("distribute")?
         .get("sdkConfigs")?
         .as_object()?;
-    let config = ["push", "unipush", "getui"]
-        .iter()
-        .find_map(|key| get_object_value_normalized(sdk_configs, key))?;
+    let push = get_object_value_normalized(sdk_configs, "push")?.as_object()?;
+    let config = get_object_value_normalized(push, "unipush")?;
     ios_config_value_enabled(config).then_some(config)
 }
 

@@ -277,11 +277,18 @@ const androidMissingRequired = computed(() => {
 const iosModuleMissingRequired = computed(() => {
   const report = iosModuleConfigReport.value
   if (!report) return []
-  return report.modules
-    .filter(mod => isIosConfigModuleSelected(mod))
-    .flatMap(mod => mod.fields
-      .filter(field => field.required && !iosFieldValue(mod, field).trim())
-      .map(field => ({ moduleName: mod.name, key: field.key, label: field.label })))
+  const missing = new Map<string, { moduleName: string; key: string; label: string }>()
+  for (const mod of report.modules) {
+    if (!isIosConfigModuleSelected(mod)) continue
+    for (const field of mod.fields) {
+      if (!field.required || iosFieldValue(mod, field).trim()) continue
+      const key = iosModuleFieldValueKey(mod, field)
+      if (!missing.has(key)) {
+        missing.set(key, { moduleName: mod.name, key: field.key, label: field.label })
+      }
+    }
+  }
+  return Array.from(missing.values())
 })
 const iosMissingRequired = computed(() => {
   if (!selectedNeedsIosConfig.value) return []
@@ -867,7 +874,12 @@ function androidModuleFieldValueKey(mod: AndroidModuleConfigModule, field: Andro
 }
 
 function iosModuleFieldValueKey(mod: IosModuleConfigModule, field: IosModuleConfigField) {
+  if (isIosPrivacyField(field)) return field.key
   return `${mod.templateKey}.${field.key}`
+}
+
+function isIosPrivacyField(field: IosModuleConfigField) {
+  return field.key.startsWith('privacy.')
 }
 
 function isManifestModuleSelected(mod: DetectedModule) {
@@ -1072,15 +1084,18 @@ function applyIosPushConfigToManifestValue(manifestValue: Record<string, any>) {
   if (!pushModule) return
   const sdkConfigs = ensureObjectPath(manifestValue, ['app-plus', 'distribute', 'sdkConfigs'])
   const pushConfig = ensureIosPushSdkConfig(sdkConfigs)
-  const getuiConfig = ensureIosGetuiConfig(pushConfig)
+  cleanupIosPushSdkConfigs(sdkConfigs, pushConfig)
+  const unipushConfig = ensureIosUnipushConfig(pushConfig)
   for (const field of pushModule.fields) {
     const value = iosFieldValue(pushModule, field).trim()
     if (!value) continue
-    if (field.key === 'getui.appid') getuiConfig.appid = value
-    else if (field.key === 'getui.appkey') getuiConfig.appkey = value
-    else if (field.key === 'getui.appsecret') getuiConfig.appsecret = value
+    if (field.key === 'pushProvider') continue
+    if (field.key === 'unipush.appid') unipushConfig.appid = value
+    else if (field.key === 'unipush.appkey') unipushConfig.appkey = value
+    else if (field.key === 'unipush.appsecret') unipushConfig.appsecret = value
   }
-  if (!('__platform__' in getuiConfig)) getuiConfig.__platform__ = ['ios']
+  if (!('__platform__' in unipushConfig)) unipushConfig.__platform__ = ['ios']
+  if (!('version' in unipushConfig)) unipushConfig.version = '2'
 }
 
 function applyIosBluetoothConfigToManifestValue(manifestValue: Record<string, any>) {
@@ -1133,17 +1148,27 @@ function ensureIosGeolocationSdkConfig(sdkConfigs: Record<string, any>) {
 
 function ensureIosPushSdkConfig(sdkConfigs: Record<string, any>) {
   if (isPlainRecord(sdkConfigs.push)) return sdkConfigs.push
-  const alias = findFirstObjectEntry(sdkConfigs, ['unipush', 'getui'])
-  const next = alias ? cloneJson(alias.value) : {}
+  const next = {}
   sdkConfigs.push = next
   return next
 }
 
-function ensureIosGetuiConfig(pushConfig: Record<string, any>) {
-  if (isPlainRecord(pushConfig.getui)) return pushConfig.getui
-  const alias = findFirstObjectEntry(pushConfig, ['getui', 'unipush', 'igt', 'ios'])
+function cleanupIosPushSdkConfigs(sdkConfigs: Record<string, any>, pushConfig: Record<string, any>) {
+  const unipush = isPlainRecord(pushConfig.unipush) ? cloneJson(pushConfig.unipush) : {}
+  for (const key of Object.keys(pushConfig)) {
+    delete pushConfig[key]
+  }
+  pushConfig.unipush = unipush
+  for (const key of ['unipush', 'getui', 'igetui', 'gcm', 'fcm', 'google', 'googleCloudMessage']) {
+    delete sdkConfigs[key]
+  }
+}
+
+function ensureIosUnipushConfig(pushConfig: Record<string, any>) {
+  if (isPlainRecord(pushConfig.unipush)) return pushConfig.unipush
+  const alias = findFirstObjectEntry(pushConfig, ['unipush'])
   const next = alias ? cloneJson(alias.value) : {}
-  pushConfig.getui = next
+  pushConfig.unipush = next
   return next
 }
 
@@ -1390,7 +1415,10 @@ function mergeIosModuleConfigDefaults(report: IosModuleConfigReport) {
   for (const mod of report.modules) {
     for (const field of mod.fields) {
       const scopedKey = iosModuleFieldValueKey(mod, field)
-      next[scopedKey] = cached[scopedKey] ?? field.value ?? cached[field.key] ?? ''
+      if (next[scopedKey] === undefined) {
+        const value = cached[scopedKey] ?? field.value ?? ''
+        next[scopedKey] = field.key === 'pushProvider' ? normalizeIosPushProviderValue(value) : value
+      }
     }
   }
   iosModuleConfigValues.value = next
@@ -1422,10 +1450,11 @@ function updateActiveAndroidField(field: AndroidModuleConfigField, value: string
 }
 
 function iosFieldValue(mod: IosModuleConfigModule, field: IosModuleConfigField) {
-  return iosModuleConfigValues.value[iosModuleFieldValueKey(mod, field)]
+  const value = iosModuleConfigValues.value[iosModuleFieldValueKey(mod, field)]
     ?? iosModuleConfigValues.value[field.key]
     ?? field.value
     ?? ''
+  return field.key === 'pushProvider' ? normalizeIosPushProviderValue(value) : value
 }
 
 function updateIosField(mod: IosModuleConfigModule, field: IosModuleConfigField, value: string) {
@@ -1531,9 +1560,11 @@ function buildIosPrivacyDescriptionPayload() {
   for (const mod of report.modules) {
     if (!isIosConfigModuleSelected(mod)) continue
     for (const field of mod.fields) {
-      if (!field.key.startsWith('privacy.')) continue
+      if (!isIosPrivacyField(field)) continue
       const value = iosFieldValue(mod, field).trim()
-      if (value) payload[field.key.slice('privacy.'.length)] = value
+      if (!value) continue
+      const plistKey = field.key.slice('privacy.'.length)
+      if (payload[plistKey] === undefined) payload[plistKey] = value
     }
   }
   return payload
@@ -1571,7 +1602,8 @@ function syncIosModuleConfigCache() {
   const next: Record<string, string> = {}
   for (const mod of report.modules) {
     for (const field of mod.fields) {
-      const value = iosFieldValue(mod, field).trim()
+      const rawValue = iosFieldValue(mod, field).trim()
+      const value = field.key === 'pushProvider' ? normalizeIosPushProviderValue(rawValue) : rawValue
       if (value) next[iosModuleFieldValueKey(mod, field)] = value
     }
   }
@@ -1626,7 +1658,19 @@ function isIosSelectField(field: IosModuleConfigField): boolean {
   return iosFieldType(field) === 'select'
 }
 
+function normalizeIosPushProviderValue(value: string | null | undefined): string {
+  const normalized = String(value ?? '').trim()
+  return normalized === 'unipush' ? normalized : 'unipush'
+}
+
 function iosSelectFieldOptions(field: IosModuleConfigField) {
+  if (field.key === 'pushProvider') {
+    return [
+      { label: 'uniPush', value: 'unipush' },
+      { label: '个推推送', value: 'getui', disabled: true },
+      { label: 'Google Cloud Message', value: 'gcm', disabled: true }
+    ]
+  }
   if (field.key === 'backgroundBluetooth' || field.key === 'allowArbitraryLoads') {
     return [
       { label: '否', value: 'false' },

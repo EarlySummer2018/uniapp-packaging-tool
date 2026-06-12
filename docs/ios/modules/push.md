@@ -2,7 +2,7 @@
 
 > **适用版本**：HBuilderX 5.0+
 > **平台**：iOS (iPhone/iPad)
-> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/
+> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/push.html
 
 ---
 
@@ -69,9 +69,10 @@ pod 'GTSDK', '~> 2.x.x'  # 个推SDK
 | 路径 | 文件 |
 |------|------|
 | SDK/libs | `liblibPush.a` |
-| SDK/libs | `libGeTuiPush.a` |
 | SDK/libs | `libUniPush.a` |
 | SDK/libs | `GTSDK.xcframework` |
+
+> HBuilderX 5.0+ / SDK 5.07 中，`libUniPush.a` 已包含 `PGPushActualize`、`PGPushServerAct` 等实现，不要再同时链接 `libGeTuiPush.a`，否则模拟器 x86_64 架构会出现 duplicate symbols。
 
 ## feature.plist 配置
 

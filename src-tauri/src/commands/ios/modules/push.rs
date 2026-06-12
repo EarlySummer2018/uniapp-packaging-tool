@@ -44,7 +44,7 @@ pub(crate) fn apply_ios_push_module(
     let linked_count = register_pbx_linked_files(project_file, &linked_files)?;
     enable_pbx_system_capability(project_file, "com.apple.BackgroundModes")?;
     enable_pbx_system_capability(project_file, "com.apple.Push")?;
-    patch_ios_push_feature_plist(project_root)?;
+    patch_ios_push_feature_plist(project_root, project_file)?;
 
     Ok(Some(IosPushIntegration {
         linked_count,
@@ -73,7 +73,6 @@ pub(crate) fn apply_ios_push_plist_defaults(
 fn ios_push_linked_files() -> Vec<IosPbxLinkedFile> {
     vec![
         IosPbxLinkedFile::local_static("liblibPush.a"),
-        IosPbxLinkedFile::local_static("libGeTuiPush.a"),
         IosPbxLinkedFile::local_static("libUniPush.a"),
         IosPbxLinkedFile::local_xcframework("GTSDK.xcframework"),
         IosPbxLinkedFile::system_library("libc++.tbd"),
@@ -90,13 +89,16 @@ fn ios_push_linked_files() -> Vec<IosPbxLinkedFile> {
     ]
 }
 
-fn patch_ios_push_feature_plist(project_root: &Path) -> Result<(), String> {
-    let feature_plist = find_pandora_api_feature_plist(project_root).ok_or_else(|| {
-        format!(
-            "iOS Push 模块未找到 PandoraApi.bundle/feature.plist: {}",
-            project_root.display()
-        )
-    })?;
+fn patch_ios_push_feature_plist(project_root: &Path, project_file: &Path) -> Result<(), String> {
+    if let Some(feature_plist) = find_pandora_api_feature_plist(project_root) {
+        return ensure_ios_push_feature_plist_entry(&feature_plist);
+    }
+
+    let feature_plist = copy_workspace_sdk_pandora_api_bundle(project_root, project_file)?;
+    ensure_ios_push_feature_plist_entry(&feature_plist)
+}
+
+fn ensure_ios_push_feature_plist_entry(feature_plist: &Path) -> Result<(), String> {
     let mut value = plist::Value::from_file(&feature_plist).map_err(|e| {
         format!(
             "解析 PandoraApi.bundle/feature.plist 失败 {}: {}",
@@ -163,9 +165,90 @@ fn find_pandora_api_feature_plist(project_root: &Path) -> Option<PathBuf> {
     None
 }
 
+fn copy_workspace_sdk_pandora_api_bundle(
+    project_root: &Path,
+    project_file: &Path,
+) -> Result<PathBuf, String> {
+    let source_bundle = find_workspace_sdk_pandora_api_bundle(project_root).ok_or_else(|| {
+        format!(
+            "iOS Push 模块未找到 PandoraApi.bundle/feature.plist: {}",
+            project_root.display()
+        )
+    })?;
+    let target_bundle = project_root.join("HBuilder-Hello/PandoraApi.bundle");
+    if target_bundle.exists() {
+        std::fs::remove_dir_all(&target_bundle).map_err(|e| {
+            format!(
+                "清理 iOS Push PandoraApi.bundle 副本失败 {}: {}",
+                target_bundle.display(),
+                e
+            )
+        })?;
+    }
+    crate::utils::fs::copy_recursive(&source_bundle, &target_bundle).map_err(|e| {
+        format!(
+            "复制 iOS Push PandoraApi.bundle 到构建产物失败 {} -> {}: {}",
+            source_bundle.display(),
+            target_bundle.display(),
+            e
+        )
+    })?;
+    patch_pandora_api_bundle_file_reference(project_root, project_file, &target_bundle)?;
+    Ok(target_bundle.join("feature.plist"))
+}
+
+fn find_workspace_sdk_pandora_api_bundle(project_root: &Path) -> Option<PathBuf> {
+    let workspace = project_root.parent()?;
+    let bundle = workspace.join("SDK/Bundles/PandoraApi.bundle");
+    bundle.join("feature.plist").is_file().then_some(bundle)
+}
+
+fn patch_pandora_api_bundle_file_reference(
+    project_root: &Path,
+    project_file: &Path,
+    target_bundle: &Path,
+) -> Result<(), String> {
+    let relative_path = target_bundle
+        .strip_prefix(project_root)
+        .map_err(|e| format!("计算 PandoraApi.bundle 相对路径失败: {}", e))?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let pbxproj = project_file.join("project.pbxproj");
+    let content = std::fs::read_to_string(&pbxproj)
+        .map_err(|e| format!("读取 project.pbxproj 失败: {}", e))?;
+    let pattern = regex::Regex::new(
+        r#"(?m)^(\s*[A-Za-z0-9]{24} /\* PandoraApi\.bundle \*/ = \{isa = PBXFileReference; ).*(\};)$"#,
+    )
+    .map_err(|e| e.to_string())?;
+    let updated = pattern.replace(&content, |caps: &regex::Captures| {
+        format!(
+            "{}lastKnownFileType = \"wrapper.plug-in\"; name = PandoraApi.bundle; path = {}; sourceTree = SOURCE_ROOT; {}",
+            caps.get(1).map_or("", |value| value.as_str()),
+            render_pbx_value(&relative_path),
+            caps.get(2).map_or("", |value| value.as_str())
+        )
+    });
+    if updated == content {
+        return Err("project.pbxproj 未找到 PandoraApi.bundle 引用".to_string());
+    }
+    std::fs::write(&pbxproj, updated.as_ref())
+        .map_err(|e| format!("写入 project.pbxproj 失败: {}", e))
+}
+
 fn path_has_ancestor_named(path: &Path, name: &str) -> bool {
     path.ancestors()
         .any(|ancestor| ancestor.file_name().and_then(|value| value.to_str()) == Some(name))
+}
+
+fn render_pbx_value(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | '/'))
+    {
+        value.to_string()
+    } else {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    }
 }
 
 struct IosGetuiConfig {
@@ -226,9 +309,8 @@ fn ios_push_sdk_config(manifest: &serde_json::Value) -> Option<&serde_json::Valu
         .get("app-plus")?
         .get("distribute")?
         .get("sdkConfigs")?;
-    let config = find_object_value_normalized(sdk_configs, "push")
-        .or_else(|| find_object_value_normalized(sdk_configs, "unipush"))
-        .or_else(|| find_object_value_normalized(sdk_configs, "getui"))?;
+    let push = find_object_value_normalized(sdk_configs, "push")?;
+    let config = find_object_value_normalized(push, "unipush")?;
     ios_sdk_config_value_enabled(config, Some("ios")).then_some(config)
 }
 
@@ -292,4 +374,75 @@ fn validate_ios_push_local_linked_files(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ios_push_feature_plist_copies_workspace_sdk_bundle_into_project() {
+        let root = std::env::temp_dir().join(format!(
+            "unipack-ios-push-sdk-feature-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let project_root = root.join("HBuilder-Hello");
+        let project_file = project_root.join("HBuilder-Hello.xcodeproj");
+        let source_feature_plist = root.join("SDK/Bundles/PandoraApi.bundle/feature.plist");
+        let target_feature_plist =
+            project_root.join("HBuilder-Hello/PandoraApi.bundle/feature.plist");
+        std::fs::create_dir_all(&project_file).unwrap();
+        std::fs::create_dir_all(source_feature_plist.parent().unwrap()).unwrap();
+        std::fs::write(
+            project_file.join("project.pbxproj"),
+            r#"/* Begin PBXFileReference section */
+		AAAAAAAAAAAAAAAAAAAAAAAA /* PandoraApi.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = PandoraApi.bundle; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+"#,
+        )
+        .unwrap();
+
+        let mut server = plist::Dictionary::new();
+        server.insert("class".into(), plist::Value::String("PGPushServer".into()));
+        server.insert(
+            "identifier".into(),
+            plist::Value::String("com.pushserver".into()),
+        );
+        let mut push = plist::Dictionary::new();
+        push.insert("autostart".into(), plist::Value::Boolean(true));
+        push.insert("baseclass".into(), plist::Value::String("PGPush".into()));
+        push.insert("global".into(), plist::Value::Boolean(true));
+        push.insert("server".into(), plist::Value::Dictionary(server));
+        let mut feature = plist::Dictionary::new();
+        feature.insert("Push".into(), plist::Value::Dictionary(push));
+        plist::Value::Dictionary(feature)
+            .to_file_xml(&source_feature_plist)
+            .unwrap();
+
+        patch_ios_push_feature_plist(&project_root, &project_file).unwrap();
+
+        let feature_plist = plist::Value::from_file(&target_feature_plist).unwrap();
+        let push = feature_plist
+            .as_dictionary()
+            .and_then(|dict| dict.get("Push"))
+            .and_then(plist::Value::as_dictionary)
+            .unwrap();
+        let server = push
+            .get("server")
+            .and_then(plist::Value::as_dictionary)
+            .unwrap();
+        assert_eq!(
+            push.get("class").and_then(plist::Value::as_string),
+            Some("PGPushActualize")
+        );
+        assert_eq!(
+            server.get("class").and_then(plist::Value::as_string),
+            Some("PGPushServerAct")
+        );
+        let pbxproj = std::fs::read_to_string(project_file.join("project.pbxproj")).unwrap();
+        assert!(pbxproj.contains("path = HBuilder-Hello/PandoraApi.bundle"));
+        assert!(pbxproj.contains("sourceTree = SOURCE_ROOT"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

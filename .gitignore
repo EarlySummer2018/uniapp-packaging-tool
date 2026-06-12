@@ -17,6 +17,8 @@ dist-ssr
 
 # Build outputs
 build
+!src-tauri/src/commands/ios/build/
+!src-tauri/src/commands/ios/build/**
 release
 out
 *.apk

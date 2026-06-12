@@ -49,12 +49,14 @@ fn manifest_push_module_key_enabled(manifest: &serde_json::Value) -> bool {
 }
 
 fn manifest_push_unipush_config(manifest: &serde_json::Value) -> Option<&serde_json::Value> {
-    let push = manifest
+    let sdk_configs = manifest
         .get("app-plus")?
         .get("distribute")?
-        .get("push")?
+        .get("sdkConfigs")?
         .as_object()?;
-    object_value_normalized(push, "unipush")
+    object_value_normalized(sdk_configs, "push")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|push| object_value_normalized(push, "unipush"))
 }
 
 fn object_value_normalized<'a>(
@@ -106,16 +108,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn push_requires_module_key_and_distribute_unipush_v2() {
+    fn push_requires_module_key_and_sdk_configs_push_unipush_v2() {
         let manifest = serde_json::json!({
             "app-plus": {
                 "modules": {
                     "Push": {}
                 },
                 "distribute": {
-                    "push": {
-                        "unipush": {
-                            "version": "2"
+                    "sdkConfigs": {
+                        "push": {
+                            "unipush": {
+                                "version": "2"
+                            }
                         }
                     }
                 }
@@ -128,18 +132,16 @@ mod tests {
     }
 
     #[test]
-    fn push_is_not_enabled_without_new_unipush_path() {
+    fn push_is_not_enabled_without_sdk_configs_push_unipush_path() {
         let manifest = serde_json::json!({
             "app-plus": {
                 "modules": {
                     "Push": {}
                 },
                 "distribute": {
-                    "sdkConfigs": {
-                        "push": {
-                            "unipush": {
-                                "version": "2"
-                            }
+                    "push": {
+                        "unipush": {
+                            "version": "2"
                         }
                     }
                 }
@@ -159,9 +161,11 @@ mod tests {
                     "Push": {}
                 },
                 "distribute": {
-                    "push": {
-                        "unipush": {
-                            "version": 1
+                    "sdkConfigs": {
+                        "push": {
+                            "unipush": {
+                                "version": 1
+                            }
                         }
                     }
                 }

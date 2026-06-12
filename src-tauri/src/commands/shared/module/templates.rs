@@ -376,7 +376,6 @@ fn get_push_template() -> ModuleTemplate {
             ],
             required_libraries: vec![
                 "liblibPush.a".to_string(),
-                "libGeTuiPush.a".to_string(),
                 "libUniPush.a".to_string(),
                 "libc++.tbd".to_string(),
                 "libsqlite3.tbd".to_string(),

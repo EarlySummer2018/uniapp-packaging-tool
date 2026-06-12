@@ -230,7 +230,7 @@ fn ios_module_config_lists_geolocation_providers_by_ios_platform() {
 }
 
 #[test]
-fn ios_module_config_lists_push_getui_fields() {
+fn ios_module_config_lists_push_unipush_fields() {
     let project_root = std::env::temp_dir().join(format!(
         "unipack-ios-push-module-report-{}",
         uuid::Uuid::new_v4()
@@ -241,15 +241,11 @@ fn ios_module_config_lists_push_getui_fields() {
                 "Push": {}
             },
             "distribute": {
-                "push": {
-                    "unipush": {
-                        "version": "2"
-                    }
-                },
                 "sdkConfigs": {
                     "push": {
-                        "getui": {
+                        "unipush": {
                             "__platform__": ["ios"],
+                            "version": "2",
                             "appid": "manifest-getui-appid",
                             "appkey": "manifest-getui-appkey",
                             "appsecret": "manifest-getui-appsecret"
@@ -267,7 +263,7 @@ fn ios_module_config_lists_push_getui_fields() {
     );
     let mut user = HashMap::new();
     user.insert(
-        "push.getui.appkey".to_string(),
+        "push.unipush.appkey".to_string(),
         "user-getui-appkey".to_string(),
     );
 
@@ -279,20 +275,27 @@ fn ios_module_config_lists_push_getui_fields() {
         .expect("push should be listed for iOS");
 
     assert!(push.fields.iter().any(|field| {
-        field.key == "getui.appid"
+        field.key == "pushProvider"
+            && field.value.as_deref() == Some("unipush")
+            && field.value_source.as_deref() == Some("default")
+            && field.field_type == "select"
+            && field.required
+    }));
+    assert!(push.fields.iter().any(|field| {
+        field.key == "unipush.appid"
             && field.value.as_deref() == Some("manifest-getui-appid")
             && field.value_source.as_deref() == Some("manifest")
             && field.required
             && !field.secret
     }));
     assert!(push.fields.iter().any(|field| {
-        field.key == "getui.appkey"
+        field.key == "unipush.appkey"
             && field.value.as_deref() == Some("user-getui-appkey")
             && field.value_source.as_deref() == Some("user")
             && field.secret
     }));
     assert!(push.fields.iter().any(|field| {
-        field.key == "getui.appsecret"
+        field.key == "unipush.appsecret"
             && field.value.as_deref() == Some("manifest-getui-appsecret")
             && field.value_source.as_deref() == Some("manifest")
             && field.secret
@@ -313,15 +316,11 @@ fn ios_module_config_skips_push_when_unipush_version_is_not_v2() {
                 "Push": {}
             },
             "distribute": {
-                "push": {
-                    "unipush": {
-                        "version": "1"
-                    }
-                },
                 "sdkConfigs": {
                     "push": {
-                        "getui": {
+                        "unipush": {
                             "__platform__": ["ios"],
+                            "version": "1",
                             "appid": "manifest-getui-appid"
                         }
                     }
@@ -502,6 +501,76 @@ fn ios_module_config_lists_media_contact_auth_and_video_fields() {
     assert!(module("messaging").fields.is_empty());
     assert!(module("sqlite").fields.is_empty());
     assert!(module("ui_webview").fields.is_empty());
+
+    let _ = std::fs::remove_dir_all(project_root);
+}
+
+#[test]
+fn ios_privacy_module_config_uses_shared_privacy_keys() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-ios-shared-privacy-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "FaceID": {},
+                "Fingerprint": {},
+                "LivePusher": {},
+                "Record": {}
+            }
+        }
+    });
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+    let mut user_config = HashMap::new();
+    user_config.insert(
+        "privacy.NSMicrophoneUsageDescription".to_string(),
+        "共享麦克风说明".to_string(),
+    );
+    user_config.insert(
+        "privacy.NSFaceIDUsageDescription".to_string(),
+        "共享 Face ID 说明".to_string(),
+    );
+    user_config.insert(
+        "record.privacy.NSMicrophoneUsageDescription".to_string(),
+        "旧模块私有麦克风说明".to_string(),
+    );
+    user_config.insert(
+        "fingerprint.privacy.NSFaceIDUsageDescription".to_string(),
+        "旧模块私有 Face ID 说明".to_string(),
+    );
+
+    let report = analyze_ios_module_config_sync(&info, Some(&user_config));
+    let field_value = |module_key: &str, field_key: &str| {
+        report
+            .modules
+            .iter()
+            .find(|module| module.template_key == module_key)
+            .and_then(|module| module.fields.iter().find(|field| field.key == field_key))
+            .and_then(|field| field.value.as_deref())
+    };
+
+    assert_eq!(
+        field_value("livepusher", "privacy.NSMicrophoneUsageDescription"),
+        Some("共享麦克风说明")
+    );
+    assert_eq!(
+        field_value("record", "privacy.NSMicrophoneUsageDescription"),
+        Some("共享麦克风说明")
+    );
+    assert_eq!(
+        field_value("face_id", "privacy.NSFaceIDUsageDescription"),
+        Some("共享 Face ID 说明")
+    );
+    assert_eq!(
+        field_value("fingerprint", "privacy.NSFaceIDUsageDescription"),
+        Some("共享 Face ID 说明")
+    );
 
     let _ = std::fs::remove_dir_all(project_root);
 }
