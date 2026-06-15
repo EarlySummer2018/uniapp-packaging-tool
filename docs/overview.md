@@ -45,7 +45,7 @@
 | **登录鉴权** | Oauth（7种登录含Apple登录） | [ios/modules/oauth.md](ios/modules/oauth.md) |
 | **地图** | 地图（百度/高德/苹果原生） | [ios/modules/map.md](ios/modules/map.md) |
 | **语音输入** | Speech（百度/讯飞） | [ios/modules/speech.md](ios/modules/speech.md) |
-| **直播推流** | LivePusher（腾讯直播SDK） | [ios/modules/livepusher.md](ios/modules/livepusher.md) |
+| **直播推流** | LivePusher（又拍云直播推流） | [ios/modules/livepusher.md](ios/modules/livepusher.md) |
 | **统计** | Statistic（友盟/谷歌分析） | [ios/modules/statistic.md](ios/modules/statistic.md) |
 | **实人认证** | FacialRecognitionVerify | [ios/modules/facial-recognition-verify.md](ios/modules/facial-recognition-verify.md) |
 | **广告** | uni-AD（穿山甲/优量汇/快手等） | [ios/modules/uni-ad.md](ios/modules/uni-ad.md) |

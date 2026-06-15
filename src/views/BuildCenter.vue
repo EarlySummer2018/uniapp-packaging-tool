@@ -1671,7 +1671,11 @@ function iosSelectFieldOptions(field: IosModuleConfigField) {
       { label: 'Google Cloud Message', value: 'gcm', disabled: true }
     ]
   }
-  if (field.key === 'backgroundBluetooth' || field.key === 'allowArbitraryLoads') {
+  if (
+    field.key === 'backgroundBluetooth'
+    || field.key === 'allowArbitraryLoads'
+    || field.key === 'customComponentMode'
+  ) {
     return [
       { label: '否', value: 'false' },
       { label: '是', value: 'true' }

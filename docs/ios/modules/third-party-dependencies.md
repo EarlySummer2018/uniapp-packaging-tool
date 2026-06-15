@@ -32,7 +32,7 @@
 | **高德地图 AMap3DMap** | ~10.0 | V4.18 | Map | 高德地图 |
 | **百度语音 BDSpeechSDK** | ~3.x | V3.0.1 | Speech | 语音识别 |
 | **讯飞语音 iflyMSC** | ~1.x | V3.0.1 | Speech | 讯飞语音 |
-| **腾讯直播 TXLiteAVSDK** | ~11.x | V3.0.1 | LivePusher | 直播推流 |
+| **又拍云 UPLiveSDKDll** | - | V5.0.0 | LivePusher | 直播推流 |
 | **友盟 UMCommon** | ~7.x | V3.8.3 | Statistic | 友盟统计 |
 | **Firebase Analytics** | ~10.x | V3.2.7 | Statistic | 谷歌分析 |
 | **穿山甲 Bytedance-UnionSDK** | ~5.x | V3.98 | uni-AD | 字节广告 |
@@ -81,9 +81,6 @@ target 'YourProject' do
   # 语音识别（按需集成，二选一）
   # pod 'BDSpeechSDK', '~> 3.x'     # 百度语音
   # pod 'iflyMSC', '~> 1.x'         # 讯飞语音
-  
-  # 直播推流
-  # pod 'TXLiteAVSDK_Professional', '~> 11.x'
   
   # 统计（按需集成，二选一）
   # pod 'UMCommon', '~> 7.x'        # 友盟

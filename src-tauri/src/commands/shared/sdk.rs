@@ -224,9 +224,7 @@ pub async fn add_sdk_path(platform: String, path: String) -> Result<(), String> 
         return Err(format!("不支持的 SDK 类型: {}", platform));
     }
 
-    // Platform-specific normalization is delegated to each platform's sdk_layout module.
-    // For now, use canonicalize as a safe default; callers may override this behavior.
-    let normalized_path = canonicalize_or_self(&p);
+    let normalized_path = normalize_global_sdk_path(&platform, &p)?;
 
     let mut entries = load_user_sdk_entries()?;
     entries.retain(|e| e.platform != platform);
@@ -240,11 +238,13 @@ pub async fn add_sdk_path(platform: String, path: String) -> Result<(), String> 
     save_user_sdk_entries(&entries)
 }
 
-/// Normalize global SDK path by delegating to platform-specific resolvers.
-/// This function will be updated to call into android/ios/harmony sdk_layout modules.
 pub fn normalize_global_sdk_path(platform: &str, path: &Path) -> Result<PathBuf, String> {
     match platform {
-        "android" | "ios" | "harmony" => Ok(canonicalize_or_self(path)),
+        "android" => {
+            Ok(crate::commands::android::sdk_layout::resolve_android_sdk_layout(path)?.root)
+        }
+        "ios" => crate::commands::ios::sdk_layout::resolve_ios_sdk_root(path),
+        "harmony" => Ok(canonicalize_or_self(path)),
         _ => return Err(format!("不支持的 SDK 类型: {}", platform)),
     }
 }
@@ -310,4 +310,54 @@ pub async fn remove_sdk_path(path: String) -> Result<(), String> {
     let mut entries = load_user_sdk_entries()?;
     entries.retain(|e| e.path != path);
     save_user_sdk_entries(&entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("{}-{}", prefix, uuid::Uuid::new_v4()))
+    }
+
+    fn write_android_sdk(root: &Path) {
+        std::fs::create_dir_all(root.join("HBuilder-Integrate-AS/simpleDemo")).unwrap();
+        let libs = root.join("SDK/libs");
+        std::fs::create_dir_all(&libs).unwrap();
+        for requirement in crate::commands::android::sdk_layout::ANDROID_REQUIRED_AARS {
+            let name = requirement
+                .exact_names
+                .first()
+                .copied()
+                .or_else(|| requirement.versionless_prefixes.first().copied())
+                .expect("Android SDK test requirement should have a file name");
+            std::fs::write(libs.join(name), b"aar").unwrap();
+        }
+        std::fs::create_dir_all(root.join("SDK/assets")).unwrap();
+    }
+
+    #[test]
+    fn normalizes_android_sdk_child_path_to_package_root() {
+        let root = unique_temp_dir("unipack-normalize-android-sdk");
+        write_android_sdk(&root);
+
+        let normalized = normalize_global_sdk_path("android", &root.join("SDK/libs")).unwrap();
+
+        assert_eq!(normalized, root.canonicalize().unwrap());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn normalizes_ios_sdk_child_project_to_sdk_root() {
+        let root = unique_temp_dir("unipack-normalize-ios-sdk");
+        let project = root.join("HBuilder-HelloUniApp");
+        std::fs::create_dir_all(project.join("HBuilder-Hello.xcodeproj")).unwrap();
+        std::fs::create_dir_all(root.join("SDK/Libs")).unwrap();
+        std::fs::create_dir_all(root.join("SDK/Bundles")).unwrap();
+
+        let normalized = normalize_global_sdk_path("ios", &project).unwrap();
+
+        assert_eq!(normalized, root.canonicalize().unwrap());
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

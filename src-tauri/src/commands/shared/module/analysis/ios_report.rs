@@ -6,6 +6,7 @@ use crate::commands::ios::modules::camera::IOS_CAMERA_PRIVACY_FIELDS;
 use crate::commands::ios::modules::common::IosPrivacyFieldSpec;
 use crate::commands::ios::modules::contacts::IOS_CONTACTS_PRIVACY_FIELDS;
 use crate::commands::ios::modules::face_id::IOS_FACE_ID_PRIVACY_FIELDS;
+use crate::commands::ios::modules::facial_recognition_verify::IOS_FACIAL_RECOGNITION_VERIFY_PRIVACY_FIELDS;
 use crate::commands::ios::modules::fingerprint::IOS_FINGERPRINT_PRIVACY_FIELDS;
 use crate::commands::ios::modules::geolocation::IOS_GEOLOCATION_PRIVACY_FIELDS;
 use crate::commands::ios::modules::ibeacon::IOS_IBEACON_PRIVACY_FIELDS;
@@ -59,9 +60,20 @@ pub fn ios_module_config_report_from_value(
             }
             continue;
         }
+        if template_key == "livepusher" {
+            if let Some(module_config) = ios_livepusher_module_config(
+                module,
+                manifest,
+                ios_privacy_descriptions,
+                user_config,
+            ) {
+                report.modules.push(module_config);
+            }
+            continue;
+        }
         match template_key {
             "barcode" | "camera" | "contacts" | "face_id" | "fingerprint" | "ibeacon"
-            | "livepusher" | "record" => {
+            | "record" | "face_recognition" => {
                 if let Some(module_config) = ios_privacy_module_config(
                     module,
                     manifest,
@@ -297,9 +309,9 @@ fn ios_privacy_module_config(
         "camera" => IOS_CAMERA_PRIVACY_FIELDS,
         "contacts" => IOS_CONTACTS_PRIVACY_FIELDS,
         "face_id" => IOS_FACE_ID_PRIVACY_FIELDS,
+        "face_recognition" => IOS_FACIAL_RECOGNITION_VERIFY_PRIVACY_FIELDS,
         "fingerprint" => IOS_FINGERPRINT_PRIVACY_FIELDS,
         "ibeacon" => IOS_IBEACON_PRIVACY_FIELDS,
-        "livepusher" => IOS_LIVEPUSHER_PRIVACY_FIELDS,
         "record" => IOS_RECORD_PRIVACY_FIELDS,
         _ => return None,
     };
@@ -315,6 +327,32 @@ fn ios_privacy_module_config(
                 ios_privacy_field(template_key, field, ios_privacy_descriptions, user_config)
             })
             .collect(),
+    })
+}
+
+fn ios_livepusher_module_config(
+    module: &DetectedModule,
+    manifest: Option<&serde_json::Value>,
+    ios_privacy_descriptions: Option<&BTreeMap<String, String>>,
+    user_config: Option<&HashMap<String, String>>,
+) -> Option<IosModuleConfigModule> {
+    let manifest = manifest?;
+    if !ios_manifest_module_enabled(manifest, "LivePusher") {
+        return None;
+    }
+    let mut fields = Vec::new();
+    fields.push(ios_livepusher_custom_component_mode_field(user_config));
+    fields.extend(IOS_LIVEPUSHER_PRIVACY_FIELDS.iter().map(|field| {
+        ios_privacy_field("livepusher", field, ios_privacy_descriptions, user_config)
+    }));
+
+    Some(IosModuleConfigModule {
+        name: module.name.clone(),
+        template_key: "livepusher".to_string(),
+        category: module.category.clone(),
+        platforms: module.platforms.clone(),
+        source: module.source.clone(),
+        fields,
     })
 }
 
@@ -431,6 +469,32 @@ fn ios_privacy_field(
         value_source,
         placeholder: field.default_value.to_string(),
         field_type: "textarea".to_string(),
+    }
+}
+
+fn ios_livepusher_custom_component_mode_field(
+    user_config: Option<&HashMap<String, String>>,
+) -> IosModuleConfigField {
+    let field_key = "customComponentMode";
+    let (value, value_source) =
+        if let Some(value) = ios_user_config_field_value(user_config, "livepusher", field_key) {
+            (
+                Some(normalize_bool_field_value(&value).to_string()),
+                Some("user".to_string()),
+            )
+        } else {
+            (Some("false".to_string()), Some("default".to_string()))
+        };
+
+    IosModuleConfigField {
+        key: field_key.to_string(),
+        label: "自定义组件模式".to_string(),
+        required: false,
+        secret: false,
+        value,
+        value_source,
+        placeholder: "默认否".to_string(),
+        field_type: "select".to_string(),
     }
 }
 

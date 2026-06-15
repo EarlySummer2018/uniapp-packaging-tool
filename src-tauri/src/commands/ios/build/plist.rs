@@ -21,6 +21,10 @@ use crate::commands::ios::modules::contacts::{
 use crate::commands::ios::modules::face_id::{
     apply_ios_face_id_privacy_defaults as apply_face_id_privacy_defaults, ios_face_id_enabled,
 };
+use crate::commands::ios::modules::facial_recognition_verify::{
+    apply_ios_facial_recognition_verify_privacy_defaults as apply_facial_recognition_verify_privacy_defaults,
+    ios_facial_recognition_verify_enabled,
+};
 use crate::commands::ios::modules::fingerprint::{
     apply_ios_fingerprint_privacy_defaults as apply_fingerprint_privacy_defaults,
     ios_fingerprint_enabled,
@@ -119,6 +123,9 @@ pub(super) fn patch_info_plist(
         if ios_livepusher_enabled(Some(info)) {
             apply_livepusher_privacy_defaults(dict);
         }
+        if ios_facial_recognition_verify_enabled(Some(info)) {
+            apply_facial_recognition_verify_privacy_defaults(dict);
+        }
         apply_push_plist_defaults(dict, Some(info));
         if ios_record_enabled(Some(info)) {
             apply_record_privacy_defaults(dict);
@@ -189,6 +196,7 @@ fn ios_privacy_key_applies_to_manifest(
             ios_camera_enabled(Some(info))
                 || ios_barcode_enabled(Some(info))
                 || ios_livepusher_enabled(Some(info))
+                || ios_facial_recognition_verify_enabled(Some(info))
         }
         "NSMicrophoneUsageDescription" => {
             ios_livepusher_enabled(Some(info)) || ios_record_enabled(Some(info))

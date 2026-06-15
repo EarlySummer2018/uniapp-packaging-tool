@@ -714,23 +714,4 @@ mod tests {
         assert!(err.contains("SDK/libs"));
         let _ = std::fs::remove_dir_all(root);
     }
-
-    #[test]
-    fn local_downloaded_android_sdk_layout_is_supported_when_present() {
-        let root =
-            PathBuf::from("/Users/huangxiangrui/Downloads/5.07/Android-SDK@5.07.82603_20260414");
-        if !root.exists() {
-            return;
-        }
-
-        let layout = resolve_android_sdk_layout(&root).unwrap();
-        let gif =
-            resolve_android_required_aar(&layout.libs_dir, &ANDROID_REQUIRED_AARS[1]).unwrap();
-
-        assert_eq!(layout.root, root.canonicalize().unwrap());
-        assert_eq!(
-            gif.file_name().and_then(|n| n.to_str()),
-            Some("android-gif-drawable-1.2.29.aar")
-        );
-    }
 }

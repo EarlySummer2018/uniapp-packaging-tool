@@ -14,7 +14,7 @@ mod splashscreen;
 mod workspace;
 
 use super::build_env::{resolve_ios_build_environment, run_xcodebuild};
-use super::signing::write_export_options;
+use super::signing::{write_export_options, MobileProvisionValidationMode};
 use config::ensure_macos;
 use fs_utils::{expand_home, find_file_with_ext};
 use logging::emit_ios_log;
@@ -40,6 +40,7 @@ pub async fn generate_ios_project(
         &build_id,
         manifest_info.as_ref(),
         &window,
+        MobileProvisionValidationMode::ProjectGeneration,
     )?;
     emit_ios_log(
         &window,
@@ -71,6 +72,7 @@ pub async fn build_ios_ipa(
         &build_id,
         manifest_info.as_ref(),
         &window,
+        MobileProvisionValidationMode::IpaExport,
     )?;
     let archive_path = workspace.workspace.join("build/output.xcarchive");
     let export_options = workspace.workspace.join("ExportOptions.plist");

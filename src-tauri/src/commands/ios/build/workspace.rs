@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
 use super::super::icons::generate_app_icons;
-use super::super::signing::{import_p12_certificate, install_mobileprovision, MobileProvisionInfo};
+use super::super::signing::{
+    import_p12_certificate, install_mobileprovision, MobileProvisionInfo,
+    MobileProvisionValidationMode,
+};
 use super::config::{
     effective_app_name, effective_app_version, effective_app_version_code,
     resolve_ios_manifest_info, validate_ios_app_id, validate_ios_config,
@@ -18,8 +21,10 @@ use super::runtime::{
 };
 use super::splashscreen::apply_ios_splashscreen;
 use crate::commands::ios::modules::bluetooth::apply_ios_bluetooth_module;
+use crate::commands::ios::modules::facial_recognition_verify::apply_ios_facial_recognition_verify_module;
 use crate::commands::ios::modules::geolocation::apply_ios_geolocation_module;
 use crate::commands::ios::modules::ibeacon::apply_ios_ibeacon_module;
+use crate::commands::ios::modules::livepusher::apply_ios_livepusher_module;
 use crate::commands::ios::modules::push::apply_ios_push_module;
 use crate::commands::module::{
     manifest_push_unsupported_version, PUSH_UNSUPPORTED_VERSION_MESSAGE,
@@ -42,6 +47,7 @@ pub(super) fn configure_ios_workspace(
     build_id: &str,
     supplied_manifest_info: Option<&crate::commands::resource::UniappManifestInfo>,
     window: &tauri::Window,
+    signing_validation_mode: MobileProvisionValidationMode,
 ) -> Result<IosWorkspace, String> {
     let config = crate::commands::project::load_project_config_sync(project_id)?;
     let manifest_info = resolve_ios_manifest_info(&config, supplied_manifest_info)?;
@@ -104,9 +110,10 @@ pub(super) fn configure_ios_workspace(
         }
     }
 
-    let sdk_project = crate::commands::sdk::resolve_ios_sdk_project(&PathBuf::from(
+    let sdk_root = crate::commands::sdk::resolve_ios_sdk_root(&PathBuf::from(
         &sdk_config.dcloud_ios_sdk_path,
     ))?;
+    let sdk_project = crate::commands::sdk::resolve_ios_sdk_project(&sdk_root)?;
     emit_version_warning_if_needed(window, build_id, &scan, &sdk_project);
 
     let workspace = crate::utils::fs::get_project_config_dir(project_id)
@@ -192,6 +199,42 @@ pub(super) fn configure_ios_workspace(
             Some(29),
         );
     }
+    if let Some(facial) =
+        apply_ios_facial_recognition_verify_module(&project_root, &project_file, manifest_info)?
+    {
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已自动接入 iOS 实人认证模块: 新增链接 {} 项，Embed {} 项，资源 {} 项，移除 UTS 重复链接 {} 项",
+                facial.linked_count,
+                facial.embedded_count,
+                facial.resource_count,
+                facial.removed_duplicate_count
+            ),
+            Some(29),
+        );
+    }
+    if let Some(livepusher) =
+        apply_ios_livepusher_module(
+            &project_root,
+            &project_file,
+            manifest_info,
+            &config.ios_module_config,
+        )?
+    {
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已自动接入 iOS LivePusher 模块: 新增链接 {} 项，Embed {} 项",
+                livepusher.linked_count, livepusher.embedded_count
+            ),
+            Some(29),
+        );
+    }
     if let Some(bluetooth) = apply_ios_bluetooth_module(&project_file, manifest_info)? {
         if bluetooth.background_enabled {
             emit_ios_log(
@@ -247,7 +290,7 @@ pub(super) fn configure_ios_workspace(
     patch_control_xml(&runtime_layout.control_xml, &scan.app_id)?;
     generate_app_icons(&project_root, &config, manifest_info)?;
     verify_privacy_manifest(&workspace, &project_file)?;
-    let profile = install_mobileprovision(&config)?;
+    let profile = install_mobileprovision(&config, signing_validation_mode)?;
     import_p12_certificate(&config)?;
     emit_ios_log(window, build_id, "success", "iOS 工程配置完成", Some(55));
 

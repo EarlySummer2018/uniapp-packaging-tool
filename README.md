@@ -1,30 +1,88 @@
 # UniPack Tool
 
-> UniApp 离线打包自动化桌面工具，支持 Android、iOS、HarmonyOS 多端构建流程管理。
-
-> - 当前工具验证基于单个 UniApp 项目完成，不同项目的模块组合、依赖版本或 manifest 配置可能存在差异。**如遇打包问题欢迎提交 [Issues](https://github.com/EarlySummer2018/uniapp-packaging-tool/issues) 反馈，项目将持续优化完善。**
+> UniApp 离线打包自动化桌面工具，面向 Android、iOS、HarmonyOS 多端构建流程管理。
 
 [English](./README.en.md) | 中文
 
-UniPack Tool 是一个基于 Tauri + Vue 3 + TypeScript + Rust 的桌面应用，目标是把 uni-app 离线打包过程中分散的 SDK 配置、项目配置、资源导入、模块识别、签名信息、构建日志和产物管理串起来，让多端打包流程更清晰、更可复用。
+UniPack Tool 是一个基于 Tauri + Vue 3 + TypeScript + Rust 的桌面应用。它把 uni-app 离线打包中分散的 SDK 配置、项目配置、资源导入、模块识别、签名信息、构建日志和产物管理串联起来，让多端打包流程更清晰、更可复用。
 
-## 功能特性
+> 当前验证主要基于单个 UniApp 项目完成，不同项目的模块组合、依赖版本或 `manifest.json` 配置可能存在差异。如遇打包问题，欢迎通过 [Issues](https://github.com/EarlySummer2018/uniapp-packaging-tool/issues) 反馈。
 
-- 项目管理：创建、保存、切换多个 uni-app 打包项目。
-- 多端配置：维护 Android、iOS、HarmonyOS 的包名、Bundle ID、签名、输出目录等配置。
-- 资源导入：导入本地 uni-app 项目或构建资源，读取 `manifest.json` 并提取应用信息。
-- 模块识别：分析常见 DCloud/原生模块、UTS 插件和 Android 模块必填参数。
-- SDK 管理：配置 DCloud Android/iOS 离线 SDK、Harmony 工程模板，并检测本机打包环境。
-- 构建中心：选择目标平台发起构建，实时查看日志，收集 APK/IPA/HAP 等产物。
-- 历史记录：记录构建状态、耗时、版本、日志路径和产物路径，便于排查和追踪。
-- 密钥保护：签名密码通过系统 Keychain/凭据能力保存，避免明文写入项目配置。
+## 支持概览
+
+| 平台 | 工程来源 | 构建产物 | 当前状态 |
+| --- | --- | --- | --- |
+| Android | 用户配置的 DCloud Android 离线 SDK | APK | 22 个模块已完成离线构建验证 |
+| iOS | 用户配置的 DCloud iOS 离线 SDK `HBuilder-Hello*` | IPA | 12 个模块已支持自动化接入或配置处理 |
+| HarmonyOS | 用户配置的 Harmony 工程模板 | HAP | 已支持模板工程构建流程，模块级配置持续完善 |
+
+## 核心能力
+
+| 能力 | 说明 |
+| --- | --- |
+| 项目管理 | 创建、保存、切换多个 uni-app 打包项目 |
+| SDK 管理 | 配置 DCloud Android/iOS 离线 SDK、Harmony 工程模板，并检测本机环境 |
+| 资源导入 | 导入本地 uni-app 项目或构建资源，读取 `manifest.json` 并提取应用信息 |
+| 平台配置 | 维护 Android、iOS、HarmonyOS 的包名、Bundle ID、签名、输出目录等配置 |
+| 模块识别 | 分析常见 DCloud/原生模块、UTS 插件和模块必填参数 |
+| 构建中心 | 选择目标平台发起构建，实时查看日志，收集 APK/IPA/HAP 等产物 |
+| 历史记录 | 记录构建状态、耗时、版本、日志路径和产物路径 |
+| 密钥保护 | 签名密码通过系统 Keychain/凭据能力保存，避免明文写入项目配置 |
+
+## iOS 支持情况
+
+当前 iOS 构建流程已从用户配置的 DCloud iOS 离线 SDK 目录读取 `HBuilder-Hello*` 工程，并校验同级 `SDK/Libs`、`SDK/Bundles` 支持目录。构建时会复制 SDK 工程到工作区，后续所有库、资源和 bundle 查找都来自该工作区的 SDK 链接或副本。
+
+| iOS 能力 | 支持内容 |
+| --- | --- |
+| 工程生成 | 复制 DCloud iOS 离线 SDK 自带 `HBuilder-Hello*`，配置 workspace 副本 |
+| 应用信息 | 写入应用名称、Bundle ID、版本号、`marketChannel`、`control.xml` AppId |
+| 资源导入 | 导入 UniApp 资源到 iOS `Pandora/apps` 布局 |
+| 图标与启动图 | 生成 iOS AppIcon，支持 manifest storyboard 启动界面资源注册 |
+| Info.plist | 合并隐私权限、URL Schemes、白名单、后台模式、ATS、Universal Links 等配置 |
+| Entitlements | 根据 manifest 配置 Associated Domains |
+| 隐私清单 | 校验 SDK 工程中的 `.xcprivacy` 是否纳入 Xcode 工程 |
+| 签名导出 | 安装 mobileprovision，导入 P12，执行 Xcode archive/export 生成 IPA |
+
+## iOS 已支持模块
+
+以下 **12 个模块**已在 iOS 端支持自动化接入或配置处理：
+
+| 分类 | 模块 |
+| --- | --- |
+| 基础能力 | Barcode、Bluetooth、Camera、Contacts、Fingerprint（FaceID）、iBeacon、VideoPlayer、Record |
+| 位置 | Geolocation（系统/百度/高德） |
+| 认证与安全 | FacialRecognitionVerify |
+| 通信与媒体 | Push（uniPush 2.0）、LivePusher |
+
+> 其中 Geolocation、Push、FacialRecognitionVerify、LivePusher 已支持原生依赖接入；Bluetooth、iBeacon 支持 Capability / 后台模式配置；其余模块主要提供 Info.plist / ATS 等配置处理。
+
+> Share、Login、Payment、Map、Speech、Statistic、uni-AD、UIWebview 等 iOS 模块已有文档或模板参考，但尚未全部实现端到端自动接入；复杂业务场景可能仍需要按 DCloud 官方文档在 Xcode 中补充配置。
+
+## Android 已验证模块
+
+以下 **22 个模块**已在 Android 端完成离线打包验证：
+
+| 分类 | 模块 |
+| --- | --- |
+| 基础能力 | Barcode、Bluetooth、Camera、Contacts、Fingerprint、iBeacon、VideoPlayer、Record、SQLite、Messaging、gcanvas、X5 WebView |
+| 位置与地图 | Geolocation（系统/百度/高德/腾讯）、Map（高德/百度/Google） |
+| 认证与安全 | FacialRecognitionVerify（DCloud/百度/阿里云） |
+| 通信与媒体 | Push（uniPush 与厂商通道）、LivePusher |
+| 社交与账号 | Share（微信/QQ/微博）、Login（微信/QQ/苹果/一键登录/小米/Google/Facebook） |
+| 支付与统计 | Payment（支付宝/微信/PayPal/Stripe/Google Pay）、Statistic（友盟/腾讯MTA/百度/DCloud/Firebase） |
+| 语音 | Speech（讯飞/百度/阿里云） |
+
+> 广告模块（uni-AD）代码中已有模板定义，但尚未经完整实测，使用时可能存在不确定性。
 
 ## 技术栈
 
-- 桌面框架：Tauri 2
-- 前端：Vue 3、TypeScript、Vite、Pinia、Vue Router、Naive UI
-- 后端：Rust、Tokio、Serde、Reqwest
-- 打包能力：DCloud 离线 SDK、Android Gradle、Xcode、HarmonyOS 工程模板
+| 层 | 技术 |
+| --- | --- |
+| 桌面框架 | Tauri 2 |
+| 前端 | Vue 3、TypeScript、Vite、Pinia、Vue Router、Naive UI |
+| 后端 | Rust、Tokio、Serde、Reqwest |
+| 打包能力 | DCloud 离线 SDK、Android Gradle、Xcode、HarmonyOS 工程模板 |
 
 ## 环境要求
 
@@ -38,7 +96,7 @@ UniPack Tool 是一个基于 Tauri + Vue 3 + TypeScript + Rust 的桌面应用�
 按目标平台额外准备：
 
 - Android：JDK、Android SDK、SDK Build Tools、Gradle 或项目内 Gradle Wrapper、DCloud Android 离线 SDK
-- iOS：macOS、Xcode、Command Line Tools、CocoaPods、DCloud iOS 离线 SDK
+- iOS：macOS、Xcode、Command Line Tools、DCloud iOS 离线 SDK；如模块依赖 CocoaPods，请额外安装 CocoaPods
 - HarmonyOS：DevEco Studio / HarmonyOS SDK、可用的 Harmony 工程模板
 
 ## 快速开始
@@ -69,69 +127,15 @@ npm run tauri build
 5. 根据检测到的模块补齐必填配置，选择目标平台并开始构建。
 6. 在「打包历史」中查看构建结果、日志和产物路径。
 
-## 支持的打包模块
-
-以下 **22 个模块**已在 **Android 端完成测试验证**，可正常用于离线打包配置：
-
-### 基础能力
-
-- **扫码（Barcode）** — 二维码/条形码扫描
-- **低功耗蓝牙（BLE）** — 蓝牙设备连接与数据交互
-- **相机&相册** — 相机拍照与图片选取
-- **通讯录** — 读取和写入联系人信息
-- **指纹识别** — 设备指纹生物认证
-- **iBeacon** — iBeacon 设备扫描与距离检测
-- **视频播放** — 本地及在线视频播放
-- **录音** — 音频录制
-- **定位（Geolocation）** — 系统定位、百度定位、高德定位、腾讯定位（支持权限自动注入与多供应商配置）
-- **地图（Map）** — 高德地图、百度地图、Google 地图（支持 vue/nvue 页面类型切换）
-- **语音识别（Speech）** — 讯飞语音、百度语音、阿里云语音识别
-- **gcanvas 画布** — Weex Canvas 绑定绘图引擎
-- **SQLite 数据库** — 本地 SQLite 数据存储
-- **短彩邮件消息** — 短信、彩信与邮件发送
-- **X5 WebView 内核** — 腾讯 TBS 内核，替代系统 WebView 提升兼容性
-
-### 认证与安全
-
-- **实人认证 / 人脸识别** — 人脸实名核身（支持 DCloud / 百度 / 阿里云）
-
-### 通信
-
-- **直播推流** — 音视频直播推流（腾讯云 LiteAVSDK）
-- **消息推送（uniPush）** — 推送通知（支持小米、魅族、华为、OPPO、vivo、荣耀等厂商通道）
-
-### 社交与分享
-
-- **分享** — 微信、QQ、新浪微博分享（文本、图片、链接、小程序等）
-
-### 登录鉴权
-
-- **登录** — 微信登录、QQ登录、苹果登录、一键登录、小米登录、Google登录、Facebook登录
-
-### 支付
-
-- **支付** — 支付宝支付、微信支付、PayPal、Stripe、Google Pay
-
-### 统计分析
-
-- **统计分析** — 友盟统计、腾讯MTA、百度统计、DCloud统计、Google Firebase
-
-> **说明：**
->
-> - 以上 22 个模块均已通过 Android 离线打包的实际构建验证。
-> - 验证基于单个 UniApp 项目完成，不同项目的模块组合、依赖版本或 manifest 配置可能存在差异。**如遇打包问题欢迎提交 [Issues](https://github.com/EarlySummer2018/uniapp-packaging-tool/issues) 反馈，我们将持续优化完善。**
-> - 广告模块（uni-AD）代码中已有模板定义，但**尚未经实测**，使用时可能存在不确定性。
-> - **iOS 与 HarmonyOS 端暂不支持模块级打包配置**，后续版本将逐步完善。
-
 ## 仓库结构
 
 ```text
 .
 ├── src/                  # Vue 前端页面、组件、状态管理
 ├── src-tauri/            # Tauri/Rust 后端命令与应用配置
-├── bundled/              # 内置模板，例如 Android 离线打包模板
+├── bundled/              # 内置模板
+├── docs/                 # Android / iOS 模块接入参考文档
 ├── public/               # 静态资源
-├── module-tutorial*.md   # 模块接入与离线打包参考文档
 └── package.json
 ```
 

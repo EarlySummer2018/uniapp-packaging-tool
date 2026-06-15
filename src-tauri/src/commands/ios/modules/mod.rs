@@ -4,6 +4,7 @@ pub(crate) mod camera;
 pub(crate) mod common;
 pub(crate) mod contacts;
 pub(crate) mod face_id;
+pub(crate) mod facial_recognition_verify;
 pub(crate) mod fingerprint;
 pub(crate) mod geolocation;
 pub(crate) mod ibeacon;

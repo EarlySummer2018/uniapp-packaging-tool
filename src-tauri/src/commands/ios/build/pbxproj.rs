@@ -189,6 +189,124 @@ pub(crate) fn register_pbx_linked_files(
     Ok(linked_count)
 }
 
+pub(crate) fn register_pbx_embedded_frameworks(
+    project_file: &Path,
+    files: &[IosPbxLinkedFile],
+) -> Result<usize, String> {
+    let pbxproj = project_file.join("project.pbxproj");
+    let mut content = std::fs::read_to_string(&pbxproj)
+        .map_err(|e| format!("读取 project.pbxproj 失败: {}", e))?;
+    let (updated, copy_phase_id) = ensure_embed_frameworks_copy_phase(&content)?;
+    content = updated;
+    let mut embedded_count = 0usize;
+
+    for file in files {
+        if content.contains(&format!("/* {} in Embed Frameworks */", file.name)) {
+            content = ensure_pbx_build_file_embed_signed(&content, file.name);
+            continue;
+        }
+
+        let existing_file_ref = find_pbx_file_reference_id(&content, file.name);
+        let file_ref = existing_file_ref.clone().unwrap_or_else(pbx_object_id);
+        let build_ref = pbx_object_id();
+        let build_line = format!(
+            "\t\t{} /* {} in Embed Frameworks */ = {{isa = PBXBuildFile; fileRef = {} /* {} */; settings = {{ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }}; }};\n",
+            build_ref, file.name, file_ref, file.name
+        );
+        content = insert_after_marker(
+            &content,
+            "/* Begin PBXBuildFile section */\n",
+            &build_line,
+            "PBXBuildFile section",
+        )?;
+
+        if existing_file_ref.is_none() {
+            let file_line = format!(
+                "\t\t{} /* {} */ = {{isa = PBXFileReference; lastKnownFileType = {}; name = {}; path = {}; sourceTree = {}; }};\n",
+                file_ref,
+                file.name,
+                file.last_known_file_type(),
+                render_pbx_value(file.name),
+                render_pbx_value(&file.pbx_path()),
+                render_pbx_value(file.source_tree())
+            );
+            content = insert_after_marker(
+                &content,
+                "/* Begin PBXFileReference section */\n",
+                &file_line,
+                "PBXFileReference section",
+            )?;
+            content = insert_into_pbx_list(
+                &content,
+                r"(?s)(/\* Frameworks \*/ = \{\s*isa = PBXGroup;\s*children = \(\n)",
+                &format!("\t\t\t\t{} /* {} */,\n", file_ref, file.name),
+                "Frameworks group",
+            )?;
+        }
+
+        content = insert_into_pbx_list(
+            &content,
+            &format!(
+                r"(?s)({} /\* .*? \*/ = \{{\s*isa = PBXCopyFilesBuildPhase;.*?files = \(\n)",
+                regex::escape(&copy_phase_id)
+            ),
+            &format!(
+                "\t\t\t\t{} /* {} in Embed Frameworks */,\n",
+                build_ref, file.name
+            ),
+            "Embed Frameworks build phase",
+        )?;
+        embedded_count += 1;
+    }
+
+    std::fs::write(&pbxproj, content).map_err(|e| format!("写入 project.pbxproj 失败: {}", e))?;
+    Ok(embedded_count)
+}
+
+pub(crate) fn remove_pbx_linked_or_embedded_files(
+    project_file: &Path,
+    names: &[&str],
+) -> Result<usize, String> {
+    let pbxproj = project_file.join("project.pbxproj");
+    let mut content = std::fs::read_to_string(&pbxproj)
+        .map_err(|e| format!("读取 project.pbxproj 失败: {}", e))?;
+    let original = content.clone();
+    let mut removed_count = 0usize;
+
+    for name in names {
+        let build_file_pattern = regex::Regex::new(&format!(
+            r"(?m)^\s*([A-Za-z0-9]{{24}}) /\* {} in (?:Frameworks|Embed Frameworks) \*/ = \{{isa = PBXBuildFile;[^\n]*\}};\n?",
+            regex::escape(name)
+        ))
+        .map_err(|e| e.to_string())?;
+        let build_ids = build_file_pattern
+            .captures_iter(&content)
+            .filter_map(|captures| captures.get(1).map(|value| value.as_str().to_string()))
+            .collect::<Vec<_>>();
+        if build_ids.is_empty() {
+            continue;
+        }
+        removed_count += build_ids.len();
+        content = build_file_pattern.replace_all(&content, "").into_owned();
+
+        for build_id in build_ids {
+            let phase_ref_pattern = regex::Regex::new(&format!(
+                r"(?m)^\s*{} /\* {} in (?:Frameworks|Embed Frameworks) \*/,\n?",
+                regex::escape(&build_id),
+                regex::escape(name)
+            ))
+            .map_err(|e| e.to_string())?;
+            content = phase_ref_pattern.replace_all(&content, "").into_owned();
+        }
+    }
+
+    if content != original {
+        std::fs::write(&pbxproj, content)
+            .map_err(|e| format!("写入 project.pbxproj 失败: {}", e))?;
+    }
+    Ok(removed_count)
+}
+
 fn ensure_pbx_build_file_weak_linked(content: &str, name: &str) -> String {
     let pattern = regex::Regex::new(&format!(
         r"(?m)^(\s*[A-Za-z0-9]{{24}} /\* {} in Frameworks \*/ = \{{isa = PBXBuildFile; fileRef = [A-Za-z0-9]{{24}} /\* {} \*/;)([^\n]*)(\}};)$",
@@ -209,6 +327,90 @@ fn ensure_pbx_build_file_weak_linked(content: &str, name: &str) -> String {
             )
         })
         .into_owned()
+}
+
+fn ensure_pbx_build_file_embed_signed(content: &str, name: &str) -> String {
+    let pattern = regex::Regex::new(&format!(
+        r"(?m)^(\s*[A-Za-z0-9]{{24}} /\* {} in Embed Frameworks \*/ = \{{isa = PBXBuildFile; fileRef = [A-Za-z0-9]{{24}} /\* {} \*/;)([^\n]*)(\}};)$",
+        regex::escape(name),
+        regex::escape(name)
+    ))
+    .expect("valid PBXBuildFile regex");
+    pattern
+        .replace_all(content, |caps: &regex::Captures| {
+            let line = caps.get(0).map_or("", |value| value.as_str());
+            if line.contains("CodeSignOnCopy") {
+                return line.to_string();
+            }
+            format!(
+                "{} settings = {{ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }}; {}",
+                caps.get(1).map_or("", |value| value.as_str()),
+                caps.get(4).map_or("", |value| value.as_str())
+            )
+        })
+        .into_owned()
+}
+
+fn ensure_embed_frameworks_copy_phase(content: &str) -> Result<(String, String), String> {
+    if let Some(id) = find_embed_frameworks_copy_phase_id(content) {
+        return Ok((content.to_string(), id));
+    }
+
+    let phase_id = pbx_object_id();
+    let phase_block = format!(
+        "/* Begin PBXCopyFilesBuildPhase section */\n\t\t{} /* Embed Frameworks */ = {{\n\t\t\tisa = PBXCopyFilesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tdstPath = \"\";\n\t\t\tdstSubfolderSpec = 10;\n\t\t\tfiles = (\n\t\t\t);\n\t\t\tname = \"Embed Frameworks\";\n\t\t\trunOnlyForDeploymentPostprocessing = 0;\n\t\t}};\n/* End PBXCopyFilesBuildPhase section */\n",
+        phase_id
+    );
+    let mut updated = if content.contains("/* Begin PBXCopyFilesBuildPhase section */\n") {
+        insert_after_marker(
+            content,
+            "/* Begin PBXCopyFilesBuildPhase section */\n",
+            &format!(
+                "\t\t{} /* Embed Frameworks */ = {{\n\t\t\tisa = PBXCopyFilesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tdstPath = \"\";\n\t\t\tdstSubfolderSpec = 10;\n\t\t\tfiles = (\n\t\t\t);\n\t\t\tname = \"Embed Frameworks\";\n\t\t\trunOnlyForDeploymentPostprocessing = 0;\n\t\t}};\n",
+                phase_id
+            ),
+            "PBXCopyFilesBuildPhase section",
+        )?
+    } else {
+        insert_before_first_existing_marker(
+            content,
+            &[
+                "/* Begin PBXFileReference section */\n",
+                "/* Begin PBXFrameworksBuildPhase section */\n",
+                "/* Begin PBXGroup section */\n",
+            ],
+            &phase_block,
+            "PBXCopyFilesBuildPhase insertion point",
+        )?
+    };
+
+    updated = insert_into_pbx_list(
+        &updated,
+        r"(?s)(/\* Begin PBXNativeTarget section \*/.*?isa = PBXNativeTarget;.*?buildPhases = \(\n)",
+        &format!("\t\t\t\t{} /* Embed Frameworks */,\n", phase_id),
+        "PBXNativeTarget buildPhases",
+    )?;
+
+    Ok((updated, phase_id))
+}
+
+fn find_embed_frameworks_copy_phase_id(content: &str) -> Option<String> {
+    let comment_pattern = regex::Regex::new(
+        r#"(?s)([A-Za-z0-9]{24}) /\* Embed Frameworks \*/ = \{\s*isa = PBXCopyFilesBuildPhase;.*?\};"#,
+    )
+    .ok()?;
+    if let Some(captures) = comment_pattern.captures(content) {
+        return captures.get(1).map(|value| value.as_str().to_string());
+    }
+
+    let name_pattern = regex::Regex::new(
+        r#"(?s)([A-Za-z0-9]{24}) /\* .*? \*/ = \{\s*isa = PBXCopyFilesBuildPhase;.*?name = "?Embed Frameworks"?;.*?\};"#,
+    )
+    .ok()?;
+    name_pattern
+        .captures(content)
+        .and_then(|captures| captures.get(1))
+        .map(|value| value.as_str().to_string())
 }
 
 pub(crate) fn enable_pbx_system_capability(
@@ -432,7 +634,7 @@ fn render_pbx_value(value: &str) -> String {
     }
 }
 
-pub(super) fn register_pbx_resources(
+pub(crate) fn register_pbx_resources(
     project_file: &Path,
     resource_names: &[String],
 ) -> Result<(), String> {
@@ -503,6 +705,24 @@ fn insert_after_marker(
     Ok(result)
 }
 
+fn insert_before_first_existing_marker(
+    content: &str,
+    markers: &[&str],
+    value: &str,
+    description: &str,
+) -> Result<String, String> {
+    let index = markers
+        .iter()
+        .filter_map(|marker| content.find(marker))
+        .min()
+        .ok_or_else(|| format!("project.pbxproj 缺少 {}", description))?;
+    let mut result = String::with_capacity(content.len() + value.len());
+    result.push_str(&content[..index]);
+    result.push_str(value);
+    result.push_str(&content[index..]);
+    Ok(result)
+}
+
 fn insert_into_pbx_list(
     content: &str,
     pattern: &str,
@@ -541,6 +761,7 @@ fn pbx_resource_file_type(name: &str) -> &'static str {
         Some("jpg" | "jpeg") => "image.jpeg",
         Some("pdf") => "image.pdf",
         Some("json") => "text.json",
+        Some("bundle") => "\"wrapper.plug-in\"",
         _ => "file",
     }
 }

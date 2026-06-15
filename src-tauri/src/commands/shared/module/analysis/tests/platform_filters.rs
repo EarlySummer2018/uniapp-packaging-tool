@@ -421,6 +421,7 @@ fn ios_module_config_lists_media_contact_auth_and_video_fields() {
                 "Camera": {},
                 "Contacts": {},
                 "FaceID": {},
+                "FacialRecognitionVerify": {},
                 "Fingerprint": {},
                 "iBeacon": {},
                 "LivePusher": {},
@@ -476,6 +477,10 @@ fn ios_module_config_lists_media_contact_auth_and_video_fields() {
         .fields
         .iter()
         .any(|field| field.key == "privacy.NSFaceIDUsageDescription"));
+    assert!(module("face_recognition").fields.iter().any(|field| {
+        field.key == "privacy.NSCameraUsageDescription"
+            && field.value.as_deref() == Some("我们需要使用摄像头进行人脸识别验证")
+    }));
     assert!(module("fingerprint")
         .fields
         .iter()
@@ -484,6 +489,13 @@ fn ios_module_config_lists_media_contact_auth_and_video_fields() {
         field.key == "privacy.NSLocationAlwaysAndWhenInUseUsageDescription"
             && field.value.as_deref() == Some("扫描蓝牙 Beacon 设备")
     }));
+    assert!(module("livepusher")
+        .fields
+        .iter()
+        .any(|field| field.key == "customComponentMode"
+            && field.value.as_deref() == Some("false")
+            && field.value_source.as_deref() == Some("default")
+            && field.field_type == "select"));
     assert!(module("livepusher")
         .fields
         .iter()

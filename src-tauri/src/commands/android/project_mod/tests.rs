@@ -11,7 +11,7 @@ mod tests {
     };
     use crate::commands::android::project_mod::xml_editor::XmlManifestEditor;
     use crate::commands::android::project_mod::*;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     fn test_context() -> BuildModificationContext {
         BuildModificationContext {
@@ -517,51 +517,6 @@ include ':simpleDemo'
         assert!(root_gradle.contains("classpath 'com.android.tools.build:gradle:8.10.0'"));
         assert!(!root_gradle.contains("allprojects"));
         assert_eq!(root_gradle.matches("mavenCentral()").count(), 0);
-        assert_eq!(root_gradle.matches("https://jitpack.io").count(), 0);
-
-        let _ = std::fs::remove_dir_all(workspace);
-    }
-
-    #[test]
-    fn local_downloaded_official_project_can_be_patched_when_present() {
-        let sdk_root =
-            PathBuf::from("/Users/huangxiangrui/Downloads/5.07/Android-SDK@5.07.82603_20260414");
-        let source = sdk_root.join("HBuilder-Integrate-AS");
-        if !source.exists() {
-            return;
-        }
-
-        let workspace =
-            std::env::temp_dir().join(format!("unipack-android-real-mod-{}", uuid::Uuid::new_v4()));
-        crate::utils::fs::copy_recursive(&source, &workspace).unwrap();
-        let modifier = AndroidProjectModifier::new(workspace.clone()).unwrap();
-        let ctx = test_context();
-
-        modifier.apply_all_modifications(&ctx).unwrap();
-        modifier.apply_all_modifications(&ctx).unwrap();
-
-        let build_gradle =
-            std::fs::read_to_string(workspace.join(MODULE_NAME).join("build.gradle")).unwrap();
-        assert!(build_gradle.contains("namespace 'com.example.test'"));
-        assert!(build_gradle.contains("applicationId \"com.example.test\""));
-        assert_eq!(
-            build_gradle
-                .matches("implementation project(':demo-plugin')")
-                .count(),
-            1
-        );
-
-        let manifest = std::fs::read_to_string(
-            workspace
-                .join(MODULE_NAME)
-                .join("src/main/AndroidManifest.xml"),
-        )
-        .unwrap();
-        assert!(manifest.contains(r#"android:allowBackup="false""#));
-        assert!(manifest.contains(r#"android:value="test-app-key""#));
-        assert_eq!(manifest.matches(r#"android:name="GETUI_APPID""#).count(), 1);
-
-        let root_gradle = std::fs::read_to_string(workspace.join("build.gradle")).unwrap();
         assert_eq!(root_gradle.matches("https://jitpack.io").count(), 0);
 
         let _ = std::fs::remove_dir_all(workspace);

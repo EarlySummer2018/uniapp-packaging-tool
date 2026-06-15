@@ -9,6 +9,9 @@ pub(super) struct MobileProvisionInfo {
     team_ids: Vec<String>,
     app_id_prefixes: Vec<String>,
     application_identifier: String,
+    get_task_allow: bool,
+    provisioned_devices_count: usize,
+    provisions_all_devices: bool,
 }
 
 impl MobileProvisionInfo {
@@ -34,15 +37,22 @@ impl MobileProvisionInfo {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MobileProvisionValidationMode {
+    ProjectGeneration,
+    IpaExport,
+}
+
 pub(super) fn install_mobileprovision(
     config: &crate::commands::project::ProjectConfig,
+    mode: MobileProvisionValidationMode,
 ) -> Result<MobileProvisionInfo, String> {
     let src = PathBuf::from(&config.ios.provisioning_profile);
     if !src.exists() {
         return Err(format!("描述文件不存在: {}", src.display()));
     }
     let info = parse_mobileprovision(&src)?;
-    validate_mobileprovision(&info, config)?;
+    validate_mobileprovision(&info, config, mode)?;
     let dest_dir = dirs::home_dir()
         .ok_or_else(|| "无法定位 HOME".to_string())?
         .join("Library/MobileDevice/Provisioning Profiles");
@@ -145,12 +155,27 @@ fn mobileprovision_info_from_plist(value: &plist::Value) -> Result<MobileProvisi
         .and_then(|value| value.as_dictionary())
         .and_then(|entitlements| plist_string(entitlements, "application-identifier"))
         .ok_or_else(|| "描述文件缺少 Entitlements.application-identifier".to_string())?;
+    let entitlements = dict
+        .get("Entitlements")
+        .and_then(|value| value.as_dictionary());
+    let get_task_allow = entitlements
+        .and_then(|entitlements| plist_bool(entitlements, "get-task-allow"))
+        .unwrap_or(false);
+    let provisioned_devices_count = dict
+        .get("ProvisionedDevices")
+        .and_then(|value| value.as_array())
+        .map(Vec::len)
+        .unwrap_or(0);
+    let provisions_all_devices = plist_bool(dict, "ProvisionsAllDevices").unwrap_or(false);
     Ok(MobileProvisionInfo {
         uuid,
         name,
         team_ids,
         app_id_prefixes,
         application_identifier,
+        get_task_allow,
+        provisioned_devices_count,
+        provisions_all_devices,
     })
 }
 
@@ -177,9 +202,17 @@ fn plist_string_array(dict: &plist::Dictionary, key: &str) -> Vec<String> {
     }
 }
 
+fn plist_bool(dict: &plist::Dictionary, key: &str) -> Option<bool> {
+    match dict.get(key) {
+        Some(plist::Value::Boolean(value)) => Some(*value),
+        _ => None,
+    }
+}
+
 fn validate_mobileprovision(
     info: &MobileProvisionInfo,
     config: &crate::commands::project::ProjectConfig,
+    mode: MobileProvisionValidationMode,
 ) -> Result<(), String> {
     if !info.team_ids.is_empty() && !info.team_ids.iter().any(|team| team == &config.ios.team_id) {
         return Err(format!(
@@ -196,6 +229,51 @@ fn validate_mobileprovision(
             "描述文件 Bundle ID 不匹配：配置为 {}，描述文件为 {}",
             config.ios.bundle_id, pattern
         ));
+    }
+    if mode == MobileProvisionValidationMode::IpaExport {
+        validate_mobileprovision_export_method(info, &config.ios.export_method)?;
+    }
+    Ok(())
+}
+
+fn validate_mobileprovision_export_method(
+    info: &MobileProvisionInfo,
+    export_method: &str,
+) -> Result<(), String> {
+    match export_method {
+        "app-store" => {
+            if info.get_task_allow || info.provisioned_devices_count > 0 {
+                return Err(format!(
+                    "iOS 导出方式为 App Store，但描述文件「{}」是开发或 Ad Hoc 描述文件（get-task-allow={}, 设备数={}）。请改用 App Store 分发描述文件和匹配的 Apple Distribution 证书，或将导出方式改为 Development/Ad Hoc。",
+                    info.name, info.get_task_allow, info.provisioned_devices_count
+                ));
+            }
+        }
+        "development" => {
+            if !info.get_task_allow {
+                return Err(format!(
+                    "iOS 导出方式为 Development，但描述文件「{}」不是开发描述文件（get-task-allow=false）。请改用 Development 描述文件，或调整导出方式。",
+                    info.name
+                ));
+            }
+        }
+        "ad-hoc" => {
+            if info.get_task_allow || info.provisioned_devices_count == 0 {
+                return Err(format!(
+                    "iOS 导出方式为 Ad Hoc，但描述文件「{}」不是 Ad Hoc 分发描述文件（get-task-allow={}, 设备数={}）。请改用 Ad Hoc 描述文件，或调整导出方式。",
+                    info.name, info.get_task_allow, info.provisioned_devices_count
+                ));
+            }
+        }
+        "enterprise" => {
+            if info.get_task_allow || !info.provisions_all_devices {
+                return Err(format!(
+                    "iOS 导出方式为 Enterprise，但描述文件「{}」不是企业分发描述文件（get-task-allow={}, ProvisionsAllDevices={}）。请改用 Enterprise 描述文件，或调整导出方式。",
+                    info.name, info.get_task_allow, info.provisions_all_devices
+                ));
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -225,6 +303,9 @@ mod tests {
             team_ids: vec!["TEAM123".into()],
             app_id_prefixes: vec![],
             application_identifier: "TEAM123.com.example.app".into(),
+            get_task_allow: false,
+            provisioned_devices_count: 0,
+            provisions_all_devices: false,
         };
         assert_eq!(info.bundle_pattern().as_deref(), Some("com.example.app"));
     }
@@ -255,13 +336,39 @@ mod tests {
             "application-identifier".into(),
             plist::Value::String("TEAM123.com.example.app".into()),
         );
+        entitlements.insert("get-task-allow".into(), plist::Value::Boolean(true));
         root.insert(
             "Entitlements".into(),
             plist::Value::Dictionary(entitlements),
+        );
+        root.insert(
+            "ProvisionedDevices".into(),
+            plist::Value::Array(vec![plist::Value::String("DEVICE1".into())]),
         );
         let info = mobileprovision_info_from_plist(&plist::Value::Dictionary(root)).unwrap();
         assert_eq!(info.uuid, "PROFILE-UUID");
         assert_eq!(info.specifier(), "Profile Name");
         assert_eq!(info.bundle_pattern().as_deref(), Some("com.example.app"));
+        assert!(info.get_task_allow);
+        assert_eq!(info.provisioned_devices_count, 1);
+    }
+
+    #[test]
+    fn app_store_export_rejects_development_profile() {
+        let info = MobileProvisionInfo {
+            uuid: "UUID".into(),
+            name: "Development Profile".into(),
+            team_ids: vec!["TEAM123".into()],
+            app_id_prefixes: vec![],
+            application_identifier: "TEAM123.com.example.app".into(),
+            get_task_allow: true,
+            provisioned_devices_count: 2,
+            provisions_all_devices: false,
+        };
+
+        let err = validate_mobileprovision_export_method(&info, "app-store").unwrap_err();
+
+        assert!(err.contains("App Store"));
+        assert!(err.contains("Development Profile"));
     }
 }

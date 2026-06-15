@@ -1,102 +1,46 @@
-# LivePusher（直播推流）（iOS）
+# LivePusher（又拍云直播推流）（iOS）
 
 > **适用版本**：HBuilderX 5.0+
 > **平台**：iOS (iPhone/iPad)
-> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/
+> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/livepusher.html
+>
+> **最后更新**：2025年5月
 
 ---
 
-iOS 直播推流模块基于腾讯直播 SDK（LiteAVSDK）实现。
+iOS 又拍云直播推流模块。
 
-## 需要引入的系统框架
+## 将又拍云直播推流模块依赖库及资源添加到工程
 
-| 框架 | 说明 |
-|------|------|
-| AVFoundation.framework | 音视频采集与播放 |
-| Accelerate.framework | 加速框架 |
-| AudioToolbox.framework | 音频工具 |
-| VideoToolbox.framework | 硬件编码加速 |
-| CoreMedia.framework | 核心媒体库 |
-| CoreMotion.framework | 传感器数据（防抖） |
-| OpenGLES.framework | OpenGL 渲染 |
-| QuartzCore.framework | 图形渲染 |
-| UIKit.framework | UI组件 |
-| Foundation.framework | 基础框架 |
-| libresolv.tbd | DNS解析 |
-| libc++.tbd | C++ 运行时 |
+| 依赖库 | 系统库 | 依赖资源 |
+|--------|--------|---------|
+| `liblibLivePush.a`<br>`libDCUniGPUImage.a`<br>`UPLiveSDKDll.framework` | `AVFoundation.framework`、`QuartzCore.framework`、`OpenGLES.framework`、`AudioToolbox.framework`、`VideoToolbox.framework`、`Accelerate.framework`、`CoreMedia.framework`、`CoreTelephony.framework`、`SystemConfiguration.framework`、`CoreMotion.framework`、`libz.tbd`、`libbz2.tbd`、`libiconv.tbd` | 无 |
 
-## Info.plist 配置
+## 动态库配置
 
-```xml
-<!-- 相机权限 -->
-<key>NSCameraUsageDescription</key>
-<string>我们需要使用摄像头来进行直播推流</string>
+`UPLiveSDKDll.framework` 这个库是**动态库**并且**不支持模拟器**，需要添加到 **Xcode → General → Frameworks, Libraries, and Embedded Content** 中，设置为 **Embed & Sign**：
 
-<!-- 麦克风权限 -->
-<key>NSMicrophoneUsageDescription</key>
-<string>我们需要使用麦克风来采集声音</string>
+![UPLiveSDKDll.framework 动态库配置](./image.png)
 
-<!-- 网络权限 -->
-<key>NSAppTransportSecurity</key>
-<dict>
-    <key>NSAllowsArbitraryLoads</key>
-    <true/>
-</dict>
+上图展示了 Xcode 中的三处配置要点：
 
-<!-- 后台音频（可选） -->
-<key>UIBackgroundModes</key>
-<array>
-    <string>audio</string>
-</array>
-```
+1. **项目导航器**（左侧）：将 `UPLiveSDKDll.framework` 拷贝到项目目录（如 `libs/` 下）
+2. **General → Frameworks, Libraries, and Embedded Content**（右上）：将 `UPLiveSDKDll.framework` 添加到列表，Embed 设置为 **Embed & Sign**
+3. **Embed Frameworks**（下方）：确认 `UPLiveSDKDll.framework` 出现在 Embed Frameworks 列表中，勾选 **Code Sign On Copy**
 
-## CocoaPods 依赖
+## 自定义组件模式
 
-```ruby
-pod 'TXLiteAVSDK_Professional', '~> 11.x.x'  # 腾讯直播专业版
-# 或者
-pod 'TXLiteAVSDK_Enterprise', '~> 11.x.x'     # 企业版（功能更全）
-```
+> 注意：如果是自定义组件模式下的 `live-pusher` 组件，需要再加上 `libDCUniLivePush.a` 库。
 
-## 需要拷贝的文件
+---
 
-| 路径 | 文件 |
-|------|------|
-| SDK/libs | `TXLiteAVSDK_Professional.framework` 或 `TXLiveSDK.framework` |
+## ⚠️ 重要注意事项
 
-## Objective-C 代码初始化
-
-```objc
-#import <TXLiteAVSDK_Professional/TXLiteAVSDK.h>
-
-// 初始化直播引擎
-TXLivePushConfig *config = [[TXLivePushConfig alloc] init];
-config.videoQuality = VIDEO_QUALITY_HIGH_DEFINITION;  // 高清画质
-config.frontCamera = YES;                              // 默认前置摄像头
-config.enableAudioPreview = YES;                       // 开启耳返
-
-TXLivePush *livePush = [[TXLivePush alloc] initWithConfig:config];
-
-// 设置推流地址
-[livePush startPush:@"rtmp://你的推流地址/live/streamkey"];
-
-// 开始预览
-[livePush startPreview:self.previewView];
-```
-
-## dcloud_properties.xml 配置
-
-```xml
-<feature name="LivePusher" value="io.dcloud.media.live.LiveMediaFeatureImpl"/>
-```
-
-## ⚠️ 直播推流注意事项
-
-1. **硬件要求**：直播推流对设备性能有一定要求，低端设备可能出现卡顿
-2. **网络优化**：建议使用 CDN 推流，并根据网络状况动态调整码率
-3. **美颜滤镜**：腾讯 SDK 内置美颜功能，可按需开启
-4. **横竖屏切换**：需要处理好屏幕旋转逻辑
-5. **后台限制**：iOS 对后台摄像头有限制，进入后台后需暂停推流
+1. **真机调试必需**：`UPLiveSDKDll.framework` 不包含模拟器架构（仅 arm64），必须在真机上调试和运行
+2. **后台限制**：iOS 对后台摄像头访问有限制，App 进入后台时需暂停推流
+3. **网络环境**：推流对网络质量要求较高，建议使用稳定的 WiFi 或 4G/5G 网络
+4. **与腾讯云 TUICallKit 冲突**：LivePusher 底层依赖的 SDK 与腾讯云音视频通话插件（TUICallKit）存在符号冲突，两者**不能同时集成**
+5. **自定义组件模式**：若使用自定义组件模式开发，务必额外添加 `libDCUniLivePush.a`，否则 live-pusher 组件无法正常工作
 
 ---
 
@@ -104,4 +48,4 @@ TXLivePush *livePush = [[TXLivePush alloc] initWithConfig:config];
 
 - 上一篇：[Speech（语音输入）](speech.md)
 - 下一篇：[Statistic（统计）](statistic.md)
-- 相关模块：[Speech（语音输入）](speech.md)（同样需要麦克风权限）、[uni-AD（广告）](uni-ad.md)
+- 相关模块：[FacialRecognitionVerify（实人认证）](facial-recognition-verify.md)（同样需要相机权限）、[Geolocation（定位）](geolocation.md)（同样需要 CoreTelephony）
