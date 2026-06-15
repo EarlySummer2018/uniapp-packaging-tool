@@ -4,36 +4,40 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create or update
+        required: true
+        default: v0.1.0
 
 permissions:
   contents: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   release:
     name: Build universal macOS app
-    runs-on: macos-13
+    runs-on: macos-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -57,16 +61,93 @@ jobs:
           fi
 
           cp "$dmg_path" release-assets/UniPack-Tool-macOS.dmg
-          shasum -a 256 release-assets/UniPack-Tool-macOS.dmg > release-assets/UniPack-Tool-macOS.dmg.sha256
+          (cd release-assets && shasum -a 256 UniPack-Tool-macOS.dmg > UniPack-Tool-macOS.dmg.sha256)
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: UniPack Tool ${{ github.ref_name }}
-          body: |
-            Download `UniPack-Tool-macOS.dmg` below.
-          files: |
-            release-assets/UniPack-Tool-macOS.dmg
-            release-assets/UniPack-Tool-macOS.dmg.sha256
-          draft: false
-          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="$INPUT_TAG"
+          fi
+
+          headers=(
+            -H "Authorization: Bearer $GITHUB_TOKEN"
+            -H "Accept: application/vnd.github+json"
+            -H "X-GitHub-Api-Version: 2022-11-28"
+          )
+
+          release_api="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases"
+          status="$(curl -sS -o release.json -w "%{http_code}" "${headers[@]}" "$release_api/tags/$release_tag")"
+
+          if [ "$status" = "404" ]; then
+            node - "$release_tag" <<'NODE' > release-payload.json
+          const tag = process.argv[2];
+          process.stdout.write(JSON.stringify({
+            tag_name: tag,
+            target_commitish: process.env.GITHUB_SHA,
+            name: `UniPack Tool ${tag}`,
+            body: "Download `UniPack-Tool-macOS.dmg` below.",
+            draft: false,
+            prerelease: false,
+            make_latest: "true"
+          }));
+          NODE
+            curl -sS -f -o release.json -X POST "${headers[@]}" \
+              -d @release-payload.json \
+              "$release_api"
+          elif [ "$status" = "200" ]; then
+            node - "$release_tag" <<'NODE' > release-payload.json
+          const tag = process.argv[2];
+          process.stdout.write(JSON.stringify({
+            name: `UniPack Tool ${tag}`,
+            body: "Download `UniPack-Tool-macOS.dmg` below.",
+            draft: false,
+            prerelease: false,
+            make_latest: "true"
+          }));
+          NODE
+            release_id="$(node -e "console.log(JSON.parse(require('fs').readFileSync('release.json', 'utf8')).id)")"
+            curl -sS -f -o release.json -X PATCH "${headers[@]}" \
+              -d @release-payload.json \
+              "$release_api/$release_id"
+          else
+            echo "Unexpected release lookup status: $status"
+            cat release.json
+            exit 1
+          fi
+
+          release_id="$(node -e "console.log(JSON.parse(require('fs').readFileSync('release.json', 'utf8')).id)")"
+          upload_url="$(node -e "console.log(JSON.parse(require('fs').readFileSync('release.json', 'utf8')).upload_url.split('{')[0])")"
+
+          node <<'NODE' > asset-ids.txt
+          const fs = require("fs");
+          const release = JSON.parse(fs.readFileSync("release.json", "utf8"));
+          const names = new Set(["UniPack-Tool-macOS.dmg", "UniPack-Tool-macOS.dmg.sha256"]);
+          for (const asset of release.assets || []) {
+            if (names.has(asset.name)) {
+              console.log(asset.id);
+            }
+          }
+          NODE
+
+          while read -r asset_id; do
+            [ -z "$asset_id" ] && continue
+            curl -sS -f -X DELETE "${headers[@]}" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+          done < asset-ids.txt
+
+          for file in release-assets/UniPack-Tool-macOS.dmg release-assets/UniPack-Tool-macOS.dmg.sha256; do
+            name="$(basename "$file")"
+            curl -sS -f -X POST "${headers[@]}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$file" \
+              "$upload_url?name=$name"
+          done
+
+          echo "Published $release_tag as release $release_id"
