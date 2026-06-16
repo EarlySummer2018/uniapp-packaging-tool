@@ -1246,7 +1246,7 @@ function setIosMapProviderValue(
     mapConfig[canonicalProvider] = provider
   }
   provider[key] = value
-  if (!('__platform__' in provider)) provider.__platform__ = ['ios']
+  delete provider.__platform__
 }
 
 function ensureObjectPath(root: Record<string, any>, keys: string[]) {

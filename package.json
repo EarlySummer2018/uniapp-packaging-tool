@@ -1,6 +1,6 @@
 {
   "name": "uniapp-packaging-tool",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A Tauri desktop tool for automating uni-app offline packaging across Android, iOS, and HarmonyOS.",
   "license": "MIT",
   "author": "EarlySummer2018",

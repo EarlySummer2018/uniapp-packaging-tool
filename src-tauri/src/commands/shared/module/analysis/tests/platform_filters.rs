@@ -244,7 +244,6 @@ fn ios_map_baidu_defaults_to_vue_and_exposes_local_pod_select() {
                 "sdkConfigs": {
                     "maps": {
                         "baidu": {
-                            "__platform__": ["ios"],
                             "appkey_ios": "baidu-ios"
                         }
                     }
@@ -314,12 +313,7 @@ fn ios_map_amap_defaults_to_nvue_and_preserves_local_pod_choice() {
                 "sdkConfigs": {
                     "maps": {
                         "amap": {
-                            "__platform__": ["ios"],
                             "appkey_ios": "amap-ios"
-                        },
-                        "baidu": {
-                            "__platform__": ["android"],
-                            "appkey_ios": "baidu-ios"
                         }
                     }
                 }
