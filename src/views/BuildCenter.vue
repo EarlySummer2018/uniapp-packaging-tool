@@ -16,6 +16,7 @@ import {
   NSpace,
   NTag,
   NText,
+  useDialog,
   useMessage
 } from 'naive-ui'
 import { ArrowBackOutline, FolderOpenOutline, PlayOutline } from '@vicons/ionicons5'
@@ -210,6 +211,7 @@ type ModuleStatusTone = 'default' | 'success' | 'warning' | 'error'
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+const dialog = useDialog()
 const buildStore = useBuildStore()
 const projectsStore = useProjectsStore()
 
@@ -1043,6 +1045,7 @@ function applyIosModuleConfigToManifestInfo(info: UniappManifestInfo): UniappMan
   const manifestValue = cloneJson(info.manifestValue || null)
   if (manifestValue) {
     applyIosGeolocationConfigToManifestValue(manifestValue)
+    applyIosMapConfigToManifestValue(manifestValue)
     applyIosPushConfigToManifestValue(manifestValue)
     applyIosBluetoothConfigToManifestValue(manifestValue)
     applyIosVideoPlayerConfigToManifestValue(manifestValue)
@@ -1073,6 +1076,34 @@ function applyIosGeolocationConfigToManifestValue(manifestValue: Record<string, 
         setIosGeolocationProviderValue(geolocationConfig, 'baidu', ['baidu', 'bd'], 'appkey_ios', value)
       } else if (field.key === 'amap.appkey_ios') {
         setIosGeolocationProviderValue(geolocationConfig, 'amap', ['amap', 'gaode'], 'appkey_ios', value)
+      }
+    }
+  }
+}
+
+function applyIosMapConfigToManifestValue(manifestValue: Record<string, any>) {
+  const mapModules = (iosModuleConfigReport.value?.modules || [])
+    .filter(mod => mod.templateKey === 'map' && isIosConfigModuleSelected(mod))
+  if (!mapModules.length) return
+
+  const sdkConfigs = ensureObjectPath(manifestValue, ['app-plus', 'distribute', 'sdkConfigs'])
+  const mapConfig = ensureIosMapSdkConfig(sdkConfigs)
+  delete mapConfig.__platform__
+  for (const mod of mapModules) {
+    const provider = iosMapProviderForModule(mod)
+    for (const field of mod.fields) {
+      if (field.key.startsWith('privacy.')) continue
+      const value = iosFieldValue(mod, field).trim()
+      if (field.key === 'baidu.appkey_ios') {
+        if (value) setIosMapProviderValue(mapConfig, 'baidu', ['baidu', 'bd'], 'appkey_ios', value)
+      } else if (field.key === 'amap.appkey_ios') {
+        if (value) setIosMapProviderValue(mapConfig, 'amap', ['amap', 'gaode'], 'appkey_ios', value)
+      } else if (field.key === 'google.apikey_ios') {
+        if (value) setIosMapProviderValue(mapConfig, 'google', ['google', 'googleMap'], 'apikey_ios', value)
+      } else if (field.key === 'MAP_PAGE_TYPE') {
+        mapConfig.pageType = normalizeIosMapPageTypeValue(provider, value)
+      } else if (field.key === 'LOCAL_POD') {
+        mapConfig.localPod = normalizeBooleanFieldValue(value)
       }
     }
   }
@@ -1146,6 +1177,14 @@ function ensureIosGeolocationSdkConfig(sdkConfigs: Record<string, any>) {
   return next
 }
 
+function ensureIosMapSdkConfig(sdkConfigs: Record<string, any>) {
+  if (isPlainRecord(sdkConfigs.maps)) return sdkConfigs.maps
+  const alias = findFirstObjectEntry(sdkConfigs, ['map'])
+  const next = alias ? cloneJson(alias.value) : {}
+  sdkConfigs.maps = next
+  return next
+}
+
 function ensureIosPushSdkConfig(sdkConfigs: Record<string, any>) {
   if (isPlainRecord(sdkConfigs.push)) return sdkConfigs.push
   const next = {}
@@ -1186,6 +1225,25 @@ function setIosGeolocationProviderValue(
     const alias = findFirstObjectEntry(geolocationConfig, aliases)
     provider = alias ? cloneJson(alias.value) : {}
     geolocationConfig[canonicalProvider] = provider
+  }
+  provider[key] = value
+  delete provider.__platform__
+}
+
+function setIosMapProviderValue(
+  mapConfig: Record<string, any>,
+  canonicalProvider: string,
+  aliases: string[],
+  key: string,
+  value: string
+) {
+  let provider = isPlainRecord(mapConfig[canonicalProvider])
+    ? mapConfig[canonicalProvider]
+    : null
+  if (!provider) {
+    const alias = findFirstObjectEntry(mapConfig, aliases)
+    provider = alias ? cloneJson(alias.value) : {}
+    mapConfig[canonicalProvider] = provider
   }
   provider[key] = value
   if (!('__platform__' in provider)) provider.__platform__ = ['ios']
@@ -1417,7 +1475,7 @@ function mergeIosModuleConfigDefaults(report: IosModuleConfigReport) {
       const scopedKey = iosModuleFieldValueKey(mod, field)
       if (next[scopedKey] === undefined) {
         const value = cached[scopedKey] ?? field.value ?? ''
-        next[scopedKey] = field.key === 'pushProvider' ? normalizeIosPushProviderValue(value) : value
+        next[scopedKey] = normalizeIosFieldValue(mod, field, value)
       }
     }
   }
@@ -1454,14 +1512,27 @@ function iosFieldValue(mod: IosModuleConfigModule, field: IosModuleConfigField) 
     ?? iosModuleConfigValues.value[field.key]
     ?? field.value
     ?? ''
-  return field.key === 'pushProvider' ? normalizeIosPushProviderValue(value) : value
+  return normalizeIosFieldValue(mod, field, value)
 }
 
 function updateIosField(mod: IosModuleConfigModule, field: IosModuleConfigField, value: string) {
   if (isBuildLocked.value) return
+  const currentValue = iosFieldValue(mod, field)
+  if (
+    mod.templateKey === 'map'
+    && field.key === 'LOCAL_POD'
+    && !normalizeBooleanFieldValue(currentValue)
+    && normalizeBooleanFieldValue(value)
+  ) {
+    dialog.warning({
+      title: '本地 Pod 集成',
+      content: '本地 Pod 集成需要确保使用HBuilderX 5.13+ 导出本地 APP 打包资源',
+      positiveText: '知道了'
+    })
+  }
   iosModuleConfigValues.value = {
     ...iosModuleConfigValues.value,
-    [iosModuleFieldValueKey(mod, field)]: value
+    [iosModuleFieldValueKey(mod, field)]: normalizeIosFieldValue(mod, field, value)
   }
   syncIosModuleConfigCache()
   scheduleIosModuleConfigCacheSave()
@@ -1603,7 +1674,7 @@ function syncIosModuleConfigCache() {
   for (const mod of report.modules) {
     for (const field of mod.fields) {
       const rawValue = iosFieldValue(mod, field).trim()
-      const value = field.key === 'pushProvider' ? normalizeIosPushProviderValue(rawValue) : rawValue
+      const value = normalizeIosFieldValue(mod, field, rawValue).trim()
       if (value) next[iosModuleFieldValueKey(mod, field)] = value
     }
   }
@@ -1658,12 +1729,39 @@ function isIosSelectField(field: IosModuleConfigField): boolean {
   return iosFieldType(field) === 'select'
 }
 
+function normalizeIosFieldValue(mod: IosModuleConfigModule, field: IosModuleConfigField, value: string | null | undefined): string {
+  const rawValue = String(value ?? '')
+  const normalized = rawValue.trim()
+  if (field.key === 'pushProvider') return normalizeIosPushProviderValue(normalized)
+  if (mod.templateKey === 'map' && field.key === 'MAP_PAGE_TYPE') {
+    return normalizeIosMapPageTypeValue(iosMapProviderForModule(mod), normalized)
+  }
+  if (mod.templateKey === 'map' && field.key === 'LOCAL_POD') {
+    return normalizeBooleanFieldValue(normalized) ? 'true' : 'false'
+  }
+  return rawValue
+}
+
 function normalizeIosPushProviderValue(value: string | null | undefined): string {
   const normalized = String(value ?? '').trim()
   return normalized === 'unipush' ? normalized : 'unipush'
 }
 
-function iosSelectFieldOptions(field: IosModuleConfigField) {
+function normalizeIosMapPageTypeValue(provider: string, value: string | null | undefined): string {
+  const normalized = normalizeManifestConfigKey(String(value ?? ''))
+  if (provider === 'baidu') return 'vue'
+  if (provider === 'amap') return 'nvue'
+  return normalized === 'nvue' ? 'nvue' : 'vue'
+}
+
+function iosMapProviderForModule(mod: IosModuleConfigModule) {
+  if (mod.fields.some(field => field.key === 'baidu.appkey_ios')) return 'baidu'
+  if (mod.fields.some(field => field.key === 'amap.appkey_ios')) return 'amap'
+  if (mod.fields.some(field => field.key === 'google.apikey_ios')) return 'google'
+  return 'amap'
+}
+
+function iosSelectFieldOptions(mod: IosModuleConfigModule | null, field: IosModuleConfigField) {
   if (field.key === 'pushProvider') {
     return [
       { label: 'uniPush', value: 'unipush' },
@@ -1676,6 +1774,19 @@ function iosSelectFieldOptions(field: IosModuleConfigField) {
     || field.key === 'allowArbitraryLoads'
     || field.key === 'customComponentMode'
   ) {
+    return [
+      { label: '否', value: 'false' },
+      { label: '是', value: 'true' }
+    ]
+  }
+  if (mod?.templateKey === 'map' && field.key === 'MAP_PAGE_TYPE') {
+    const provider = iosMapProviderForModule(mod)
+    return [
+      { label: 'vue', value: 'vue', disabled: provider === 'amap' },
+      { label: 'nvue', value: 'nvue', disabled: provider === 'baidu' }
+    ]
+  }
+  if (mod?.templateKey === 'map' && field.key === 'LOCAL_POD') {
     return [
       { label: '否', value: 'false' },
       { label: '是', value: 'true' }
@@ -2116,7 +2227,7 @@ function goBack() {
                     <n-select
                       v-else-if="isIosSelectField(field)"
                       :value="iosFieldValue(activeIosConfigModule, field)"
-                      :options="iosSelectFieldOptions(field)"
+                      :options="iosSelectFieldOptions(activeIosConfigModule, field)"
                       :placeholder="field.placeholder"
                       :disabled="isBuildLocked"
                       @update:value="(value: string) => updateActiveIosField(field, value)"

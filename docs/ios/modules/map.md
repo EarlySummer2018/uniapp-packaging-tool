@@ -2,204 +2,154 @@
 
 > **适用版本**：HBuilderX 5.0+
 > **平台**：iOS (iPhone/iPad)
-> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/
+> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/map.html
 
 ---
 
-iOS 地图模块支持百度地图、高德地图和苹果原生地图（MapKit）。
+iOS 地图模块支持**百度地图**（vue 页面）、**高德地图**（nvue 页面）和**谷歌地图**。
 
-## 4.1 百度地图
+> **HBuilderX 5.13+ 推荐使用本地 Pod 集成地图模块。**
+> - 百度地图使用 `Map-Baidu`
+> - 高德地图使用 `Map-Gaode`
+> - Google 地图使用 `Map-Google`
+>
+> 如只使用定位能力，可选择 `Geolocation`、`Geolocation-Baidu` 或 `Geolocation-Gaode`；手动集成时再参考下方依赖表。
 
-### 需要引入的系统框架
+> **注意**：工程里只能有一个地图，其他地图功能需要删除 Info.plist 里的对应 key 和库文件，请根据 [功能模块与依赖关系对照表](https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/common?id=%e5%a6%82%e4%bd%95%e9%85%8d%e7%bd%ae%e6%a8%a1%e5%9d%97%e4%b8%89%e6%96%b9sdk) 配置
 
-| 框架 | 说明 |
-|------|------|
-| CoreLocation.framework | 定位服务 |
-| QuartzCore.framework | 图形渲染 |
-| OpenGLES.framework | OpenGL ES 支持 |
-| SystemConfiguration.framework | 系统配置 |
-| Security.framework | 安全服务 |
-| libsqlite3.tbd | SQLite 数据库 |
-| libstdc++.tbd | C++ 标准库 |
-| CoreTelephony.framework | 电话网络信息（定位所需） |
+## 4.1 百度地图（仅 vue 页面支持）
 
-### Info.plist 配置
+### 添加依赖资源及文件
+
+| 依赖库 | 系统库 | 依赖资源 |
+|--------|--------|----------|
+| `BaiduMapAPI_Utils.framework`、`BaiduMapAPI_Base.framework`、`BaiduMapAPI_Search.framework`、`BaiduMapAPI_Map.framework`、`BMKLocationKit.framework`、`liblibMap.a`、`libbmapimp.a`、`libBaiduKeyVerify.a`、`libssl.a`、`libcrypto.a` | `libc++.tbd`、`libsqlite3.0.tbd`、`libz.tbd`、`QuartzCore.framework`、`CoreGraphics.framework`、`CoreTelephony.framework`、`Accelerate.framework`、`SystemConfiguration.framework`、`Security.framework`、`MapKit.framework`、`OpenGLES.framework`、`CoreLocation.framework` | `mapapi.bundle` |
+
+### 账号配置
+
+1. 申请 AppKey，如果没有 AppKey 将会导致地图显示不出，参考 [百度地图 AppKey 申请章节](http://ask.dcloud.net.cn/article/29)
+
+2. 打开 Info.plist 文件找到 `baidu` 项，如果没有则添加该项，在下图中红色区域输入申请的 AppKey。注意 Info.plist 中 Bundle identifier 要和输入的安全码一致
 
 ```xml
-<!-- 定位权限 -->
+<key>baidu</key>
+<dict>
+    <key>appkey</key>
+    <string>%在此处输入申请的AppKey%</string>
+</dict>
+```
+
+3. 在工程的 Info.plist 添加 `NSLocationAlwaysAndWhenInUseUsageDescription` 和 `NSLocationWhenInUseUsageDescription` key，并填写获取权限描述信息：
+
+```xml
 <key>NSLocationWhenInUseUsageDescription</key>
 <string>我们需要使用您的位置信息来显示当前位置</string>
 <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 <string>我们需要使用您的位置信息来提供持续导航服务</string>
-<key>NSLocationAlwaysUsageDescription</key>
-<string>我们需要使用您的位置信息来提供持续导航服务</string>
-
-<!-- 百度地图 API Key -->
-<key>BaiduMapApiKey</key>
-<string>%您的百度地图API Key%</string>
-
-<!-- 后台定位（可选） -->
-<key>UIBackgroundModes</key>
-<array>
-    <string>location</string>
-</array>
 ```
 
-### CocoaPods 依赖
+### 常见问题解决
 
-```ruby
-pod 'BaiduMapKit', '~> 7.x.x'  # 百度地图SDK
-```
+1. 如下图只能看见栅格图，可能的原因：AppKey 配置不对、Bundle identifier 和安全码不一致、百度地图缓存导致（可删除 App 重新安装）
 
-### 需要拷贝的文件
+2. 提示 AppKey 校验错误时，在 Xcode 控制台搜索 `baidu maponGetPermissionState` 查看错误码，对比百度开发平台错误信息
 
-| 路径 | 文件 |
-|------|------|
-| SDK/libs | `BaiduMapAPI_Base.framework`, `BaiduMapAPI_Map.framework` 等 |
+## 4.2 高德地图（仅 nvue 页面支持）
 
-### Objective-C 代码初始化
+### 添加依赖资源及文件
 
-```objc
-#import <BaiduMapAPI_Base/BMKBaseComponent.h>
-#import <BaiduMapAPI_Map/BMKMapComponent.h>
+| 依赖库 | 系统库 | 依赖资源 |
+|--------|--------|----------|
+| `liblibMap.a`、`libAMapImp.a` | `MapKit.framework`、`AMapSearchKit.framework`、`MAMapKit.framework`、`CoreLocation.framework`、`AMapFoundationKit.framework`、`libc++.tbd`、`GLKit.framework` | `AMap.bundle`、`userPosition@2x.png` |
 
-@interface AppDelegate () <BMKGeneralDelegate>
-@property (nonatomic, strong) BMKMapManager *mapManager;
-@end
+> 注：`userPosition@2x.png` 为显示带方向的用户位置的图标，可替换为自己的设计
 
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-    
-    // 初始化百度地图
-    _mapManager = [[BMKMapManager alloc] init];
-    BOOL ret = [_mapManager start:@"您的百度地图API Key" generalDelegate:self];
-    if (!ret) {
-        NSLog(@"百度地图启动失败");
-    }
-    
-    return YES;
-}
-```
+### 账号配置
 
-### dcloud_properties.xml 配置
+1. 在 [高德地图官网](http://lbs.amap.com/api/ios-sdk/guide/create-project/get-key)申请 AppKey
+
+2. 在工程的 Info.plist 添加 `amap` 节点，添加 AppKey 信息：
 
 ```xml
-<feature name="Maps" value="io.dcloud.js.map.JsMapPluginImpl"></feature>
-<service name="Maps" value="io.dcloud.js.map.MapInitImpl" />
+<key>amap</key>
+<dict>
+    <key>appkey</key>
+    <string>%在此处输入申请的AppKey%</string>
+</dict>
 ```
 
-## 4.2 高德地图
-
-### 需要引入的系统框架
-
-| 框架 | 说明 |
-|------|------|
-| CoreLocation.framework | 定位服务 |
-| QuartzCore.framework | 图形渲染 |
-| OpenGLES.framework | OpenGL ES 支持 |
-| SystemConfiguration.framework | 系统配置 |
-| Security.framework | 安全服务 |
-| CoreTelephony.framework | 电话网络信息 |
-| libz.tbd | 压缩库 |
-| libsqlite3.tbd | SQLite 数据库 |
-
-### Info.plist 配置
+3. 在工程的 Info.plist 添加 `NSLocationAlwaysAndWhenInUseUsageDescription` 和 `NSLocationWhenInUseUsageDescription` key，并填写获取权限描述信息：
 
 ```xml
-<!-- 定位权限 -->
 <key>NSLocationWhenInUseUsageDescription</key>
 <string>我们需要使用您的位置信息来显示当前位置</string>
 <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 <string>我们需要使用您的位置信息来提供持续导航服务</string>
-
-<!-- 高德地图 Key -->
-<key>AMapApiKey</key>
-<string>%您的高德地图Key%</string>
 ```
 
-### CocoaPods 依赖
+## 4.3 uni 项目的 nvue 页面中使用地图组件（目前只支持高德地图）
 
-```ruby
-pod 'AMap3DMap', '~> 10.x.x'   # 3D地图
-pod 'AMapSearch', '~> 9.x.x'    # 搜索功能
-pod 'AMapLocation', '~> 2.x.x'  # 定位功能（可选）
-```
+### 添加依赖资源及文件
 
-### 需要拷贝的文件
+| 依赖库 | 系统库 | 依赖资源 |
+|--------|--------|----------|
+| `libDCUniMap.a`、`libDCUniAmap.a`、`Masonry.framework`、`AMapSearchKit.framework`、`MAMapKit.framework`、`AMapFoundationKit.framework` | `MapKit.framework`、`CoreLocation.framework`、`libc++.tbd`、`GLKit.framework` | `AMap.bundle`、`userPosition@2x.png` |
 
-| 路径 | 文件 |
-|------|------|
-| SDK/libs | `MAMapKit.framework`, `AMapSearchKit.framework` 等 |
+> 注：`userPosition@2x.png` 为显示带方向的用户位置的图标，可替换为自己的设计
 
-### Objective-C 代码初始化
+### 账号配置
 
-```objc
-#import <AMapFoundationKit/AMapFoundationKit.h>
+1. 在 [高德地图官网](http://lbs.amap.com/api/ios-sdk/guide/create-project/get-key)申请 AppKey
 
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-    
-    // 初始化高德地图
-    [AMapServices sharedServices].apiKey = @"您的高德地图Key";
-    
-    return YES;
-}
-```
-
-### dcloud_properties.xml 配置
+2. 在工程的 Info.plist 添加 `amap` 节点，添加 AppKey 信息：
 
 ```xml
-<feature name="Maps" value="io.dcloud.js.map.amap.JsMapPluginImpl"></feature>
+<key>amap</key>
+<dict>
+    <key>appkey</key>
+    <string>%在此处输入申请的AppKey%</string>
+</dict>
 ```
 
-## 4.3 苹果原生地图（MapKit）
-
-> **无需第三方SDK**，直接使用苹果自带的 MapKit 框架即可。
-
-### 需要引入的系统框架
-
-| 框架 | 说明 |
-|------|------|
-| MapKit.framework | 苹果地图框架 |
-| CoreLocation.framework | 定位服务 |
-
-### Info.plist 配置
+3. 在工程的 Info.plist 添加 `NSLocationAlwaysAndWhenInUseUsageDescription` 和 `NSLocationWhenInUseUsageDescription` key，并填写获取权限描述信息：
 
 ```xml
 <key>NSLocationWhenInUseUsageDescription</key>
 <string>我们需要使用您的位置信息来显示当前位置</string>
+<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+<string>我们需要使用您的位置信息来提供持续导航服务</string>
 ```
 
-### Swift 代码示例
+## 4.4 谷歌地图
 
-```swift
-import MapKit
-import CoreLocation
+### 添加依赖资源及文件
 
-class MapViewController: UIViewController, MKMapViewDelegate, CLLocationManagerDelegate {
-    
-    @IBOutlet weak var mapView: MKMapView!
-    let locationManager = CLLocationManager()
-    
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        
-        mapView.delegate = self
-        locationManager.delegate = self
-        
-        // 请求定位权限
-        locationManager.requestWhenInUseAuthorization()
-        
-        // 显示用户位置
-        mapView.showsUserLocation = true
-    }
-}
+| 依赖库 | 系统库 | 依赖资源 |
+|--------|--------|----------|
+| `libDCUniMap.a`、`libDCUniGoogleMap.a`、`GoogleMapsBase.framework`、`GoogleMaps.framework`、`GoogleMapsCore.framework`、`liblibMap.a` | `Accelerate.framework`、`CoreData.framework`、`CoreGraphics.framework`、`CoreImage.framework`、`CoreLocation.framework`、`CoreTelephony.framework`、`CoreText.framework`、`GLKit.framework`、`ImageIO.framework`、`libc++.tbd`、`libz.tbd`、`Metal.framework`、`OpenGLES.framework`、`QuartzCore.framework`、`SystemConfiguration.framework` | `GoogleMaps.bundle` |
+
+### 账号配置
+
+1. 在 [谷歌地图官网](https://developers.google.com/maps)申请 APIKey
+
+2. 在工程的 Info.plist 添加 `googleMap` 节点，添加 APIKey 信息：
+
+```xml
+<key>googleMap</key>
+<dict>
+    <key>apikey</key>
+    <string>%在此处输入申请的APIKey%</string>
+</dict>
 ```
 
-## ⚠️ iOS 地图注意事项
+3. 在工程的 Info.plist 添加 `NSLocationAlwaysAndWhenInUseUsageDescription` 和 `NSLocationWhenInUseUsageDescription` key，并填写获取权限描述信息：
 
-1. **权限申请**：iOS 需要在运行时动态申请定位权限（NSLocationWhenInUseUsageDescription）
-2. **后台定位**：如需持续定位，需开启 location 后台模式并申请 Always 权限
-3. **API Key 管理**：百度和高德的 API Key 与 Bundle Identifier 绑定，请确保一致
-4. **审核要求**：App Store 审核时需要说明为何需要定位权限
+```xml
+<key>NSLocationWhenInUseUsageDescription</key>
+<string>我们需要使用您的位置信息来显示当前位置</string>
+<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+<string>我们需要使用您的位置信息来提供持续导航服务</string>
+```
 
 ---
 

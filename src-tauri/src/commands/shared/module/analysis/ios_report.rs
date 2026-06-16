@@ -11,6 +11,7 @@ use crate::commands::ios::modules::fingerprint::IOS_FINGERPRINT_PRIVACY_FIELDS;
 use crate::commands::ios::modules::geolocation::IOS_GEOLOCATION_PRIVACY_FIELDS;
 use crate::commands::ios::modules::ibeacon::IOS_IBEACON_PRIVACY_FIELDS;
 use crate::commands::ios::modules::livepusher::IOS_LIVEPUSHER_PRIVACY_FIELDS;
+use crate::commands::ios::modules::map::IOS_MAP_PRIVACY_FIELDS;
 use crate::commands::ios::modules::record::IOS_RECORD_PRIVACY_FIELDS;
 use crate::commands::ios::modules::video_player::ios_video_player_allows_arbitrary_loads;
 use crate::commands::resource::DetectedModule;
@@ -50,6 +51,14 @@ pub fn ios_module_config_report_from_value(
                 ios_privacy_descriptions,
                 user_config,
             ) {
+                report.modules.push(module_config);
+            }
+            continue;
+        }
+        if template_key == "map" {
+            if let Some(module_config) =
+                ios_map_module_config(module, manifest, ios_privacy_descriptions, user_config)
+            {
                 report.modules.push(module_config);
             }
             continue;
@@ -291,6 +300,83 @@ fn ios_geolocation_module_config(
     })
 }
 
+fn ios_map_module_config(
+    module: &DetectedModule,
+    manifest: Option<&serde_json::Value>,
+    ios_privacy_descriptions: Option<&BTreeMap<String, String>>,
+    user_config: Option<&HashMap<String, String>>,
+) -> Option<IosModuleConfigModule> {
+    let manifest = manifest?;
+    if !ios_manifest_module_enabled(manifest, "Map") {
+        return None;
+    }
+    let empty_map_config = serde_json::Value::Object(serde_json::Map::new());
+    let map_config = ios_map_sdk_config(manifest).unwrap_or(&empty_map_config);
+    if !ios_map_config_value_enabled(map_config) {
+        return None;
+    }
+
+    let mut fields = Vec::new();
+    let provider = if ios_map_provider_enabled(map_config, &["baidu", "bd"]) {
+        fields.push(ios_map_app_key_field(
+            map_config,
+            "baidu",
+            &["baidu", "bd"],
+            "百度地图 AppKey",
+            &["appkey_ios", "apikey_ios", "appkey", "apikey", "ak", "key"],
+            user_config,
+        ));
+        "baidu"
+    } else if ios_map_provider_enabled(map_config, &["amap", "gaode"]) {
+        fields.push(ios_map_app_key_field(
+            map_config,
+            "amap",
+            &["amap", "gaode"],
+            "高德地图 AppKey",
+            &["appkey_ios", "apikey_ios", "appkey", "apikey", "key"],
+            user_config,
+        ));
+        "amap"
+    } else if ios_map_provider_enabled(map_config, &["google", "googleMap"]) {
+        fields.push(ios_map_api_key_field(
+            map_config,
+            "google",
+            &["google", "googleMap"],
+            "Google 地图 APIKey",
+            &["apikey_ios", "apiKey_ios", "apikey", "apiKey", "key"],
+            user_config,
+        ));
+        "google"
+    } else {
+        fields.push(ios_map_app_key_field(
+            map_config,
+            "amap",
+            &["amap", "gaode"],
+            "高德地图 AppKey",
+            &["appkey_ios", "apikey_ios", "appkey", "apikey", "key"],
+            user_config,
+        ));
+        "amap"
+    };
+
+    fields.push(ios_map_page_type_field(map_config, provider, user_config));
+    fields.push(ios_map_local_pod_field(map_config, user_config));
+    fields.extend(
+        IOS_MAP_PRIVACY_FIELDS
+            .iter()
+            .map(|field| ios_privacy_field("map", field, ios_privacy_descriptions, user_config)),
+    );
+
+    Some(IosModuleConfigModule {
+        name: module.name.clone(),
+        template_key: "map".to_string(),
+        category: module.category.clone(),
+        platforms: module.platforms.clone(),
+        source: module.source.clone(),
+        fields,
+    })
+}
+
 fn ios_privacy_module_config(
     module: &DetectedModule,
     manifest: Option<&serde_json::Value>,
@@ -430,6 +516,154 @@ fn ios_geolocation_app_key_field(
         value_source,
         placeholder: "请输入 iOS AppKey".to_string(),
         field_type: "text".to_string(),
+    }
+}
+
+fn ios_map_app_key_field(
+    map_config: &serde_json::Value,
+    canonical_provider: &str,
+    provider_keys: &[&str],
+    label: &str,
+    config_keys: &[&str],
+    user_config: Option<&HashMap<String, String>>,
+) -> IosModuleConfigField {
+    ios_map_provider_key_field(
+        map_config,
+        canonical_provider,
+        provider_keys,
+        "appkey_ios",
+        label,
+        config_keys,
+        user_config,
+    )
+}
+
+fn ios_map_api_key_field(
+    map_config: &serde_json::Value,
+    canonical_provider: &str,
+    provider_keys: &[&str],
+    label: &str,
+    config_keys: &[&str],
+    user_config: Option<&HashMap<String, String>>,
+) -> IosModuleConfigField {
+    ios_map_provider_key_field(
+        map_config,
+        canonical_provider,
+        provider_keys,
+        "apikey_ios",
+        label,
+        config_keys,
+        user_config,
+    )
+}
+
+fn ios_map_provider_key_field(
+    map_config: &serde_json::Value,
+    canonical_provider: &str,
+    provider_keys: &[&str],
+    canonical_key: &str,
+    label: &str,
+    config_keys: &[&str],
+    user_config: Option<&HashMap<String, String>>,
+) -> IosModuleConfigField {
+    let field_key = format!("{}.{}", canonical_provider, canonical_key);
+    let (value, value_source) = if let Some(value) =
+        ios_user_config_field_value(user_config, "map", &field_key)
+    {
+        (Some(value), Some("user".to_string()))
+    } else if let Some(value) = ios_provider_string_field(map_config, provider_keys, config_keys) {
+        (Some(value), Some("manifest".to_string()))
+    } else {
+        (None, None)
+    };
+
+    IosModuleConfigField {
+        key: field_key,
+        label: label.to_string(),
+        required: true,
+        secret: true,
+        value,
+        value_source,
+        placeholder: "请输入 iOS AppKey".to_string(),
+        field_type: "text".to_string(),
+    }
+}
+
+fn ios_map_page_type_field(
+    map_config: &serde_json::Value,
+    provider: &str,
+    user_config: Option<&HashMap<String, String>>,
+) -> IosModuleConfigField {
+    let field_key = "MAP_PAGE_TYPE";
+    let default = ios_map_default_page_type(provider);
+    let (value, value_source) =
+        if let Some(value) = ios_user_config_field_value(user_config, "map", field_key) {
+            (
+                Some(normalize_ios_map_page_type(provider, &value).to_string()),
+                Some("user".to_string()),
+            )
+        } else if let Some(value) = ios_map_string_field(
+            map_config,
+            &["pageType", "page_type", "MAP_PAGE_TYPE", "page"],
+        ) {
+            (
+                Some(normalize_ios_map_page_type(provider, &value).to_string()),
+                Some("manifest".to_string()),
+            )
+        } else {
+            (Some(default.to_string()), Some("default".to_string()))
+        };
+
+    IosModuleConfigField {
+        key: field_key.to_string(),
+        label: "地图页面类型".to_string(),
+        required: true,
+        secret: false,
+        value,
+        value_source,
+        placeholder: format!("默认 {}", default),
+        field_type: "select".to_string(),
+    }
+}
+
+fn ios_map_local_pod_field(
+    map_config: &serde_json::Value,
+    user_config: Option<&HashMap<String, String>>,
+) -> IosModuleConfigField {
+    let field_key = "LOCAL_POD";
+    let (value, value_source) =
+        if let Some(value) = ios_user_config_field_value(user_config, "map", field_key) {
+            (
+                Some(normalize_bool_field_value(&value).to_string()),
+                Some("user".to_string()),
+            )
+        } else if let Some(value) = ios_map_bool_field(
+            map_config,
+            &[
+                "localPod",
+                "local_pod",
+                "useLocalPod",
+                "use_local_pod",
+                "LOCAL_POD",
+            ],
+        ) {
+            (
+                Some(if value { "true" } else { "false" }.to_string()),
+                Some("manifest".to_string()),
+            )
+        } else {
+            (Some("false".to_string()), Some("default".to_string()))
+        };
+
+    IosModuleConfigField {
+        key: field_key.to_string(),
+        label: "本地 Pod 集成".to_string(),
+        required: true,
+        secret: false,
+        value,
+        value_source,
+        placeholder: "默认否".to_string(),
+        field_type: "select".to_string(),
     }
 }
 
@@ -613,10 +847,42 @@ fn ios_geolocation_provider_string_field(
     })
 }
 
-fn json_string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+fn ios_provider_string_field(
+    config: &serde_json::Value,
+    provider_keys: &[&str],
+    config_keys: &[&str],
+) -> Option<String> {
+    let config = config.as_object()?;
+    provider_keys.iter().find_map(|provider_key| {
+        let value = get_object_value_normalized(config, provider_key)?;
+        if !ios_provider_value_enabled(value) {
+            return None;
+        }
+        json_string_field(value, config_keys)
+    })
+}
+
+fn ios_map_string_field(config: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    let config = config.as_object()?;
     keys.iter().find_map(|key| {
-        value
-            .get(*key)
+        get_object_value_normalized(config, key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn ios_map_bool_field(config: &serde_json::Value, keys: &[&str]) -> Option<bool> {
+    let config = config.as_object()?;
+    keys.iter()
+        .find_map(|key| get_object_value_normalized(config, key).and_then(json_bool_value))
+}
+
+fn json_string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    let map = value.as_object()?;
+    keys.iter().find_map(|key| {
+        get_object_value_normalized(map, key)
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -687,6 +953,17 @@ fn ios_geolocation_sdk_config(manifest: &serde_json::Value) -> Option<&serde_jso
         .find_map(|key| get_object_value_normalized(sdk_configs, key))
 }
 
+fn ios_map_sdk_config(manifest: &serde_json::Value) -> Option<&serde_json::Value> {
+    let sdk_configs = manifest
+        .get("app-plus")?
+        .get("distribute")?
+        .get("sdkConfigs")?
+        .as_object()?;
+    ["maps", "map"]
+        .iter()
+        .find_map(|key| get_object_value_normalized(sdk_configs, key))
+}
+
 fn ios_push_sdk_config(manifest: &serde_json::Value) -> Option<&serde_json::Value> {
     let sdk_configs = manifest
         .get("app-plus")?
@@ -741,6 +1018,15 @@ fn ios_geolocation_provider_enabled(
     })
 }
 
+fn ios_map_provider_enabled(map_config: &serde_json::Value, provider_keys: &[&str]) -> bool {
+    let Some(config) = map_config.as_object() else {
+        return false;
+    };
+    provider_keys.iter().any(|provider_key| {
+        get_object_value_normalized(config, provider_key).is_some_and(ios_provider_value_enabled)
+    })
+}
+
 fn ios_geolocation_provider_value_enabled(value: &serde_json::Value) -> bool {
     let Some(map) = value.as_object() else {
         return false;
@@ -752,6 +1038,66 @@ fn ios_geolocation_provider_value_enabled(value: &serde_json::Value) -> bool {
         .and_then(|value| value.as_bool())
         .unwrap_or(true);
     enabled && config_value_applies_to_platform_strict(map, "ios")
+}
+
+fn ios_provider_value_enabled(value: &serde_json::Value) -> bool {
+    let Some(map) = value.as_object() else {
+        return false;
+    };
+    let enabled = map
+        .get("enabled")
+        .or_else(|| map.get("enable"))
+        .or_else(|| map.get("open"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    enabled
+}
+
+fn ios_map_config_value_enabled(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Bool(flag) => *flag,
+        serde_json::Value::Null => false,
+        serde_json::Value::Object(map) => map
+            .get("enabled")
+            .or_else(|| map.get("enable"))
+            .or_else(|| map.get("open"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true),
+        _ => true,
+    }
+}
+
+fn normalize_ios_map_page_type(provider: &str, value: &str) -> &'static str {
+    match provider {
+        "baidu" => "vue",
+        "amap" => "nvue",
+        "google" if normalize_config_token(value) == "nvue" => "nvue",
+        _ => "vue",
+    }
+}
+
+fn ios_map_default_page_type(provider: &str) -> &'static str {
+    match provider {
+        "amap" => "nvue",
+        _ => "vue",
+    }
+}
+
+fn normalize_config_token(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
+}
+
+fn json_bool_value(value: &serde_json::Value) -> Option<bool> {
+    match value {
+        serde_json::Value::Bool(flag) => Some(*flag),
+        serde_json::Value::String(value) => Some(normalize_bool_field_value(value) == "true"),
+        serde_json::Value::Number(value) => Some(value.as_i64().is_some_and(|value| value != 0)),
+        _ => None,
+    }
 }
 
 fn ios_config_value_enabled(value: &serde_json::Value) -> bool {

@@ -9,6 +9,7 @@ pub(crate) mod fingerprint;
 pub(crate) mod geolocation;
 pub(crate) mod ibeacon;
 pub(crate) mod livepusher;
+pub(crate) mod map;
 pub(crate) mod push;
 pub(crate) mod record;
 pub(crate) mod video_player;

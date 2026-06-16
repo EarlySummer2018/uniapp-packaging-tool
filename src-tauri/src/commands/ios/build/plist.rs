@@ -41,6 +41,9 @@ use crate::commands::ios::modules::livepusher::{
     apply_ios_livepusher_privacy_defaults as apply_livepusher_privacy_defaults,
     ios_livepusher_enabled,
 };
+use crate::commands::ios::modules::map::{
+    apply_ios_map_privacy_defaults as apply_map_privacy_defaults, ios_map_enabled,
+};
 use crate::commands::ios::modules::push::apply_ios_push_plist_defaults as apply_push_plist_defaults;
 use crate::commands::ios::modules::record::{
     apply_ios_record_privacy_defaults as apply_record_privacy_defaults, ios_record_enabled,
@@ -94,6 +97,9 @@ pub(super) fn patch_info_plist(
         }
         if ios_geolocation_providers(Some(info)).is_some() {
             apply_geolocation_privacy_defaults(dict);
+        }
+        if ios_map_enabled(Some(info)) {
+            apply_map_privacy_defaults(dict);
         }
         if ios_barcode_enabled(Some(info)) {
             apply_barcode_privacy_defaults(dict);
@@ -207,9 +213,13 @@ fn ios_privacy_key_applies_to_manifest(
         "NSPhotoLibraryAddUsageDescription" => ios_camera_enabled(Some(info)),
         "NSLocationUsageDescription"
         | "NSLocationWhenInUseUsageDescription"
-        | "NSLocationAlwaysUsageDescription" => ios_geolocation_providers(Some(info)).is_some(),
+        | "NSLocationAlwaysUsageDescription" => {
+            ios_geolocation_providers(Some(info)).is_some() || ios_map_enabled(Some(info))
+        }
         "NSLocationAlwaysAndWhenInUseUsageDescription" => {
-            ios_geolocation_providers(Some(info)).is_some() || ios_ibeacon_enabled(Some(info))
+            ios_geolocation_providers(Some(info)).is_some()
+                || ios_map_enabled(Some(info))
+                || ios_ibeacon_enabled(Some(info))
         }
         "NSContactsUsageDescription" => ios_contacts_enabled(Some(info)),
         "NSBluetoothAlwaysUsageDescription" | "NSBluetoothPeripheralUsageDescription" => {

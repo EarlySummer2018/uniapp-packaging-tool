@@ -55,6 +55,8 @@ temp
 !.vscode/extensions.json
 .idea
 .trae/
+.claude/
+.cursor/
 .DS_Store
 *.suo
 *.ntvs*

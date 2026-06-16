@@ -904,7 +904,10 @@ fn ios_livepusher_links_and_embeds_documented_dependencies_idempotently() {
     assert!(pbxproj.contains("../SDK/Libs/UPLiveSDKDll.framework"));
 
     let mut custom_component_config = std::collections::HashMap::new();
-    custom_component_config.insert("livepusher.customComponentMode".to_string(), "true".to_string());
+    custom_component_config.insert(
+        "livepusher.customComponentMode".to_string(),
+        "true".to_string(),
+    );
     let integration = apply_ios_livepusher_module(
         &project_root,
         &project_file,
@@ -930,7 +933,9 @@ fn ios_livepusher_links_and_embeds_documented_dependencies_idempotently() {
     assert_eq!(integration.embedded_count, 0);
     let pbxproj = std::fs::read_to_string(project_file.join("project.pbxproj")).unwrap();
     assert_eq!(
-        pbxproj.matches("UPLiveSDKDll.framework in Frameworks").count(),
+        pbxproj
+            .matches("UPLiveSDKDll.framework in Frameworks")
+            .count(),
         2
     );
     assert_eq!(

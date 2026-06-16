@@ -25,6 +25,7 @@ use crate::commands::ios::modules::facial_recognition_verify::apply_ios_facial_r
 use crate::commands::ios::modules::geolocation::apply_ios_geolocation_module;
 use crate::commands::ios::modules::ibeacon::apply_ios_ibeacon_module;
 use crate::commands::ios::modules::livepusher::apply_ios_livepusher_module;
+use crate::commands::ios::modules::map::apply_ios_map_module;
 use crate::commands::ios::modules::push::apply_ios_push_module;
 use crate::commands::module::{
     manifest_push_unsupported_version, PUSH_UNSUPPORTED_VERSION_MESSAGE,
@@ -199,6 +200,28 @@ pub(super) fn configure_ios_workspace(
             Some(29),
         );
     }
+    if let Some(map) = apply_ios_map_module(&project_root, &project_file, manifest_info)? {
+        let (level, message) = if map.local_pod {
+            (
+                "info",
+                format!(
+                    "已启用 iOS 地图模块本地 Pod 集成: {}，请确保使用 HBuilderX 5.13+ 导出的本地 APP 打包资源",
+                    map.summary()
+                ),
+            )
+        } else {
+            (
+                "success",
+                format!(
+                    "已自动接入 iOS 地图模块: {}，新增链接 {} 项，资源 {} 项",
+                    map.summary(),
+                    map.linked_count,
+                    map.resource_count
+                ),
+            )
+        };
+        emit_ios_log(window, build_id, level, &message, Some(29));
+    }
     if let Some(facial) =
         apply_ios_facial_recognition_verify_module(&project_root, &project_file, manifest_info)?
     {
@@ -216,14 +239,12 @@ pub(super) fn configure_ios_workspace(
             Some(29),
         );
     }
-    if let Some(livepusher) =
-        apply_ios_livepusher_module(
-            &project_root,
-            &project_file,
-            manifest_info,
-            &config.ios_module_config,
-        )?
-    {
+    if let Some(livepusher) = apply_ios_livepusher_module(
+        &project_root,
+        &project_file,
+        manifest_info,
+        &config.ios_module_config,
+    )? {
         emit_ios_log(
             window,
             build_id,

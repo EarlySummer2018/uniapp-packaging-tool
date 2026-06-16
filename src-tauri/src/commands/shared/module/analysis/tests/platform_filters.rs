@@ -230,6 +230,245 @@ fn ios_module_config_lists_geolocation_providers_by_ios_platform() {
 }
 
 #[test]
+fn ios_map_baidu_defaults_to_vue_and_exposes_local_pod_select() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-ios-map-baidu-report-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Maps": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "maps": {
+                        "baidu": {
+                            "__platform__": ["ios"],
+                            "appkey_ios": "baidu-ios"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let mut user = HashMap::new();
+    user.insert("map.MAP_PAGE_TYPE".to_string(), "nvue".to_string());
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    let report = analyze_ios_module_config_sync(&info, Some(&user));
+    let map = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "map")
+        .expect("map should be listed for iOS");
+    let key = map
+        .fields
+        .iter()
+        .find(|field| field.key == "baidu.appkey_ios")
+        .unwrap();
+    let page_type = map
+        .fields
+        .iter()
+        .find(|field| field.key == "MAP_PAGE_TYPE")
+        .unwrap();
+    let local_pod = map
+        .fields
+        .iter()
+        .find(|field| field.key == "LOCAL_POD")
+        .unwrap();
+
+    assert_eq!(key.value.as_deref(), Some("baidu-ios"));
+    assert_eq!(page_type.value.as_deref(), Some("vue"));
+    assert_eq!(page_type.field_type, "select");
+    assert_eq!(local_pod.value.as_deref(), Some("false"));
+    assert_eq!(local_pod.field_type, "select");
+    assert_eq!(
+        map.fields
+            .iter()
+            .filter(|field| field.key.starts_with("privacy."))
+            .count(),
+        2
+    );
+
+    let _ = std::fs::remove_dir_all(project_root);
+}
+
+#[test]
+fn ios_map_amap_defaults_to_nvue_and_preserves_local_pod_choice() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-ios-map-amap-report-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Maps": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "maps": {
+                        "amap": {
+                            "__platform__": ["ios"],
+                            "appkey_ios": "amap-ios"
+                        },
+                        "baidu": {
+                            "__platform__": ["android"],
+                            "appkey_ios": "baidu-ios"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let mut user = HashMap::new();
+    user.insert("map.MAP_PAGE_TYPE".to_string(), "vue".to_string());
+    user.insert("map.LOCAL_POD".to_string(), "true".to_string());
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    let report = analyze_ios_module_config_sync(&info, Some(&user));
+    let map = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "map")
+        .expect("map should be listed for iOS");
+    let key = map
+        .fields
+        .iter()
+        .find(|field| field.key == "amap.appkey_ios")
+        .unwrap();
+    let page_type = map
+        .fields
+        .iter()
+        .find(|field| field.key == "MAP_PAGE_TYPE")
+        .unwrap();
+    let local_pod = map
+        .fields
+        .iter()
+        .find(|field| field.key == "LOCAL_POD")
+        .unwrap();
+
+    assert_eq!(key.value.as_deref(), Some("amap-ios"));
+    assert_eq!(page_type.value.as_deref(), Some("nvue"));
+    assert_eq!(page_type.value_source.as_deref(), Some("user"));
+    assert_eq!(local_pod.value.as_deref(), Some("true"));
+    assert_eq!(local_pod.value_source.as_deref(), Some("user"));
+    assert!(!map
+        .fields
+        .iter()
+        .any(|field| field.key == "baidu.appkey_ios"));
+
+    let _ = std::fs::remove_dir_all(project_root);
+}
+
+#[test]
+fn ios_map_without_platform_marker_still_lists_map_config() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-ios-map-no-platform-report-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Maps": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "maps": {
+                        "amap": {
+                            "appkey_android": "amap-android"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    let report = analyze_ios_module_config_sync(&info, None);
+    let map = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "map")
+        .expect("map should be listed for iOS without __platform__");
+    let page_type = map
+        .fields
+        .iter()
+        .find(|field| field.key == "MAP_PAGE_TYPE")
+        .unwrap();
+    let local_pod = map
+        .fields
+        .iter()
+        .find(|field| field.key == "LOCAL_POD")
+        .unwrap();
+
+    assert!(map
+        .fields
+        .iter()
+        .any(|field| field.key == "amap.appkey_ios"));
+    assert_eq!(page_type.value.as_deref(), Some("nvue"));
+    assert_eq!(local_pod.value.as_deref(), Some("false"));
+
+    let _ = std::fs::remove_dir_all(project_root);
+}
+
+#[test]
+fn ios_map_module_switch_lists_local_pod_even_without_sdk_config() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-ios-map-module-only-report-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Maps": {}
+            }
+        }
+    });
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    let report = analyze_ios_module_config_sync(&info, None);
+    let map = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "map")
+        .expect("map module switch should expose iOS map config");
+
+    assert!(map
+        .fields
+        .iter()
+        .any(|field| field.key == "amap.appkey_ios"));
+    assert!(map.fields.iter().any(|field| field.key == "LOCAL_POD"
+        && field.value.as_deref() == Some("false")
+        && field.field_type == "select"));
+    assert!(map.fields.iter().any(|field| field.key == "MAP_PAGE_TYPE"
+        && field.value.as_deref() == Some("nvue")
+        && field.field_type == "select"));
+
+    let _ = std::fs::remove_dir_all(project_root);
+}
+
+#[test]
 fn ios_module_config_lists_push_unipush_fields() {
     let project_root = std::env::temp_dir().join(format!(
         "unipack-ios-push-module-report-{}",
