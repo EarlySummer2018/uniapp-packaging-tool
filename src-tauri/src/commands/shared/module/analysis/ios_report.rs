@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, HashMap};
 use crate::commands::ios::modules::barcode::IOS_BARCODE_PRIVACY_FIELDS;
 use crate::commands::ios::modules::bluetooth::IOS_BLUETOOTH_PRIVACY_FIELDS;
 use crate::commands::ios::modules::camera::IOS_CAMERA_PRIVACY_FIELDS;
-use crate::commands::ios::modules::common::IosPrivacyFieldSpec;
+use crate::commands::ios::modules::common::{
+    ios_object_value_normalized, ios_sdk_config_value_enabled, IosPrivacyFieldSpec,
+};
 use crate::commands::ios::modules::contacts::IOS_CONTACTS_PRIVACY_FIELDS;
 use crate::commands::ios::modules::face_id::IOS_FACE_ID_PRIVACY_FIELDS;
 use crate::commands::ios::modules::facial_recognition_verify::IOS_FACIAL_RECOGNITION_VERIFY_PRIVACY_FIELDS;
@@ -59,6 +61,18 @@ pub fn ios_module_config_report_from_value(
             if let Some(module_config) =
                 ios_map_module_config(module, manifest, ios_privacy_descriptions, user_config)
             {
+                report.modules.push(module_config);
+            }
+            continue;
+        }
+        if template_key == "share" {
+            if let Some(module_config) = ios_share_module_config(module, manifest, user_config) {
+                report.modules.push(module_config);
+            }
+            continue;
+        }
+        if template_key == "login" {
+            if let Some(module_config) = ios_oauth_module_config(module, manifest, user_config) {
                 report.modules.push(module_config);
             }
             continue;
@@ -359,7 +373,9 @@ fn ios_map_module_config(
         "amap"
     };
 
-    fields.push(ios_map_page_type_field(map_config, provider, user_config));
+    if provider != "google" {
+        fields.push(ios_map_page_type_field(map_config, provider, user_config));
+    }
     fields.push(ios_map_local_pod_field(map_config, user_config));
     fields.extend(
         IOS_MAP_PRIVACY_FIELDS
@@ -665,6 +681,190 @@ fn ios_map_local_pod_field(
         placeholder: "默认否".to_string(),
         field_type: "select".to_string(),
     }
+}
+
+fn ios_share_module_config(
+    module: &DetectedModule,
+    manifest: Option<&serde_json::Value>,
+    user_config: Option<&HashMap<String, String>>,
+) -> Option<IosModuleConfigModule> {
+    let manifest = manifest?;
+    if !ios_manifest_module_enabled(manifest, "Share") {
+        return None;
+    }
+    let share_config = ios_share_sdk_config(manifest)?;
+    if !ios_sdk_config_value_enabled(share_config, Some("ios")) {
+        return None;
+    }
+    if !ios_share_provider_enabled(share_config, &["weixin", "wechat", "wx"])
+        && !ios_share_provider_enabled(share_config, &["qq"])
+        && !ios_share_provider_enabled(share_config, &["sina", "weibo", "sinaweibo"])
+    {
+        return None;
+    }
+
+    let mut fields = Vec::new();
+    fields.push(ios_share_local_pod_field(share_config, user_config));
+
+    Some(IosModuleConfigModule {
+        name: module.name.clone(),
+        template_key: "share".to_string(),
+        category: module.category.clone(),
+        platforms: module.platforms.clone(),
+        source: module.source.clone(),
+        fields,
+    })
+}
+
+fn ios_share_local_pod_field(
+    share_config: &serde_json::Value,
+    user_config: Option<&HashMap<String, String>>,
+) -> IosModuleConfigField {
+    let field_key = "LOCAL_POD";
+    let (value, value_source) =
+        if let Some(value) = ios_user_config_field_value(user_config, "share", field_key) {
+            (
+                Some(normalize_bool_field_value(&value).to_string()),
+                Some("user".to_string()),
+            )
+        } else if let Some(value) = ios_share_bool_field(
+            share_config,
+            &[
+                "localPod",
+                "local_pod",
+                "useLocalPod",
+                "use_local_pod",
+                "LOCAL_POD",
+            ],
+        ) {
+            (
+                Some(if value { "true" } else { "false" }.to_string()),
+                Some("manifest".to_string()),
+            )
+        } else {
+            (Some("false".to_string()), Some("default".to_string()))
+        };
+
+    IosModuleConfigField {
+        key: field_key.to_string(),
+        label: "本地 Pod 集成".to_string(),
+        required: true,
+        secret: false,
+        value,
+        value_source,
+        placeholder: "默认否".to_string(),
+        field_type: "select".to_string(),
+    }
+}
+
+fn ios_oauth_module_config(
+    module: &DetectedModule,
+    manifest: Option<&serde_json::Value>,
+    user_config: Option<&HashMap<String, String>>,
+) -> Option<IosModuleConfigModule> {
+    let manifest = manifest?;
+    if !ios_manifest_module_enabled(manifest, "OAuth") {
+        return None;
+    }
+    let empty_oauth_config = serde_json::Value::Object(serde_json::Map::new());
+    let oauth_config = ios_oauth_sdk_config(manifest).unwrap_or(&empty_oauth_config);
+    if !ios_sdk_config_value_enabled(oauth_config, Some("ios")) {
+        return None;
+    }
+
+    Some(IosModuleConfigModule {
+        name: module.name.clone(),
+        template_key: "login".to_string(),
+        category: module.category.clone(),
+        platforms: module.platforms.clone(),
+        source: module.source.clone(),
+        fields: vec![ios_oauth_local_pod_field(oauth_config, user_config)],
+    })
+}
+
+fn ios_oauth_local_pod_field(
+    oauth_config: &serde_json::Value,
+    user_config: Option<&HashMap<String, String>>,
+) -> IosModuleConfigField {
+    let field_key = "LOCAL_POD";
+    let (value, value_source) =
+        if let Some(value) = ios_user_config_field_value(user_config, "login", field_key) {
+            (
+                Some(normalize_bool_field_value(&value).to_string()),
+                Some("user".to_string()),
+            )
+        } else if let Some(value) = ios_oauth_bool_field(
+            oauth_config,
+            &[
+                "localPod",
+                "local_pod",
+                "useLocalPod",
+                "use_local_pod",
+                "LOCAL_POD",
+            ],
+        ) {
+            (
+                Some(if value { "true" } else { "false" }.to_string()),
+                Some("manifest".to_string()),
+            )
+        } else {
+            (Some("false".to_string()), Some("default".to_string()))
+        };
+
+    IosModuleConfigField {
+        key: field_key.to_string(),
+        label: "本地 Pod 集成".to_string(),
+        required: true,
+        secret: false,
+        value,
+        value_source,
+        placeholder: "默认否".to_string(),
+        field_type: "select".to_string(),
+    }
+}
+
+fn ios_share_sdk_config(manifest: &serde_json::Value) -> Option<&serde_json::Value> {
+    let sdk_configs = manifest
+        .get("app-plus")?
+        .get("distribute")?
+        .get("sdkConfigs")?
+        .as_object()?;
+    ["share", "shares"]
+        .iter()
+        .find_map(|key| ios_object_value_normalized(sdk_configs, key))
+}
+
+fn ios_oauth_sdk_config(manifest: &serde_json::Value) -> Option<&serde_json::Value> {
+    let sdk_configs = manifest
+        .get("app-plus")?
+        .get("distribute")?
+        .get("sdkConfigs")?
+        .as_object()?;
+    ["oauth", "login", "oauths"]
+        .iter()
+        .find_map(|key| ios_object_value_normalized(sdk_configs, key))
+}
+
+fn ios_share_provider_enabled(share_config: &serde_json::Value, provider_keys: &[&str]) -> bool {
+    let Some(config) = share_config.as_object() else {
+        return false;
+    };
+    provider_keys.iter().any(|provider_key| {
+        ios_object_value_normalized(config, provider_key)
+            .is_some_and(|value| ios_sdk_config_value_enabled(value, Some("ios")))
+    })
+}
+
+fn ios_share_bool_field(config: &serde_json::Value, keys: &[&str]) -> Option<bool> {
+    let config = config.as_object()?;
+    keys.iter()
+        .find_map(|key| get_object_value_normalized(config, key).and_then(json_bool_value))
+}
+
+fn ios_oauth_bool_field(config: &serde_json::Value, keys: &[&str]) -> Option<bool> {
+    let config = config.as_object()?;
+    keys.iter()
+        .find_map(|key| get_object_value_normalized(config, key).and_then(json_bool_value))
 }
 
 fn ios_privacy_field(
@@ -1067,11 +1267,11 @@ fn ios_map_config_value_enabled(value: &serde_json::Value) -> bool {
     }
 }
 
-fn normalize_ios_map_page_type(provider: &str, value: &str) -> &'static str {
+fn normalize_ios_map_page_type(provider: &str, _value: &str) -> &'static str {
     match provider {
         "baidu" => "vue",
         "amap" => "nvue",
-        "google" if normalize_config_token(value) == "nvue" => "nvue",
+        "google" => "vue",
         _ => "vue",
     }
 }
@@ -1081,14 +1281,6 @@ fn ios_map_default_page_type(provider: &str) -> &'static str {
         "amap" => "nvue",
         _ => "vue",
     }
-}
-
-fn normalize_config_token(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .flat_map(|ch| ch.to_lowercase())
-        .collect()
 }
 
 fn json_bool_value(value: &serde_json::Value) -> Option<bool> {

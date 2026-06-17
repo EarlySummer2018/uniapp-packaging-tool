@@ -463,6 +463,161 @@ fn ios_map_module_switch_lists_local_pod_even_without_sdk_config() {
 }
 
 #[test]
+fn ios_google_map_omits_page_type_select() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-ios-google-map-report-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Maps": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "maps": {
+                        "google": {
+                            "apikey_ios": "google-ios"
+                        },
+                        "pageType": "nvue"
+                    }
+                }
+            }
+        }
+    });
+    let mut user = HashMap::new();
+    user.insert("map.MAP_PAGE_TYPE".to_string(), "nvue".to_string());
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    let report = analyze_ios_module_config_sync(&info, Some(&user));
+    let map = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "map")
+        .expect("map should be listed for iOS");
+    let key = map
+        .fields
+        .iter()
+        .find(|field| field.key == "google.apikey_ios")
+        .unwrap();
+
+    assert_eq!(key.value.as_deref(), Some("google-ios"));
+    assert!(!map.fields.iter().any(|field| field.key == "MAP_PAGE_TYPE"));
+    assert!(map.fields.iter().any(|field| field.key == "LOCAL_POD"
+        && field.value.as_deref() == Some("false")
+        && field.field_type == "select"));
+
+    let _ = std::fs::remove_dir_all(project_root);
+}
+
+#[test]
+fn ios_share_exposes_local_pod_select_and_preserves_user_choice() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-ios-share-local-pod-report-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Share": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "share": {
+                        "weixin": {
+                            "__platform__": ["ios"],
+                            "appid": "wx-demo"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let mut user = HashMap::new();
+    user.insert("share.LOCAL_POD".to_string(), "true".to_string());
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    let report = analyze_ios_module_config_sync(&info, Some(&user));
+    let share = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "share")
+        .expect("share should be listed for iOS");
+    let local_pod = share
+        .fields
+        .iter()
+        .find(|field| field.key == "LOCAL_POD")
+        .unwrap();
+
+    assert_eq!(local_pod.value.as_deref(), Some("true"));
+    assert_eq!(local_pod.value_source.as_deref(), Some("user"));
+    assert_eq!(local_pod.field_type, "select");
+
+    let _ = std::fs::remove_dir_all(project_root);
+}
+
+#[test]
+fn ios_oauth_exposes_local_pod_select_and_preserves_user_choice() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-ios-oauth-local-pod-report-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "OAuth": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "oauth": {
+                        "weixin": {
+                            "__platform__": ["ios"],
+                            "appid": "wx-demo"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let mut user = HashMap::new();
+    user.insert("login.LOCAL_POD".to_string(), "true".to_string());
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    let report = analyze_ios_module_config_sync(&info, Some(&user));
+    let oauth = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "login")
+        .expect("oauth should be listed for iOS");
+    let local_pod = oauth
+        .fields
+        .iter()
+        .find(|field| field.key == "LOCAL_POD")
+        .unwrap();
+
+    assert_eq!(local_pod.value.as_deref(), Some("true"));
+    assert_eq!(local_pod.value_source.as_deref(), Some("user"));
+    assert_eq!(local_pod.field_type, "select");
+
+    let _ = std::fs::remove_dir_all(project_root);
+}
+
+#[test]
 fn ios_module_config_lists_push_unipush_fields() {
     let project_root = std::env::temp_dir().join(format!(
         "unipack-ios-push-module-report-{}",

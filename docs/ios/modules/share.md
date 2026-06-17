@@ -2,26 +2,53 @@
 
 > **适用版本**：HBuilderX 5.0+
 > **平台**：iOS (iPhone/iPad)
-> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/
+> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/share.html
 
 ---
 
-iOS 分享模块支持微信、QQ、微博、Facebook 等主流社交平台。
+目前分享功能支持新浪微博分享、QQ分享、微信分享，分享功能首先需要到各开放平台申请帐号，参考 [文档](http://ask.dcloud.net.cn/article/36)
 
-## 2.1 微信分享
+## HBuilderX 5.13+ 本地 Pod 集成（推荐）
 
-### 需要引入的系统框架
+HBuilderX 5.13+ 推荐使用本地 Pod 集成分享模块：
 
-无额外系统框架要求（微信SDK已包含）
+| Pod 名称 | 用途 |
+|---|---|
+| `Share` | 分享基础模块 |
+| `Share-Sina` | 新浪微博分享 |
+| `Share-QQ` | QQ 分享 |
+| `Share-Wechat` | 微信分享 |
+| `Share-Wechat-PaySDK` | 微信分享（含支付能力） |
 
-### Info.plist 配置
+> **注意**：只有同时需要微信支付能力时，才使用 `Share-Wechat-PaySDK`，避免不需要支付能力的应用引入 PaySDK 版本。
+
+## 新浪微博分享
+
+### 添加依赖库及资源
+
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibShare.a、libSinaShare.a、libWeiboSDK.a | ImageIO.framework、libsqlite3.0.tbd | WeiboSDK.bundle |
+
+### 工程配置
+
+1. 在 info.plist 中添加 `sinaweibo` 字段，填入自己帐号的信息
+
+#### 注意 SDK 3.2.0+ 必须按照下图填写
+
+2. 在工程的 info -> URL types 中添加配置，identifier 填写 `com.weibo`，URL Schemes 填写 `wb[后面填写appkey]`
+
+3. 在 info.plist 添加 Schemes 白名单：
 
 ```xml
-<!-- 微信URL Scheme -->
 <key>LSApplicationQueriesSchemes</key>
 <array>
-    <string>weixin</string>
-    <string>weixinULAPI</string>
+    <string>sinaweibo</string>
+    <string>sinaweibohd</string>
+    <string>sinaweibosso</string>
+    <string>sinaweibonotes</string>
+    <string>weibosdk</string>
+    <string>weibosdk2.5</string>
 </array>
 
 <key>CFBundleURLTypes</key>
@@ -29,55 +56,31 @@ iOS 分享模块支持微信、QQ、微博、Facebook 等主流社交平台。
     <dict>
         <key>CFBundleURLSchemes</key>
         <array>
-            <string>%您的微信AppID%</string>
+            <string>wb%您的微博AppKey%</string>
         </array>
     </dict>
 </array>
 ```
 
-### CocoaPods 依赖
+#### 注意 SDK 3.2.0+ 必须按照下图填写
 
-```ruby
-pod 'WechatOpenSDK', '1.9.2'  # 或最新版本
-```
+4. 配置 Associated Domains（域名）
 
-### 需要拷贝的文件
+填写通用链接域名
 
-| 路径 | 文件 |
-|------|------|
-| SDK/libs | `libWeChatSDK.a`, `WXApi.h`, `WXApiObject.h` 等 |
+## QQ 分享
 
-### Objective-C 代码集成
+### 添加依赖库及资源
 
-```objc
-#import "WXApi.h"
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibShare.a、libQQShare.a、TencentOpenAPI.xcframework | 无 | 无 |
 
-// 在 AppDelegate 中注册微信
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-    
-    // 注册微信SDK
-    [WXApi registerApp:@"您的微信AppID" universalLink:@"https://您的UniversalLink.com/app/"];
-    
-    return YES;
-}
+### 工程配置
 
-// 处理微信回调
-- (BOOL)application:(UIApplication *)app openURL:(NSURL *)url options:(NSDictionary<NSString *,id> *)options {
-    return [WXApi handleOpenURL:url delegate:self];
-}
-```
+1. 在工程的 info -> URL types 中添加配置，identifier 填写 `tencentopenapi`，URL Schemes 填写 `tencent[后面填写appid]`
 
-### dcloud_properties.xml 配置
-
-```xml
-<feature name="Share" value="io.dcloud.feature.share.ShareFeatureImpl">
-    <module name="Share-Weixin" value="io.dcloud.feature.share.weixin.WeiXinShareService"/>
-</feature>
-```
-
-## 2.2 QQ 分享
-
-### Info.plist 配置
+2. 在 info.plist 添加 Schemes 白名单：
 
 ```xml
 <key>LSApplicationQueriesSchemes</key>
@@ -119,33 +122,39 @@ pod 'WechatOpenSDK', '1.9.2'  # 或最新版本
 </array>
 ```
 
-### 需要拷贝的文件
+#### 注意 SDK 3.2.0+ 必须按照下图填写
 
-| 路径 | 文件 |
-|------|------|
-| SDK/libs | `TencentOpenAPI.framework`, `TencentOpenApi_IOS_Bundle.bundle` |
+3. 在 info.plist 中添加 `qq` 字段，填入自己帐号的信息
 
-### dcloud_properties.xml 配置
+4. 配置 Associated Domains（域名）
 
-```xml
-<feature name="Share" value="io.dcloud.feature.share.ShareFeatureImpl">
-    <module name="Share-QQ" value="io.dcloud.feature.share.qq.QQShareService"/>
-</feature>
-```
+填写通用链接域名
 
-## 2.3 新浪微博分享
+## 微信分享
 
-### Info.plist 配置
+### 添加依赖库及资源
+
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibShare.a、libweixinShare.a、libWeChatSDK.a | libsqlite3.0.tbd、libz.tbd、CoreTelephony.framework、SystemConfiguration.framework | 无 |
+
+注意：SDK 中的
+
+- `libWeChatSDK_pay.a` 为带支付功能的微信SDK，支持微信分享、微信支付及微信授权登录功能
+- `libWeChatSDK.a` 为不带支付功能的SDK，仅支持微信分享和授权登录，**不使用支付功能请添加此库，避免审核被拒**
+- 不要同时添加到工程避免冲突
+
+### 工程配置
+
+1. 在工程的 info -> URL types 中添加配置，identifier 填写 `weixin`，URL Schemes 填写 `wx[后面填写appid]`
+
+2. 在 info.plist 添加 Schemes 白名单：
 
 ```xml
 <key>LSApplicationQueriesSchemes</key>
 <array>
-    <string>sinaweibo</string>
-    <string>sinaweibohd</string>
-    <string>sinaweibosso</string>
-    <string>sinaweibonotes</string>
-    <string>weibosdk</string>
-    <string>weibosdk2.5</string>
+    <string>weixin</string>
+    <string>weixinULAPI</string>
 </array>
 
 <key>CFBundleURLTypes</key>
@@ -153,74 +162,46 @@ pod 'WechatOpenSDK', '1.9.2'  # 或最新版本
     <dict>
         <key>CFBundleURLSchemes</key>
         <array>
-            <string>wb%您的微博AppKey%</string>
+            <string>wx%您的微信AppID%</string>
         </array>
     </dict>
 </array>
 ```
 
-### 需要拷贝的文件
+3. 配置 Associated Domains（域名）
 
-| 路径 | 文件 |
-|------|------|
-| SDK/libs | `WeiboSDK.framework` 或 `libWeiboSDK.a` |
+填写通用链接域名
 
-### dcloud_properties.xml 配置
+4. 在 info.plist root 节点添加 `UniversalLinks` 字段，值和您在微信开放平台配置的一致（SDK 3.2.0版本以后 此项已废弃，仅保留字段,配置参数已经位置如步骤5所示）
 
-```xml
-<feature name="Share" value="io.dcloud.feature.share.ShareFeatureImpl">
-    <module name="Share-Sina" value="io.dcloud.feature.share.sina.SinaShareService"/>
-</feature>
+5. 在 info.plist 添加 `weixin`(3.2.0 以前为 `weixinoauth`) 项，填写微信 `appid` 及 `UniversalLinks`,值和您在微信开放平台配置的一致
+
+6. 在工程的 AppDelegate.m 系统通用链接回调方法中调用框架方法如下：
+
+```objc
+- (BOOL)application:(UIApplication *)application continueUserActivity:(NSUserActivity *)userActivity restorationHandler:(void(^)(NSArray<id<UIUserActivityRestoring>> * __nullable restorableObjects))restorationHandler {
+    [PDRCore handleSysEvent:PDRCoreSysEventContinueUserActivity withObject:userActivity];
+    restorationHandler(nil);
+    return YES;
+}
 ```
 
-## 2.4 Facebook 分享（可选）
+## 所有分享都需要实现的方法
 
-### Info.plist 配置
+在 AppDelegate.m 文件的系统回调方法中调用框架的方法如下：
 
-```xml
-<key>LSApplicationQueriesSchemes</key>
-<array>
-    <string>fb</string>
-    <string>fbapi</string>
-    <string>fb-messenger-share-api</string>
-    <string>fbshareextension</string>
-    <string>fbauth2</string>
-</array>
+```objc
+- (BOOL)application:(UIApplication *)application handleOpenURL:(NSURL *)url
+{
+    [PDRCore handleSysEvent:PDRCoreSysEventOpenURL withObject:url];
+    return YES;
+}
 
-<key>CFBundleURLTypes</key>
-<array>
-    <dict>
-        <key>CFBundleURLSchemes</key>
-        <array>
-            <string>fb%您的Facebook App ID%</string>
-        </array>
-    </dict>
-</array>
+- (BOOL)application:(UIApplication *)application openURL:(nonnull NSURL *)url options:(nonnull NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options {
+    [PDRCore handleSysEvent:PDRCoreSysEventOpenURLWithOptions withObject:@[url,options]];
+    return YES;
+}
 ```
-
-### CocoaPods 依赖
-
-```ruby
-pod 'FBSDKCoreKit'
-pod 'FBSDKLoginKit'
-pod 'FBSDKShareKit'
-```
-
-### dcloud_properties.xml 配置
-
-```xml
-<feature name="Share" value="io.dcloud.feature.share.ShareFeatureImpl">
-    <module name="Share-Facebook" value="io.dcloud.feature.share.facebook.FacebookShareService"/>
-</feature>
-```
-
-## ⚠️ Universal Links 配置（iOS 9+ 必须）
-
-从 iOS 9 开始，应用间跳转需要配置 Universal Links：
-
-1. 在 Apple Developer 后台配置 Associated Domains
-2. 创建 `apple-app-site-association` 文件并上传到服务器
-3. 在 Xcode 中 Signing & Capabilities 添加 Associated Domains
 
 ---
 

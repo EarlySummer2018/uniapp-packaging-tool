@@ -27,6 +27,9 @@ use crate::commands::ios::modules::geolocation::{
 };
 use crate::commands::ios::modules::ibeacon::apply_ios_ibeacon_module;
 use crate::commands::ios::modules::livepusher::apply_ios_livepusher_module;
+use crate::commands::ios::modules::oauth::{
+    apply_ios_oauth_module, ios_oauth_providers, IosOauthProvider,
+};
 use crate::commands::ios::modules::push::apply_ios_push_module;
 
 #[test]
@@ -732,6 +735,135 @@ fn ios_geolocation_ignores_sdk_config_until_module_is_enabled() {
         ios_geolocation_provider_value(&manifest, "amap", &["appkey_ios", "appkey", "key"]),
         None
     );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn ios_oauth_detects_enabled_providers_from_manifest() {
+    let root = std::env::temp_dir().join(format!(
+        "unipack-ios-oauth-providers-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "OAuth": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "oauth": {
+                        "univerify": {},
+                        "sinaweibo": {},
+                        "qq": {},
+                        "weixin": {},
+                        "apple": {},
+                        "google": {},
+                        "facebook": {}
+                    }
+                }
+            }
+        }
+    });
+    let info = crate::commands::shared::resource::parse_uniapp_manifest(
+        &manifest,
+        &root.join("manifest.json"),
+        &root,
+        None,
+    );
+
+    assert_eq!(
+        ios_oauth_providers(Some(&info)).unwrap(),
+        vec![
+            IosOauthProvider::Univerify,
+            IosOauthProvider::Sina,
+            IosOauthProvider::Qq,
+            IosOauthProvider::Weixin,
+            IosOauthProvider::Apple,
+            IosOauthProvider::Google,
+            IosOauthProvider::Facebook,
+        ]
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn ios_oauth_local_pod_skips_manual_sdk_linking() {
+    let root = std::env::temp_dir().join(format!(
+        "unipack-ios-oauth-local-pod-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let project_root = root.join("HBuilder-Hello");
+    let project_file = project_root.join("HBuilder-Hello.xcodeproj");
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "OAuth": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "oauth": {
+                        "localPod": true,
+                        "weixin": {
+                            "appid": "wx-oauth"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let info = crate::commands::shared::resource::parse_uniapp_manifest(
+        &manifest,
+        &root.join("manifest.json"),
+        &root,
+        None,
+    );
+
+    let integration = apply_ios_oauth_module(&project_root, &project_file, Some(&info))
+        .unwrap()
+        .unwrap();
+
+    assert!(integration.local_pod);
+    assert_eq!(integration.linked_count, 0);
+    assert_eq!(integration.resource_count, 0);
+    assert_eq!(integration.providers, vec![IosOauthProvider::Weixin]);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn ios_oauth_manual_integration_requires_offline_sdk_files() {
+    let root = std::env::temp_dir().join(format!(
+        "unipack-ios-oauth-missing-sdk-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let project_root = root.join("HBuilder-Hello");
+    let project_file = project_root.join("HBuilder-Hello.xcodeproj");
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "OAuth": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "oauth": {
+                        "weixin": {
+                            "appid": "wx-oauth"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let info = crate::commands::shared::resource::parse_uniapp_manifest(
+        &manifest,
+        &root.join("manifest.json"),
+        &root,
+        None,
+    );
+
+    let error = apply_ios_oauth_module(&project_root, &project_file, Some(&info)).unwrap_err();
+
+    assert!(error.contains("iOS Oauth 模块缺少 SDK 依赖文件"));
+    assert!(error.contains("liblibOauth.a"));
     let _ = std::fs::remove_dir_all(root);
 }
 

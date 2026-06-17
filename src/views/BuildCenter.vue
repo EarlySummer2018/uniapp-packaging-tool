@@ -1049,6 +1049,8 @@ function applyIosModuleConfigToManifestInfo(info: UniappManifestInfo): UniappMan
     applyIosPushConfigToManifestValue(manifestValue)
     applyIosBluetoothConfigToManifestValue(manifestValue)
     applyIosVideoPlayerConfigToManifestValue(manifestValue)
+    applyIosOauthConfigToManifestValue(manifestValue)
+    applyIosShareConfigToManifestValue(manifestValue)
   }
   return {
     ...info,
@@ -1091,6 +1093,7 @@ function applyIosMapConfigToManifestValue(manifestValue: Record<string, any>) {
   delete mapConfig.__platform__
   for (const mod of mapModules) {
     const provider = iosMapProviderForModule(mod)
+    if (provider === 'google') clearIosMapPageTypeConfig(mapConfig)
     for (const field of mod.fields) {
       if (field.key.startsWith('privacy.')) continue
       const value = iosFieldValue(mod, field).trim()
@@ -1106,6 +1109,12 @@ function applyIosMapConfigToManifestValue(manifestValue: Record<string, any>) {
         mapConfig.localPod = normalizeBooleanFieldValue(value)
       }
     }
+  }
+}
+
+function clearIosMapPageTypeConfig(mapConfig: Record<string, any>) {
+  for (const key of ['pageType', 'page_type', 'MAP_PAGE_TYPE', 'page']) {
+    delete mapConfig[key]
   }
 }
 
@@ -1167,6 +1176,54 @@ function setIosAllowsArbitraryLoads(iosConfig: Record<string, any>, enabled: boo
     : {}
   ats.NSAllowsArbitraryLoads = enabled
   iosConfig.NSAppTransportSecurity = ats
+}
+
+function applyIosShareConfigToManifestValue(manifestValue: Record<string, any>) {
+  const shareModules = (iosModuleConfigReport.value?.modules || [])
+    .filter(mod => mod.templateKey === 'share' && isIosConfigModuleSelected(mod))
+  if (!shareModules.length) return
+
+  const sdkConfigs = ensureObjectPath(manifestValue, ['app-plus', 'distribute', 'sdkConfigs'])
+  const shareConfig = ensureIosShareSdkConfig(sdkConfigs)
+  for (const mod of shareModules) {
+    for (const field of mod.fields) {
+      const value = iosFieldValue(mod, field).trim()
+      if (field.key === 'LOCAL_POD') {
+        shareConfig.localPod = normalizeBooleanFieldValue(value)
+      }
+    }
+  }
+}
+
+function applyIosOauthConfigToManifestValue(manifestValue: Record<string, any>) {
+  const oauthModule = (iosModuleConfigReport.value?.modules || [])
+    .find(mod => mod.templateKey === 'login' && isIosConfigModuleSelected(mod))
+  if (!oauthModule) return
+
+  const sdkConfigs = ensureObjectPath(manifestValue, ['app-plus', 'distribute', 'sdkConfigs'])
+  const oauthConfig = ensureIosOauthSdkConfig(sdkConfigs)
+  for (const field of oauthModule.fields) {
+    const value = iosFieldValue(oauthModule, field).trim()
+    if (field.key === 'LOCAL_POD') {
+      oauthConfig.localPod = normalizeBooleanFieldValue(value)
+    }
+  }
+}
+
+function ensureIosOauthSdkConfig(sdkConfigs: Record<string, any>) {
+  if (isPlainRecord(sdkConfigs.oauth)) return sdkConfigs.oauth
+  const alias = findFirstObjectEntry(sdkConfigs, ['login', 'oauths'])
+  const next = alias ? cloneJson(alias.value) : {}
+  sdkConfigs.oauth = next
+  return next
+}
+
+function ensureIosShareSdkConfig(sdkConfigs: Record<string, any>) {
+  if (isPlainRecord(sdkConfigs.share)) return sdkConfigs.share
+  const alias = findFirstObjectEntry(sdkConfigs, ['shares'])
+  const next = alias ? cloneJson(alias.value) : {}
+  sdkConfigs.share = next
+  return next
 }
 
 function ensureIosGeolocationSdkConfig(sdkConfigs: Record<string, any>) {
@@ -1519,7 +1576,7 @@ function updateIosField(mod: IosModuleConfigModule, field: IosModuleConfigField,
   if (isBuildLocked.value) return
   const currentValue = iosFieldValue(mod, field)
   if (
-    mod.templateKey === 'map'
+    ['map', 'share', 'login'].includes(mod.templateKey)
     && field.key === 'LOCAL_POD'
     && !normalizeBooleanFieldValue(currentValue)
     && normalizeBooleanFieldValue(value)
@@ -1736,7 +1793,7 @@ function normalizeIosFieldValue(mod: IosModuleConfigModule, field: IosModuleConf
   if (mod.templateKey === 'map' && field.key === 'MAP_PAGE_TYPE') {
     return normalizeIosMapPageTypeValue(iosMapProviderForModule(mod), normalized)
   }
-  if (mod.templateKey === 'map' && field.key === 'LOCAL_POD') {
+  if (['map', 'share', 'login'].includes(mod.templateKey) && field.key === 'LOCAL_POD') {
     return normalizeBooleanFieldValue(normalized) ? 'true' : 'false'
   }
   return rawValue
@@ -1786,7 +1843,7 @@ function iosSelectFieldOptions(mod: IosModuleConfigModule | null, field: IosModu
       { label: 'nvue', value: 'nvue', disabled: provider === 'baidu' }
     ]
   }
-  if (mod?.templateKey === 'map' && field.key === 'LOCAL_POD') {
+  if (mod && ['map', 'share', 'login'].includes(mod.templateKey) && field.key === 'LOCAL_POD') {
     return [
       { label: '否', value: 'false' },
       { label: '是', value: 'true' }

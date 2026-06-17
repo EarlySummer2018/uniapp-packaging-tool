@@ -2,191 +2,289 @@
 
 > **适用版本**：HBuilderX 5.0+
 > **平台**：iOS (iPhone/iPad)
-> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/
+> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/oauth.html
 
 ---
 
-iOS 支持多种第三方登录方式，包括微信、QQ、微博、Apple Sign In、Google、Facebook 等。
+Oauth 模块支持
 
-## 3.1 一键登录（个推）
+- 手机号一键登录
+- 新浪微博登录
+- QQ登录
+- 微信登录
+- 苹果授权登录
+- Google登录
+- Facebook登录
 
-### 需要引入的系统框架
+需要到各开放平台申请帐号
 
-| 框架 | 说明 |
-|------|------|
-| CoreTelephony.framework | 用于获取运营商信息 |
-| AdSupport.framework | 广告标识符（可选） |
+## HBuilderX 5.13+ 本地 Pod 集成（推荐）
 
-### Info.plist 配置
+HBuilderX 5.13+ 推荐使用本地 Pod 集成登录鉴权模块：
 
-```xml
-<key>GETUI_APPID</key>
-<string>%个推AppID%</string>
-<key>GY_APP_ID</key>
-<string>%一键登录AppID%</string>
-```
+| Pod 名称 | 用途 |
+|---|---|
+| `Oauth` | 登录基础模块 |
+| `Oauth-Univerify` | 一键登录 |
+| `Oauth-Sina` | 新浪微博登录 |
+| `Oauth-QQ` | QQ 登录 |
+| `Oauth-Wechat` | 微信登录 |
+| `Oauth-Wechat-PaySDK` | 微信登录（含支付能力） |
 
-### CocoaPods 依赖
+> **注意**：只有同时需要微信支付能力时，才使用 `Oauth-Wechat-PaySDK`，避免不需要支付能力的应用引入 PaySDK 版本。
 
-```ruby
-pod 'GySDK', '~> 3.x.x'  # 个推一键登录SDK
-```
+## 配置登录平台参数
 
-### dcloud_properties.xml 配置
+在工程中搜索 feature.plist 文件（位于 PandoraApi.bundle 中），在 OAuth->extend 节点下添加对应平台的配置
 
-```xml
-<feature name="OAuth" value="io.dcloud.feature.oauth.OAuthFeatureImpl">
-    <module name="OAuth-IGETui" value="io.dcloud.feature.igetui.GeTuiOAuthService"/>
-</feature>
-```
+## 一键登录（univerify）
 
-## 3.2 微信登录
+### 添加依赖库及资源
 
-> **注意**：如已集成微信分享，可复用微信SDK，无需重复配置。
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibOauth.a、UniVerify.framework、GTCommonSDK.xcframework、GeYanSdk.xcframework | libz.tbd、libc++.tbd、libsqlite3.0.tbd、AdSupport.framework | TYRZResource.bundle |
 
-### Info.plist 配置
+### 工程配置
 
-同微信分享配置（见 [Share（分享）](share.md) §2.1 节）
+1. 在 info.plist 中添加 `DCloudConfig` 节点类型为 Dictionary，然后添加 `univerify` 子节点类型为 Dictionary，然后添加 `appid` 节点类型为 String，值填写您在 [DCloud开发者中心](https://dev.dcloud.net.cn/) 申请一键登录对应的 appid
 
-### 需要拷贝的文件
+2. 使用方法请参考 [一键登录 使用指南](https://uniapp.dcloud.io/univerify)
 
-同微信分享（见 [Share（分享）](share.md) §2.1 节）
+## 新浪微博登录
 
-### dcloud_properties.xml 配置
+### 添加依赖库及资源
 
-```xml
-<feature name="OAuth" value="io.dcloud.feature.oauth.OAuthFeatureImpl">
-    <module name="OAuth-Weixin" value="io.dcloud.feature.oauth.weixin.WeiXinOAuthService"/>
-</feature>
-```
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibOauth.a、libSinaWBOauth.a、liblWeiboSDK.a | ImageIO.framework、libsqlite3.0.tbd | WeiboSDK.bundle |
 
-## 3.3 QQ 登录
+### 工程配置
 
-> **注意**：如已集成QQ分享，可复用QQ SDK。
+1. 在 info.plist 中添加 `sinaweibo` 字段，填入自己帐号的信息
 
-### Info.plist 配置
+2. 在工程的 info -> URL types 中添加配置，identifier 填写 `com.weibo`，URL Schemes 填写 `wb[后面填写appkey]`
 
-同 QQ 分享配置（见 [Share（分享）](share.md) §2.2 节）
-
-### dcloud_properties.xml 配置
+3. 在 info.plist 添加 Schemes 白名单：
 
 ```xml
-<feature name="OAuth" value="io.dcloud.feature.oauth.OAuthFeatureImpl">
-    <module name="OAuth-QQ" value="io.dcloud.feature.oauth.qq.QQOAuthService"/>
-</feature>
-```
-
-## 3.4 新浪微博登录
-
-> **注意**：如已集成微博分享，可复用微博SDK。
-
-### dcloud_properties.xml 配置
-
-```xml
-<feature name="OAuth" value="io.dcloud.feature.oauth.OAuthFeatureImpl">
-    <module name="OAuth-Sina" value="io.dcloud.feature.oauth.sina.SinaOAuthService"/>
-</feature>
-```
-
-## 3.5 Apple 登录（Sign in with Apple）
-
-> **重要**：如果应用集成了其他第三方登录方式，根据 Apple 审核指南，**必须同时提供 Apple 登录选项**。
-
-### 需要引入的系统框架
-
-| 框架 | 说明 |
-|------|------|
-| AuthenticationServices.framework | Apple 认证服务框架 |
-
-### Info.plist 配置
-
-无需特殊配置，但需在 Xcode 中 Signing & Capabilities 添加 **Sign in with Apple**
-
-### Objective-C 代码示例
-
-```objc
-@import AuthenticationServices;
-
-// 实现 Apple 登录按钮点击事件
-- (void)handleAppleSignIn {
-    if (@available(iOS 13.0, *)) {
-        ASAuthorizationAppleIDProvider *provider = [[ASAuthorizationAppleIDProvider alloc] init];
-        ASAuthorizationAppleIDRequest *request = [provider createRequest];
-        request.requestedScopes = @[ASAuthorizationScopeFullName, ASAuthorizationScopeEmail];
-        
-        ASAuthorizationController *controller = [[ASAuthorizationController alloc] initWithAuthorizationRequests:@[request]];
-        controller.delegate = self;
-        controller.presentationContextProvider = self;
-        [controller performRequests];
-    }
-}
-```
-
-### dcloud_properties.xml 配置
-
-```xml
-<feature name="OAuth" value="io.dcloud.feature.oauth.OAuthFeatureImpl">
-    <module name="OAuth-Apple" value="io.dcloud.feature.oauth.apple.AppleOAuthService"/>
-</feature>
-```
-
-## 3.6 Google 登录
-
-### 需要引入的系统框架
-
-| 框架 | 说明 |
-|------|------|
-| SafariServices.framework | Safari 服务框架 |
-
-### CocoaPods 依赖
-
-```ruby
-pod 'GoogleSignIn', '~> 7.x.x'
-```
-
-### Info.plist 配置
-
-```xml
-<key>GIDClientID</key>
-<string>%您的Google Client ID%</string>
+<key>LSApplicationQueriesSchemes</key>
+<array>
+    <string>sinaweibo</string>
+    <string>sinaweibohd</string>
+    <string>sinaweibosso</string>
+    <string>sinaweibonotes</string>
+    <string>weibosdk</string>
+    <string>weibosdk2.5</string>
+</array>
 
 <key>CFBundleURLTypes</key>
 <array>
     <dict>
         <key>CFBundleURLSchemes</key>
         <array>
-            <string>%您的REVERSED_CLIENT_ID%</string>
+            <string>wb%您的微博AppKey%</string>
         </array>
     </dict>
 </array>
 ```
 
-### dcloud_properties.xml 配置
+4. 配置 Associated Domains（域名）
+
+填写通用链接域名
+
+## QQ 登录
+
+### 添加依赖库及资源
+
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibOauth.a、libQQOauth.a、TencentOpenAPI.xcframework | 无 | 无 |
+
+### 工程配置
+
+1. 在工程的 info -> URL types 中添加配置，identifier 填写 `tencentopenapi`，URL Schemes 填写 `tencent[后面填写appid]`
+
+2. 在 info.plist 添加 Schemes 白名单：
 
 ```xml
-<feature name="OAuth" value="io.dcloud.feature.oauth.OAuthFeatureImpl">
-    <module name="OAuth-Google" value="io.dcloud.feature.google.GoogleOAuthService"/>
-</feature>
+<key>LSApplicationQueriesSchemes</key>
+<array>
+    <string>mqqapi</string>
+    <string>mqq</string>
+    <string>mqqOpensdkSSoLogin</string>
+    <string>mqqconnect</string>
+    <string>mqqopensdkdataline</string>
+    <string>mqqopensdkgrouptribeshare</string>
+    <string>mqqopensdkfriend</string>
+    <string>mqqopensdkapi</string>
+    <string>mqqopensdkapiV2</string>
+    <string>mqqopensdkapiV3</string>
+    <string>mqqopensdkapiV4</string>
+    <string>mqzoneopensdk</string>
+    <string>wtloginmqq</string>
+    <string>wtloginmqq2</string>
+    <string>mqzone</string>
+    <string>mqzonev2</string>
+    <string>mqzoneshare</string>
+    <string>wtloginqzone</string>
+    <string>mqqwpa</string>
+    <string>mqzoneopensdkapiV2</string>
+    <string>mqzoneopensdkapi19</string>
+    <string>mqzoneopensdkapi</string>
+    <string>mqqbrowser</string>
+    <string>mttbrowser</string>
+</array>
+
+<key>CFBundleURLTypes</key>
+<array>
+    <dict>
+        <key>CFBundleURLSchemes</key>
+        <array>
+            <string>tencent%您的QQ AppID%</string>
+        </array>
+    </dict>
+</array>
 ```
 
-## 3.7 Facebook 登录
+3. 在 info.plist 中添加 `qq` 字段，填入自己帐号的信息
 
-> **注意**：如已集成 Facebook 分享，可复用 Facebook SDK。
+4. 配置 Associated Domains（域名）
 
-### dcloud_properties.xml 配置
+填写通用链接域名
+
+## 微信登录
+
+### 添加依赖库及资源
+
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibOauth.a、libWXOauth.a、libWeChatSDK.a | libsqlite3.0.tbd、libz.tbd、CoreTelephony.framework、SystemConfiguration.framework | 无 |
+
+注意：SDK 中的
+
+- `libWeChatSDK_pay.a` 为带支付功能的微信SDK，支持微信分享、微信支付及微信授权登录功能
+- `libWeChatSDK.a` 为不带支付功能的SDK，仅支持微信分享和授权登录，**不使用支付功能请添加此库，避免审核被拒**
+- 不要同时添加到工程避免冲突
+
+### 工程配置
+
+1. 在工程的 info -> URL types 中添加配置，identifier 填写 `weixin`，URL Schemes 填写 `wx[后面填写appid]`
+
+2. 在 info.plist 添加 Schemes 白名单：
 
 ```xml
-<feature name="OAuth" value="io.dcloud.feature.oauth.OAuthFeatureImpl">
-    <module name="OAuth-Facebook" value="io.dcloud.feature.facebook.FacebookOAuthService"/>
-</feature>
+<key>LSApplicationQueriesSchemes</key>
+<array>
+    <string>weixin</string>
+    <string>weixinULAPI</string>
+</array>
+
+<key>CFBundleURLTypes</key>
+<array>
+    <dict>
+        <key>CFBundleURLSchemes</key>
+        <array>
+            <string>wx%您的微信AppID%</string>
+        </array>
+    </dict>
+</array>
 ```
 
-## ⚠️ iOS 登录注意事项
+3. 配置 Associated Domains（域名）
 
-1. **Apple 登录强制要求**：应用上架 App Store 时，如果使用了任何第三方登录，必须同时提供 Apple 登录
-2. **隐私政策**：每个登录方式都需要在隐私政策中说明数据收集和使用情况
-3. **测试环境**：部分登录方式（如 Apple 登录）需要真机测试，模拟器可能不支持
-4. **回调处理**：确保正确处理各平台的 OAuth 回调
+填写通用链接域名
+
+4. 在 info.plist 添加 `weixin` 项，填写微信 `appid` 及 `UniversalLinks`,值和您在微信开放平台配置的一致
+
+5. 在工程的 AppDelegate.m 系统通用链接回调方法中调用框架方法如下：
+
+```objc
+- (BOOL)application:(UIApplication *)application continueUserActivity:(NSUserActivity *)userActivity restorationHandler:(void(^)(NSArray<id<UIUserActivityRestoring>> * __nullable restorableObjects))restorationHandler {
+    [PDRCore handleSysEvent:PDRCoreSysEventContinueUserActivity withObject:userActivity];
+    restorationHandler(nil);
+    return YES;
+}
+```
+
+## 苹果登录
+
+### 添加依赖库及资源
+
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibOauth.a、libAppleOauth.a | AuthenticationServices.framework | 无 |
+
+**注意：AuthenticationServices.framework Status 为 Optional**
+
+### 开启 Sign in with Apple
+
+在原生工程 -> Signing&Capabilities -> + Capability 中添加 Sign in with Apple 服务
+
+证书配置及使用说明请参考 [文档](https://ask.dcloud.net.cn/article/36651)
+
+## Google 登录
+
+### 添加依赖库及资源
+
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibOauth.a、libGoogleOauth.a、GoogleSignIn.xcframework、AppAuth.xcframework、GTMAppAuth.xcframework、GTMSessionFetcher.xcframework | CoreText.framework、CoreGraphics.framework、LocalAuthentication.framework、SafariServices.framework、Security.framework | GoogleSignIn.bundle |
+
+### 工程配置
+
+1. 在 info.plist 添加 `GIDClientID` 项，填写 Google `clientid`
+
+2. 在工程的 info -> URL types 中添加配置，identifier 填写 `google_url`，添加您的反向 clientid 作为 URL Schemes
+
+## Facebook 登录
+
+### 添加依赖库及资源
+
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibOauth.a、libFBOauth.a、FBSDKCoreKit.xcframework、FBAEMKit.xcframework、FBSDKCoreKit_Basics.xcframework、FBSDKLoginKit.xcframework | libc++.tbd、Accelerate.framework、Accounts.framework、AdSupport.framework、AudioToolbox.framework、CoreGraphics.framework、QuartzCore.framework、Security.framework、Social.framework、StoreKit.framework | 无 |
+
+### 工程配置
+
+1. 在 info.plist 添加 `FacebookAppID`、`FacebookClientToken` 项，分别填写 Facebook `appid` 和 `clientToken`
+
+2. 在工程的 info -> URL types 中添加配置，identifier 填写 `facebook`，URL Schemes 填写 `fb[后面填写appid]`
+
+3. 在 info.plist 添加 Schemes 白名单：
+
+```xml
+<key>LSApplicationQueriesSchemes</key>
+<array>
+    <string>fb</string>
+    <string>fbapi</string>
+    <string>fb-messenger-share-api</string>
+    <string>fbshareextension</string>
+    <string>fbauth2</string>
+</array>
+```
+
+## 除苹果授权登录外都需要实现的方法
+
+在 AppDelegate.m 文件的系统回调方法中调用框架的方法如下：
+
+```objc
+- (BOOL)application:(UIApplication *)application handleOpenURL:(NSURL *)url
+{
+    [PDRCore handleSysEvent:PDRCoreSysEventOpenURL withObject:url];
+    return YES;
+}
+
+- (BOOL)application:(UIApplication *)application openURL:(nonnull NSURL *)url options:(nonnull NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options {
+    [PDRCore handleSysEvent:PDRCoreSysEventOpenURLWithOptions withObject:@[url,options]];
+    return YES;
+}
+
+- (BOOL)application:(UIApplication *)application continueUserActivity:(NSUserActivity *)userActivity restorationHandler:(void(^)(NSArray<id<UIUserActivityRestoring>> * __nullable restorableObjects))restorationHandler{
+    [PDRCore handleSysEvent:PDRCoreSysEventContinueUserActivity withObject:userActivity];
+    return YES;
+}
+```
 
 ---
 
@@ -194,4 +292,4 @@ pod 'GoogleSignIn', '~> 7.x.x'
 
 - 上一篇：[Share（分享）](share.md)
 - 下一篇：[Map（地图）](map.md)
-- 相关模块：[Share（分享）](share.md)（微信/QQ/微博/Facebook 可复用 SDK）、[Payment（支付）](payment.md)
+- 相关模块：[Share（分享）](share.md)（微信/QQ/微博可复用 SDK）、[Payment（支付）](payment.md)（含微信支付配置）

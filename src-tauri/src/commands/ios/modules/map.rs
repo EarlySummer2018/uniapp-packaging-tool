@@ -76,6 +76,13 @@ pub(crate) struct IosMapIntegration {
 impl IosMapIntegration {
     pub(crate) fn summary(&self) -> String {
         if self.local_pod {
+            if self.provider == IosMapProvider::Google {
+                return format!(
+                    "{}，本地 Pod 集成 {}",
+                    self.provider.label(),
+                    self.provider.pod_name()
+                );
+            }
             format!(
                 "{}，{} 页面，本地 Pod 集成 {}",
                 self.provider.label(),
@@ -83,6 +90,9 @@ impl IosMapIntegration {
                 self.provider.pod_name()
             )
         } else {
+            if self.provider == IosMapProvider::Google {
+                return format!("{}，手动 SDK 集成", self.provider.label());
+            }
             format!(
                 "{}，{} 页面，手动 SDK 集成",
                 self.provider.label(),
@@ -184,6 +194,9 @@ pub(crate) fn ios_map_page_type(
         IosMapProvider::Amap => IosMapPageType::Nvue,
         IosMapProvider::Baidu | IosMapProvider::Google => IosMapPageType::Vue,
     };
+    if provider == IosMapProvider::Google {
+        return default;
+    }
     let Some(value) = ios_map_sdk_config(manifest).and_then(|config| {
         let config = config.as_object()?;
         ["pageType", "page_type", "MAP_PAGE_TYPE", "page"]

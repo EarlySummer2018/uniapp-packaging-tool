@@ -26,7 +26,9 @@ use crate::commands::ios::modules::geolocation::apply_ios_geolocation_module;
 use crate::commands::ios::modules::ibeacon::apply_ios_ibeacon_module;
 use crate::commands::ios::modules::livepusher::apply_ios_livepusher_module;
 use crate::commands::ios::modules::map::apply_ios_map_module;
+use crate::commands::ios::modules::oauth::apply_ios_oauth_module;
 use crate::commands::ios::modules::push::apply_ios_push_module;
+use crate::commands::ios::modules::share::apply_ios_share_module;
 use crate::commands::module::{
     manifest_push_unsupported_version, PUSH_UNSUPPORTED_VERSION_MESSAGE,
 };
@@ -217,6 +219,50 @@ pub(super) fn configure_ios_workspace(
                     map.summary(),
                     map.linked_count,
                     map.resource_count
+                ),
+            )
+        };
+        emit_ios_log(window, build_id, level, &message, Some(29));
+    }
+    if let Some(oauth) = apply_ios_oauth_module(&project_root, &project_file, manifest_info)? {
+        let (level, message) = if oauth.local_pod {
+            (
+                "info",
+                format!(
+                    "已启用 iOS Oauth 模块本地 Pod 集成: {}，请确保使用 HBuilderX 5.13+ 导出的本地 APP 打包资源",
+                    oauth.summary()
+                ),
+            )
+        } else {
+            (
+                "success",
+                format!(
+                    "已自动接入 iOS Oauth 模块: {}，新增链接 {} 项，资源 {} 项",
+                    oauth.summary(),
+                    oauth.linked_count,
+                    oauth.resource_count
+                ),
+            )
+        };
+        emit_ios_log(window, build_id, level, &message, Some(29));
+    }
+    if let Some(share) = apply_ios_share_module(&project_root, &project_file, manifest_info)? {
+        let (level, message) = if share.local_pod {
+            (
+                "info",
+                format!(
+                    "已启用 iOS 分享模块本地 Pod 集成: {}，请确保使用 HBuilderX 5.13+ 导出的本地 APP 打包资源",
+                    share.summary()
+                ),
+            )
+        } else {
+            (
+                "success",
+                format!(
+                    "已自动接入 iOS 分享模块: {}，新增链接 {} 项，资源 {} 项",
+                    share.summary(),
+                    share.linked_count,
+                    share.resource_count
                 ),
             )
         };

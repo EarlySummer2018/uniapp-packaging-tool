@@ -2,60 +2,29 @@
 
 > **适用版本**：HBuilderX 5.0+
 > **平台**：iOS (iPhone/iPad)
-> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/
+> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/uiwebview.html
 
 ---
 
-> **重要提示**：从 iOS 12 开始，Apple 已弃用 UIWebview，推荐使用 WKWebview。
-> 
-> HBuilderX 3.0+ 版本默认使用 WKWebview，但如果项目中有特殊需求仍需使用 UIWebview，可参考以下配置。
+## Appstore 审核反馈废弃 UIWebview APIs 问题的说明
 
-## 需要引入的系统框架
+iOS 有 UIWebview 和 WKWebview 两种 webview。从 iOS 13 开始苹果将 UIWebview 列为过期 API。
 
-| 框架 | 说明 |
-|------|------|
-| UIKit.framework | UI框架 |
-| JavaScriptCore.framework | JavaScript 引擎 |
+**2020 年 4 月起 App Store 将不再接受使用 UIWebView 的新 App 上架、2020 年 12 月起将不再接受使用 UIWebView 的 App 更新。**
 
-## Info.plist 配置
+从 HBuilderX 2.2.5 起，iOS 上默认均已经是 WKWebview，除非开发者手动在代码中指定要用 UIWebview，否则实际渲染的页面都是在 WKWebview 里渲染的。不过，虽然实际页面是 WKWebview 渲染的，但 App 底层引擎源码里仍然有 UIWebview 的可选引用。Appstore 的机审会发现二进制代码中包括对 UIWebview 的引用，从而引发告警。从 HBuilderX 2.6.6 起，UIWebview 从基础引擎中移除，变成可选模块。
 
-```xml
-<!-- 允许任意加载（仅开发环境使用） -->
-<key>NSAppTransportSecurity</key>
-<dict>
-    <key>NSAllowsArbitraryLoads</key>
-    <true/>
-</dict>
-```
+## iOS UIWebview 模块配置
 
-## 需要拷贝的文件
+如果开发者需要在离线打包工程中使用 UIWebview 功能，需要在自己的离线工程中配置 UIWebview 模块。
 
-| 路径 | 文件 |
-|------|------|
-| SDK/libs | `libUIWebview.a` 或相关 framework |
+HBuilderX 5.13+ 如需集成 UIWebView 兼容模块，推荐使用本地 Pod，对应 Pod subspec 为 `UIWebview`。 手动集成时再参考下方依赖表。
 
-## Objective-C 代码示例
+### 添加依赖资源及文件
 
-```objc
-#import <UIKit/UIKit.h>
-
-// 使用 UIWebView（不推荐，建议迁移至 WKWebView）
-UIWebView *webView = [[UIWebView alloc] initWithFrame:self.view.bounds];
-webView.delegate = self;
-
-NSURL *url = [NSURL URLWithString:@"https://example.com"];
-NSURLRequest *request = [NSURLRequest requestWithURL:url];
-[webView loadRequest:request];
-
-[self.view addSubview:webView];
-```
-
-## ⚠️ 迁移建议
-
-1. **优先使用 WKWebView**：性能更好、内存占用更低、支持更多现代 Web 特性
-2. **兼容性检查**：检查项目中是否有依赖 UIWebView 的第三方库
-3. **App Store 审核**：2020年12月起，Apple 可能拒绝使用 UIWebView 的新应用
-4. **迁移指南**：参考 Apple 官方的 [UIWebView Deprecation](https://developer.apple.com/documentation/uikit/uiwebview) 文档
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| libH5WEUIWebview.a | JavaScriptCore.framework、Foundation.framework、UIKit.framework | 无 |
 
 ---
 
@@ -63,4 +32,4 @@ NSURLRequest *request = [NSURLRequest requestWithURL:url];
 
 - 上一篇：[uni-AD（广告）](uni-ad.md)
 - 下一篇：[UTS 内置模块](uts-builtin-modules.md)
-- 相关模块：[UTS 内置模块](uts-builtin-modules.md)、[FAQ - Q9 内存警告和应用崩溃](../faq.md#q9-内存警告和应用崩溃)
+- 相关模块：[UTS 内置模块](uts-builtin-modules.md)、[FAQ](../faq.md)
