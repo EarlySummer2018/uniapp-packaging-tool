@@ -65,7 +65,7 @@ pub(crate) fn fix_manifest_xml_structure(content: &str) -> Result<String, String
             .captures(mat.as_str())
             .expect("正则匹配成功，captures 必定存在");
         let is_close = &caps[1] == "/";
-        let is_self_closing = caps.get(3).map_or(false, |m| m.as_str() == "/");
+        let is_self_closing = caps.get(3).is_some_and(|m| m.as_str() == "/");
         let name = caps[2].to_string();
 
         if is_close {

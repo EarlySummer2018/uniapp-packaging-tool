@@ -123,7 +123,7 @@ pub fn sanitize_java_identifier(id: &str) -> String {
         } else {
             result.push('_');
         }
-        if i == 0 && result.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        if i == 0 && result.chars().next().is_some_and(|c| c.is_ascii_digit()) {
             result.insert(0, '_');
         }
     }

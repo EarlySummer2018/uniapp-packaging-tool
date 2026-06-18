@@ -44,10 +44,15 @@ use crate::commands::ios::modules::livepusher::{
 use crate::commands::ios::modules::map::{
     apply_ios_map_privacy_defaults as apply_map_privacy_defaults, ios_map_enabled,
 };
+use crate::commands::ios::modules::payment::ios_payment_provider_value;
 use crate::commands::ios::modules::push::apply_ios_push_plist_defaults as apply_push_plist_defaults;
 use crate::commands::ios::modules::record::{
     apply_ios_record_privacy_defaults as apply_record_privacy_defaults, ios_record_enabled,
 };
+use crate::commands::ios::modules::speech::{
+    apply_ios_speech_privacy_defaults as apply_speech_privacy_defaults, ios_speech_enabled,
+};
+use crate::commands::module::PaymentProvider;
 
 pub(super) fn patch_info_plist(
     project_root: &Path,
@@ -136,6 +141,9 @@ pub(super) fn patch_info_plist(
         if ios_record_enabled(Some(info)) {
             apply_record_privacy_defaults(dict);
         }
+        if ios_speech_enabled(Some(info)) {
+            apply_speech_privacy_defaults(dict);
+        }
         apply_ios_module_config_privacy_descriptions(dict, Some(info), &config.ios_module_config);
     } else {
         cleanup_ios_privacy_descriptions(dict);
@@ -205,8 +213,11 @@ fn ios_privacy_key_applies_to_manifest(
                 || ios_facial_recognition_verify_enabled(Some(info))
         }
         "NSMicrophoneUsageDescription" => {
-            ios_livepusher_enabled(Some(info)) || ios_record_enabled(Some(info))
+            ios_livepusher_enabled(Some(info))
+                || ios_record_enabled(Some(info))
+                || ios_speech_enabled(Some(info))
         }
+        "NSSpeechRecognitionUsageDescription" => ios_speech_enabled(Some(info)),
         "NSPhotoLibraryUsageDescription" => {
             ios_camera_enabled(Some(info)) || ios_barcode_enabled(Some(info))
         }
@@ -273,9 +284,7 @@ fn is_duplicate_ios_privacy_key(key: &str) -> bool {
 }
 
 fn duplicate_ios_privacy_base_key(key: &str) -> Option<String> {
-    let Some((base, suffix)) = key.rsplit_once(" - ") else {
-        return None;
-    };
+    let (base, suffix) = key.rsplit_once(" - ")?;
     if suffix.chars().all(|ch| ch.is_ascii_digit())
         && (is_ios_privacy_description_key(base) || is_legacy_ios_privacy_description_key(base))
     {
@@ -635,6 +644,26 @@ fn ios_manifest_url_schemes(manifest: &serde_json::Value) -> Vec<String> {
     if let Some(value) = provider_value(manifest, "weixin", &["appid"]) {
         schemes.push(value);
     }
+    if let Some(value) = ios_payment_provider_value(manifest, PaymentProvider::Alipay)
+        .and_then(|value| json_string_field(value, &["appId", "appid", "app_id"]))
+    {
+        schemes.push(prefixed_scheme("ap", &value));
+    }
+    if let Some(value) = ios_payment_provider_value(manifest, PaymentProvider::Weixin)
+        .and_then(|value| json_string_field(value, &["appid", "appId"]))
+    {
+        schemes.push(value);
+    }
+    if let Some(value) = ios_payment_provider_value(manifest, PaymentProvider::Paypal)
+        .and_then(|value| json_string_field(value, &["returnUrl", "returnURL", "scheme"]))
+    {
+        schemes.push(url_scheme_value(&value));
+    }
+    if let Some(value) = ios_payment_provider_value(manifest, PaymentProvider::Stripe)
+        .and_then(|value| json_string_field(value, &["returnUrl", "returnURL", "scheme"]))
+    {
+        schemes.push(url_scheme_value(&value));
+    }
     if let Some(value) = provider_value(manifest, "qq", &["appid"]) {
         schemes.push(prefixed_scheme("tencent", &value));
     }
@@ -659,6 +688,19 @@ fn ios_manifest_query_schemes(manifest: &serde_json::Value) -> Vec<String> {
     }
     if provider_value(manifest, "weixin", &["appid"]).is_some() {
         schemes.extend(["weixin".into(), "weixinULAPI".into()]);
+    }
+    if ios_payment_provider_value(manifest, PaymentProvider::Alipay).is_some() {
+        schemes.extend(["alipay".into(), "alipays".into()]);
+    }
+    if ios_payment_provider_value(manifest, PaymentProvider::Weixin).is_some() {
+        schemes.extend(
+            ["weixin", "weixinULAPI", "weixinuniversallink"]
+                .into_iter()
+                .map(String::from),
+        );
+    }
+    if ios_payment_provider_value(manifest, PaymentProvider::Paypal).is_some() {
+        schemes.extend(["paypal", "paypalsandbox"].into_iter().map(String::from));
     }
     if provider_value(manifest, "qq", &["appid"]).is_some() {
         schemes.extend(
@@ -732,9 +774,52 @@ fn manifest_provider<'a>(
         .get("distribute")?
         .get("sdkConfigs")?;
     match category {
-        Some(category) => sdk_configs.get(category)?.get(provider),
-        None => sdk_configs.get(provider),
+        Some(category) => find_manifest_provider_in_category(sdk_configs, category, provider),
+        None => find_object_value_normalized(sdk_configs, provider),
     }
+}
+
+fn find_manifest_provider_in_category<'a>(
+    sdk_configs: &'a serde_json::Value,
+    category: &str,
+    provider: &str,
+) -> Option<&'a serde_json::Value> {
+    manifest_category_aliases(category)
+        .iter()
+        .find_map(|category| {
+            find_object_value_normalized(sdk_configs, category)
+                .and_then(|category_value| find_object_value_normalized(category_value, provider))
+        })
+}
+
+fn manifest_category_aliases(category: &str) -> Vec<&str> {
+    match category {
+        "maps" | "map" => vec!["maps", "map"],
+        "speech" | "speechRecognition" => vec!["speech", "speechRecognition"],
+        "statics" | "statistic" | "statistics" => vec!["statistic", "statistics", "statics"],
+        "oauth" | "login" | "oauths" => vec!["oauth", "login", "oauths"],
+        "share" | "shares" => vec!["share", "shares"],
+        _ => vec![category],
+    }
+}
+
+fn find_object_value_normalized<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Option<&'a serde_json::Value> {
+    let map = value.as_object()?;
+    let normalized_key = normalize_manifest_key(key);
+    map.iter()
+        .find(|(candidate, _)| normalize_manifest_key(candidate) == normalized_key)
+        .map(|(_, value)| value)
+}
+
+fn normalize_manifest_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
 }
 
 fn json_string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
@@ -774,6 +859,15 @@ fn prefixed_scheme(prefix: &str, value: &str) -> String {
     } else {
         format!("{}{}", prefix, value)
     }
+}
+
+fn url_scheme_value(value: &str) -> String {
+    value
+        .split_once("://")
+        .map(|(scheme, _)| scheme)
+        .unwrap_or(value)
+        .trim_matches('/')
+        .to_string()
 }
 
 pub(super) fn dedup_non_empty_strings(values: Vec<String>) -> Vec<String> {

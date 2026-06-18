@@ -345,6 +345,16 @@ pub(super) fn collect_modules_from_sdk_configs(
         }
 
         if let Some(module_name) = sdk_config_key_to_module_name(key) {
+            if module_name == "Payment" {
+                if enabled_modules
+                    .map(|modules| module_declared_enabled(modules, module_name))
+                    .unwrap_or(false)
+                    && payment_config_has_provider(value)
+                {
+                    push_detected_module(detected, module_name, platform);
+                }
+                continue;
+            }
             if module_name == "Geolocation" {
                 if enabled_modules
                     .map(|modules| module_declared_enabled(modules, module_name))
@@ -453,6 +463,31 @@ fn sdk_config_value_enabled(value: &serde_json::Value) -> bool {
         }
         _ => true,
     }
+}
+
+fn payment_config_has_provider(value: &serde_json::Value) -> bool {
+    let Some(map) = value.as_object() else {
+        return false;
+    };
+    map.iter().any(|(key, value)| {
+        matches!(
+            normalize_manifest_key(key).as_str(),
+            "alipay"
+                | "weixin"
+                | "wechat"
+                | "wx"
+                | "paypal"
+                | "stripe"
+                | "google"
+                | "googlepay"
+                | "apple"
+                | "applepay"
+                | "iap"
+                | "appleiap"
+                | "inapp"
+                | "inapppurchase"
+        ) && sdk_config_value_enabled(value)
+    })
 }
 
 fn config_value_applies_to_platform(

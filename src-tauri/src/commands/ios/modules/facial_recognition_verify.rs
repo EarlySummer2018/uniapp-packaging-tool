@@ -146,7 +146,7 @@ fn copy_ios_resource_bundles(project_root: &Path, project_file: &Path) -> Result
                 format!("清理 iOS 实人认证资源副本失败 {}: {}", target.display(), e)
             })?;
         }
-        crate::utils::fs::copy_recursive(&source, &target).map_err(|e| {
+        crate::utils::fs::copy_recursive(source, &target).map_err(|e| {
             format!(
                 "复制 iOS 实人认证资源失败 {} -> {}: {}",
                 source.display(),

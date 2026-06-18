@@ -56,10 +56,28 @@ pub(super) fn install_mobileprovision(
     let dest_dir = dirs::home_dir()
         .ok_or_else(|| "无法定位 HOME".to_string())?
         .join("Library/MobileDevice/Provisioning Profiles");
-    crate::utils::fs::ensure_directory(&dest_dir).map_err(|e| e.to_string())?;
+    crate::utils::fs::ensure_directory(&dest_dir)
+        .map_err(|e| format!("创建描述文件安装目录失败 {}: {}", dest_dir.display(), e))?;
     let dest = dest_dir.join(format!("{}.mobileprovision", info.uuid));
-    std::fs::copy(&src, &dest).map_err(|e| format!("安装描述文件失败: {}", e))?;
+    remove_file_if_exists(&dest)
+        .map_err(|e| format!("清理旧描述文件失败 {}: {}", dest.display(), e))?;
+    std::fs::copy(&src, &dest).map_err(|e| {
+        format!(
+            "安装描述文件失败: {} -> {}: {}",
+            src.display(),
+            dest.display(),
+            e
+        )
+    })?;
     Ok(info)
+}
+
+fn remove_file_if_exists(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 pub(super) fn import_p12_certificate(
@@ -102,7 +120,7 @@ pub(super) fn write_export_options(
     let mut dict = plist::Dictionary::new();
     dict.insert(
         "method".into(),
-        plist::Value::String(config.ios.export_method.clone()),
+        plist::Value::String(export_options_method(&config.ios.export_method).to_string()),
     );
     dict.insert(
         "teamID".into(),
@@ -241,7 +259,7 @@ fn validate_mobileprovision_export_method(
     export_method: &str,
 ) -> Result<(), String> {
     match export_method {
-        "app-store" => {
+        "app-store" | "app-store-connect" => {
             if info.get_task_allow || info.provisioned_devices_count > 0 {
                 return Err(format!(
                     "iOS 导出方式为 App Store，但描述文件「{}」是开发或 Ad Hoc 描述文件（get-task-allow={}, 设备数={}）。请改用 App Store 分发描述文件和匹配的 Apple Distribution 证书，或将导出方式改为 Development/Ad Hoc。",
@@ -278,6 +296,13 @@ fn validate_mobileprovision_export_method(
     Ok(())
 }
 
+fn export_options_method(method: &str) -> &str {
+    match method {
+        "app-store" => "app-store-connect",
+        value => value,
+    }
+}
+
 fn bundle_id_matches_profile_pattern(bundle_id: &str, pattern: &str) -> bool {
     let bundle_id = bundle_id.trim();
     let pattern = pattern.trim();
@@ -294,6 +319,23 @@ fn bundle_id_matches_profile_pattern(bundle_id: &str, pattern: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remove_existing_mobileprovision_even_when_readonly() {
+        let root =
+            std::env::temp_dir().join(format!("unipack-mobileprovision-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let profile = root.join("PROFILE.mobileprovision");
+        std::fs::write(&profile, "profile").unwrap();
+        let mut permissions = std::fs::metadata(&profile).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&profile, permissions).unwrap();
+
+        remove_file_if_exists(&profile).unwrap();
+
+        assert!(!profile.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn mobileprovision_bundle_pattern_strips_team_prefix() {
@@ -370,5 +412,15 @@ mod tests {
 
         assert!(err.contains("App Store"));
         assert!(err.contains("Development Profile"));
+    }
+
+    #[test]
+    fn app_store_export_method_uses_xcode_current_name() {
+        assert_eq!(export_options_method("app-store"), "app-store-connect");
+        assert_eq!(
+            export_options_method("app-store-connect"),
+            "app-store-connect"
+        );
+        assert_eq!(export_options_method("ad-hoc"), "ad-hoc");
     }
 }

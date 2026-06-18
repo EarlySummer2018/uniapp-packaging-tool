@@ -16,6 +16,7 @@ use super::android_manifest::{
     android_amap_map_enabled, android_geolocation_enabled, android_geolocation_provider_enabled,
     find_manifest_config_value, manifest_has_any_enabled_module, manifest_has_enabled_provider,
 };
+use super::payment::{payment_provider_enabled_for_platform, PaymentProvider};
 
 const DEFAULT_AMAP_MAP_SDK_VERSION: &str = "10.0.700_loc6.4.5_sea9.7.2";
 const DEFAULT_TENCENT_LOCATION_SDK_VERSION: &str = "7.5.4.8";
@@ -39,6 +40,9 @@ pub fn android_module_config_report_from_value(
             continue;
         }
         if template_key == "geolocation" && !android_geolocation_enabled(manifest) {
+            continue;
+        }
+        if template_key == "payment" && !manifest.is_some_and(android_payment_enabled) {
             continue;
         }
 
@@ -245,26 +249,27 @@ fn android_field_visible_for_manifest(
             _ => true,
         },
         "payment" => match spec.key {
-            "WX_APPID" => manifest_has_enabled_provider(
-                manifest,
-                &["payment", "pay", "payments"],
-                &["weixin", "wechat", "wx"],
-            ),
-            "PAYPAL_RETURN_SCHEME" => manifest_has_enabled_provider(
-                manifest,
-                &["payment", "pay", "payments"],
-                &["paypal"],
-            ),
-            "androidxVersion" => {
+            "WX_APPID" => {
                 manifest_has_enabled_provider(
                     manifest,
                     &["payment", "pay", "payments"],
-                    &["stripe"],
-                ) || manifest_has_enabled_provider(
+                    &["weixin", "wechat", "wx"],
+                ) && payment_provider_enabled_for_platform(
                     manifest,
-                    &["payment", "pay", "payments"],
-                    &["google", "googlepay", "google_pay"],
+                    PaymentProvider::Weixin,
+                    "android",
                 )
+            }
+            "PAYPAL_RETURN_SCHEME" => {
+                payment_provider_enabled_for_platform(manifest, PaymentProvider::Paypal, "android")
+            }
+            "androidxVersion" => {
+                payment_provider_enabled_for_platform(manifest, PaymentProvider::Stripe, "android")
+                    || payment_provider_enabled_for_platform(
+                        manifest,
+                        PaymentProvider::Google,
+                        "android",
+                    )
             }
             _ => true,
         },
@@ -332,6 +337,18 @@ fn android_field_visible_for_manifest(
         },
         _ => true,
     }
+}
+
+fn android_payment_enabled(manifest: &serde_json::Value) -> bool {
+    [
+        PaymentProvider::Alipay,
+        PaymentProvider::Weixin,
+        PaymentProvider::Paypal,
+        PaymentProvider::Stripe,
+        PaymentProvider::Google,
+    ]
+    .iter()
+    .any(|provider| payment_provider_enabled_for_platform(manifest, *provider, "android"))
 }
 
 fn android_map_page_type_field_value(
@@ -475,16 +492,12 @@ fn android_field_required_for_manifest(
             _ => spec.required,
         },
         "payment" => match spec.key {
-            "WX_APPID" => manifest_has_enabled_provider(
-                manifest,
-                &["payment", "pay", "payments"],
-                &["weixin", "wechat", "wx"],
-            ),
-            "PAYPAL_RETURN_SCHEME" => manifest_has_enabled_provider(
-                manifest,
-                &["payment", "pay", "payments"],
-                &["paypal"],
-            ),
+            "WX_APPID" => {
+                payment_provider_enabled_for_platform(manifest, PaymentProvider::Weixin, "android")
+            }
+            "PAYPAL_RETURN_SCHEME" => {
+                payment_provider_enabled_for_platform(manifest, PaymentProvider::Paypal, "android")
+            }
             _ => spec.required,
         },
         "statistic" => match spec.key {

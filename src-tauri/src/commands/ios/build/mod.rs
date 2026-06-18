@@ -5,7 +5,7 @@
 
 mod config;
 mod entitlements;
-mod fs_utils;
+pub(crate) mod fs_utils;
 mod logging;
 pub(crate) mod pbxproj;
 mod plist;
@@ -94,6 +94,7 @@ pub async fn build_ios_ipa(
             workspace.scheme.clone(),
             "-configuration".into(),
             "Release".into(),
+            "-quiet".into(),
             "-destination".into(),
             "generic/platform=iOS".into(),
             "-archivePath".into(),
@@ -127,6 +128,7 @@ pub async fn build_ios_ipa(
     run_xcodebuild(
         &[
             "-exportArchive".into(),
+            "-quiet".into(),
             "-archivePath".into(),
             archive_path.to_string_lossy().to_string(),
             "-exportPath".into(),

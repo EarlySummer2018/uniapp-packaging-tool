@@ -48,21 +48,15 @@ pub(super) async fn analyze_uploaded_zip_impl(
             && !name.contains("node_modules")
             && !name.contains("unpackage")
         {
-            match read_zip_entry_to_string(&mut entry) {
-                Ok(content) => {
-                    manifest_content = Some(content);
-                }
-                Err(_) => {}
+            if let Ok(content) = read_zip_entry_to_string(&mut entry) {
+                manifest_content = Some(content);
             }
         }
 
         if name.ends_with("dcloud_properties.xml") {
-            match read_zip_entry_to_string(&mut entry) {
-                Ok(content) => {
-                    props_content = Some(content);
-                    result.has_dcloud_properties = true;
-                }
-                Err(_) => {}
+            if let Ok(content) = read_zip_entry_to_string(&mut entry) {
+                props_content = Some(content);
+                result.has_dcloud_properties = true;
             }
         }
 

@@ -449,10 +449,15 @@ fn paypal_payment_requires_return_scheme_and_official_repository() {
     }];
     let manifest = serde_json::json!({
         "app-plus": {
+            "modules": {
+                "Payment": {}
+            },
             "distribute": {
                 "sdkConfigs": {
                     "payment": {
-                        "paypal": {}
+                        "paypal": {
+                            "__platform__": ["android"]
+                        }
                     }
                 }
             }
@@ -483,10 +488,15 @@ fn paypal_payment_requires_return_scheme_and_official_repository() {
 fn stripe_payment_adds_maven_central_mirror_repository() {
     let manifest = serde_json::json!({
         "app-plus": {
+            "modules": {
+                "Payment": {}
+            },
             "distribute": {
                 "sdkConfigs": {
                     "payment": {
-                        "stripe": {}
+                        "stripe": {
+                            "__platform__": ["android"]
+                        }
                     }
                 }
             }
@@ -505,13 +515,16 @@ fn stripe_payment_adds_maven_central_mirror_repository() {
 fn all_selected_payment_providers_enable_their_artifacts_and_dependencies() {
     let manifest = serde_json::json!({
         "app-plus": {
+            "modules": {
+                "Payment": {}
+            },
             "distribute": {
                 "sdkConfigs": {
                     "payment": {
-                        "alipay": {},
-                        "weixin": {},
-                        "paypal": {},
-                        "stripe": {},
+                        "alipay": { "__platform__": ["android"] },
+                        "weixin": { "__platform__": ["android"] },
+                        "paypal": { "__platform__": ["android"] },
+                        "stripe": { "__platform__": ["android"] },
                         "googlepay": {}
                     }
                 }
@@ -549,6 +562,88 @@ fn all_selected_payment_providers_enable_their_artifacts_and_dependencies() {
 }
 
 #[test]
+fn payment_requires_module_key_provider_key_and_android_platform() {
+    let modules = vec![DetectedModule {
+        name: "Payment".to_string(),
+        category: "payment".to_string(),
+        platforms: vec!["android".to_string()],
+        configured: false,
+        required_keys: vec![],
+        source: "manifest.json".to_string(),
+    }];
+    let missing_module_manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {
+                        "alipay": { "__platform__": ["android"] }
+                    }
+                }
+            }
+        }
+    });
+    let empty_payment_manifest = serde_json::json!({
+        "app-plus": {
+            "modules": { "Payment": {} },
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {}
+                }
+            }
+        }
+    });
+    let platform_manifest = serde_json::json!({
+        "app-plus": {
+            "modules": { "Payment": {} },
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {
+                        "alipay": { "__platform__": ["ios"] },
+                        "weixin": { "__platform__": ["ios"] },
+                        "paypal": { "__platform__": ["ios"] },
+                        "stripe": { "__platform__": ["ios"] },
+                        "apple": {},
+                        "iap": {},
+                        "googlepay": {}
+                    }
+                }
+            }
+        }
+    });
+
+    for manifest in [&missing_module_manifest, &empty_payment_manifest] {
+        let report = android_module_config_report_from_value(&modules, Some(manifest), None);
+        assert!(report
+            .modules
+            .iter()
+            .all(|module| module.template_key != "payment"));
+        assert!(!android_module_artifact_enabled_for_manifest(
+            "payment",
+            "payment-alipay-release.aar (支付宝)",
+            Some(manifest),
+        ));
+    }
+
+    for disabled in [
+        "payment-alipay-release.aar (支付宝)",
+        "payment-weixin-release.aar (微信支付)",
+        "payment-paypal-release.aar (PayPal)",
+        "payment-stripe-release.aar (Stripe)",
+    ] {
+        assert!(!android_module_artifact_enabled_for_manifest(
+            "payment",
+            disabled,
+            Some(&platform_manifest),
+        ));
+    }
+    assert!(android_module_artifact_enabled_for_manifest(
+        "payment",
+        "payment-google-release.aar (Google Pay)",
+        Some(&platform_manifest),
+    ));
+}
+
+#[test]
 fn payment_androidx_version_is_shown_for_stripe_or_google_pay_with_default_and_user_override() {
     let modules = vec![DetectedModule {
         name: "Payment".to_string(),
@@ -560,10 +655,15 @@ fn payment_androidx_version_is_shown_for_stripe_or_google_pay_with_default_and_u
     }];
     let stripe_manifest = serde_json::json!({
         "app-plus": {
+            "modules": {
+                "Payment": {}
+            },
             "distribute": {
                 "sdkConfigs": {
                     "payment": {
-                        "stripe": {}
+                        "stripe": {
+                            "__platform__": ["android"]
+                        }
                     }
                 }
             }
@@ -571,6 +671,9 @@ fn payment_androidx_version_is_shown_for_stripe_or_google_pay_with_default_and_u
     });
     let google_manifest = serde_json::json!({
         "app-plus": {
+            "modules": {
+                "Payment": {}
+            },
             "distribute": {
                 "sdkConfigs": {
                     "payment": {
@@ -582,10 +685,15 @@ fn payment_androidx_version_is_shown_for_stripe_or_google_pay_with_default_and_u
     });
     let paypal_manifest = serde_json::json!({
         "app-plus": {
+            "modules": {
+                "Payment": {}
+            },
             "distribute": {
                 "sdkConfigs": {
                     "payment": {
-                        "paypal": {}
+                        "paypal": {
+                            "__platform__": ["android"]
+                        }
                     }
                 }
             }

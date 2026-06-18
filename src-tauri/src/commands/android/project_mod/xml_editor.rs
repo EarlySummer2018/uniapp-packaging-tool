@@ -225,12 +225,9 @@ impl XmlManifestEditor {
 
         // 裸 <data> 元素需要路由到对应 Activity 的 intent-filter 内部
         if is_bare_data_element(entry) {
-            match route_data_to_activity_intent_filter(&self.content, entry) {
-                Ok(new_content) => {
-                    self.content = new_content;
-                    return Ok(true);
-                }
-                Err(_) => {} // 路由失败，回退到普通插入路径
+            if let Ok(new_content) = route_data_to_activity_intent_filter(&self.content, entry) {
+                self.content = new_content;
+                return Ok(true);
             }
         }
 

@@ -230,7 +230,130 @@ fn ios_module_config_lists_geolocation_providers_by_ios_platform() {
 }
 
 #[test]
-fn ios_map_baidu_defaults_to_vue_and_exposes_local_pod_select() {
+fn ios_payment_report_requires_module_provider_key_and_ios_platform() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-ios-payment-report-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Payment": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {
+                        "localPod": true,
+                        "alipay": {
+                            "__platform__": ["ios"],
+                            "appid": "ali-ios"
+                        },
+                        "weixin": {
+                            "__platform__": ["android"],
+                            "appid": "wx-android"
+                        },
+                        "paypal": {
+                            "__platform__": ["ios"],
+                            "returnUrl": "paypal-ios"
+                        },
+                        "stripe": {
+                            "__platform__": ["android"],
+                            "returnUrl": "stripe-android"
+                        },
+                        "googlepay": {}
+                    }
+                }
+            }
+        }
+    });
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    let report = analyze_ios_module_config_sync(&info, None);
+    let payment = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "payment")
+        .expect("payment should be listed for iOS");
+    let payment_keys = payment
+        .fields
+        .iter()
+        .map(|field| field.key.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(payment_keys, vec!["alipay.appid", "paypal.returnUrl"]);
+    assert!(!payment.fields.iter().any(|field| field.key == "LOCAL_POD"));
+    assert!(payment.fields.iter().any(|field| {
+        field.key == "alipay.appid"
+            && field.value.as_deref() == Some("ali-ios")
+            && field.value_source.as_deref() == Some("manifest")
+    }));
+    assert!(!payment
+        .fields
+        .iter()
+        .any(|field| field.key == "weixin.appid"));
+    assert!(!payment
+        .fields
+        .iter()
+        .any(|field| field.key == "stripe.returnUrl"));
+
+    let _ = std::fs::remove_dir_all(project_root);
+}
+
+#[test]
+fn ios_payment_report_skips_missing_module_key_and_empty_payment_config() {
+    let project_root =
+        std::env::temp_dir().join(format!("unipack-ios-payment-gate-{}", uuid::Uuid::new_v4()));
+    let missing_module_manifest = serde_json::json!({
+        "app-plus": {
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {
+                        "alipay": {
+                            "__platform__": ["ios"],
+                            "appid": "ali-ios"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let empty_payment_manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Payment": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "payment": {}
+                }
+            }
+        }
+    });
+
+    for manifest in [&missing_module_manifest, &empty_payment_manifest] {
+        let info = parse_uniapp_manifest(
+            manifest,
+            &project_root.join("manifest.json"),
+            &project_root,
+            None,
+        );
+        let report = analyze_ios_module_config_sync(&info, None);
+        assert!(report
+            .modules
+            .iter()
+            .all(|module| module.template_key != "payment"));
+    }
+
+    let _ = std::fs::remove_dir_all(project_root);
+}
+
+#[test]
+fn ios_map_baidu_defaults_to_vue_and_omits_local_pod_select() {
     let project_root = std::env::temp_dir().join(format!(
         "unipack-ios-map-baidu-report-{}",
         uuid::Uuid::new_v4()
@@ -276,17 +399,11 @@ fn ios_map_baidu_defaults_to_vue_and_exposes_local_pod_select() {
         .iter()
         .find(|field| field.key == "MAP_PAGE_TYPE")
         .unwrap();
-    let local_pod = map
-        .fields
-        .iter()
-        .find(|field| field.key == "LOCAL_POD")
-        .unwrap();
 
     assert_eq!(key.value.as_deref(), Some("baidu-ios"));
     assert_eq!(page_type.value.as_deref(), Some("vue"));
     assert_eq!(page_type.field_type, "select");
-    assert_eq!(local_pod.value.as_deref(), Some("false"));
-    assert_eq!(local_pod.field_type, "select");
+    assert!(!map.fields.iter().any(|field| field.key == "LOCAL_POD"));
     assert_eq!(
         map.fields
             .iter()
@@ -299,7 +416,7 @@ fn ios_map_baidu_defaults_to_vue_and_exposes_local_pod_select() {
 }
 
 #[test]
-fn ios_map_amap_defaults_to_nvue_and_preserves_local_pod_choice() {
+fn ios_map_amap_defaults_to_nvue_and_omits_local_pod_choice() {
     let project_root = std::env::temp_dir().join(format!(
         "unipack-ios-map-amap-report-{}",
         uuid::Uuid::new_v4()
@@ -322,7 +439,6 @@ fn ios_map_amap_defaults_to_nvue_and_preserves_local_pod_choice() {
     });
     let mut user = HashMap::new();
     user.insert("map.MAP_PAGE_TYPE".to_string(), "vue".to_string());
-    user.insert("map.LOCAL_POD".to_string(), "true".to_string());
     let info = parse_uniapp_manifest(
         &manifest,
         &project_root.join("manifest.json"),
@@ -346,17 +462,11 @@ fn ios_map_amap_defaults_to_nvue_and_preserves_local_pod_choice() {
         .iter()
         .find(|field| field.key == "MAP_PAGE_TYPE")
         .unwrap();
-    let local_pod = map
-        .fields
-        .iter()
-        .find(|field| field.key == "LOCAL_POD")
-        .unwrap();
 
     assert_eq!(key.value.as_deref(), Some("amap-ios"));
     assert_eq!(page_type.value.as_deref(), Some("nvue"));
     assert_eq!(page_type.value_source.as_deref(), Some("user"));
-    assert_eq!(local_pod.value.as_deref(), Some("true"));
-    assert_eq!(local_pod.value_source.as_deref(), Some("user"));
+    assert!(!map.fields.iter().any(|field| field.key == "LOCAL_POD"));
     assert!(!map
         .fields
         .iter()
@@ -405,24 +515,19 @@ fn ios_map_without_platform_marker_still_lists_map_config() {
         .iter()
         .find(|field| field.key == "MAP_PAGE_TYPE")
         .unwrap();
-    let local_pod = map
-        .fields
-        .iter()
-        .find(|field| field.key == "LOCAL_POD")
-        .unwrap();
 
     assert!(map
         .fields
         .iter()
         .any(|field| field.key == "amap.appkey_ios"));
     assert_eq!(page_type.value.as_deref(), Some("nvue"));
-    assert_eq!(local_pod.value.as_deref(), Some("false"));
+    assert!(!map.fields.iter().any(|field| field.key == "LOCAL_POD"));
 
     let _ = std::fs::remove_dir_all(project_root);
 }
 
 #[test]
-fn ios_map_module_switch_lists_local_pod_even_without_sdk_config() {
+fn ios_map_module_switch_omits_local_pod_even_without_sdk_config() {
     let project_root = std::env::temp_dir().join(format!(
         "unipack-ios-map-module-only-report-{}",
         uuid::Uuid::new_v4()
@@ -452,9 +557,7 @@ fn ios_map_module_switch_lists_local_pod_even_without_sdk_config() {
         .fields
         .iter()
         .any(|field| field.key == "amap.appkey_ios"));
-    assert!(map.fields.iter().any(|field| field.key == "LOCAL_POD"
-        && field.value.as_deref() == Some("false")
-        && field.field_type == "select"));
+    assert!(!map.fields.iter().any(|field| field.key == "LOCAL_POD"));
     assert!(map.fields.iter().any(|field| field.key == "MAP_PAGE_TYPE"
         && field.value.as_deref() == Some("nvue")
         && field.field_type == "select"));
@@ -508,15 +611,13 @@ fn ios_google_map_omits_page_type_select() {
 
     assert_eq!(key.value.as_deref(), Some("google-ios"));
     assert!(!map.fields.iter().any(|field| field.key == "MAP_PAGE_TYPE"));
-    assert!(map.fields.iter().any(|field| field.key == "LOCAL_POD"
-        && field.value.as_deref() == Some("false")
-        && field.field_type == "select"));
+    assert!(!map.fields.iter().any(|field| field.key == "LOCAL_POD"));
 
     let _ = std::fs::remove_dir_all(project_root);
 }
 
 #[test]
-fn ios_share_exposes_local_pod_select_and_preserves_user_choice() {
+fn ios_share_lists_module_without_local_pod_select() {
     let project_root = std::env::temp_dir().join(format!(
         "unipack-ios-share-local-pod-report-{}",
         uuid::Uuid::new_v4()
@@ -553,21 +654,13 @@ fn ios_share_exposes_local_pod_select_and_preserves_user_choice() {
         .iter()
         .find(|module| module.template_key == "share")
         .expect("share should be listed for iOS");
-    let local_pod = share
-        .fields
-        .iter()
-        .find(|field| field.key == "LOCAL_POD")
-        .unwrap();
-
-    assert_eq!(local_pod.value.as_deref(), Some("true"));
-    assert_eq!(local_pod.value_source.as_deref(), Some("user"));
-    assert_eq!(local_pod.field_type, "select");
+    assert!(share.fields.is_empty());
 
     let _ = std::fs::remove_dir_all(project_root);
 }
 
 #[test]
-fn ios_oauth_exposes_local_pod_select_and_preserves_user_choice() {
+fn ios_oauth_lists_module_without_local_pod_select() {
     let project_root = std::env::temp_dir().join(format!(
         "unipack-ios-oauth-local-pod-report-{}",
         uuid::Uuid::new_v4()
@@ -604,15 +697,7 @@ fn ios_oauth_exposes_local_pod_select_and_preserves_user_choice() {
         .iter()
         .find(|module| module.template_key == "login")
         .expect("oauth should be listed for iOS");
-    let local_pod = oauth
-        .fields
-        .iter()
-        .find(|field| field.key == "LOCAL_POD")
-        .unwrap();
-
-    assert_eq!(local_pod.value.as_deref(), Some("true"));
-    assert_eq!(local_pod.value_source.as_deref(), Some("user"));
-    assert_eq!(local_pod.field_type, "select");
+    assert!(oauth.fields.is_empty());
 
     let _ = std::fs::remove_dir_all(project_root);
 }
@@ -1395,4 +1480,116 @@ fn map_dcloud_properties_follow_selected_provider() {
     assert!(!baidu_content.contains("io.dcloud.js.map.amap.JsMapPluginImpl"));
 
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn ios_speech_exposes_privacy_fields_without_local_pod() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-ios-speech-report-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Speech": {}
+            },
+            "distribute": {
+                "ios": {
+                    "privacyDescription": {
+                        "NSSpeechRecognitionUsageDescription": "用户语音识别说明"
+                    }
+                },
+                "sdkConfigs": {
+                    "speech": {
+                        "baidu": {
+                            "__platform__": ["ios"],
+                            "appid": "baidu-speech"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+    let report = analyze_ios_module_config_sync(&info, None);
+    let speech = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "speech")
+        .expect("speech should be listed for iOS");
+
+    assert!(!speech.fields.iter().any(|field| field.key == "LOCAL_POD"));
+    assert!(speech.fields.iter().any(|field| {
+        field.key == "privacy.NSSpeechRecognitionUsageDescription"
+            && field.value.as_deref() == Some("用户语音识别说明")
+            && field.value_source.as_deref() == Some("manifest")
+    }));
+    assert!(speech.fields.iter().any(|field| {
+        field.key == "privacy.NSMicrophoneUsageDescription"
+            && field.value_source.as_deref() == Some("default")
+    }));
+
+    let _ = std::fs::remove_dir_all(project_root);
+}
+
+#[test]
+fn ios_statistic_exposes_umeng_fields_without_local_pod() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-ios-statistic-report-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-plus": {
+            "modules": {
+                "Statistic": {}
+            },
+            "distribute": {
+                "sdkConfigs": {
+                    "statistics": {
+                        "umeng": {
+                            "__platform__": ["ios"],
+                            "appkey_ios": "umeng-ios-key",
+                            "channelid_ios": "App Store"
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+    let report = analyze_ios_module_config_sync(&info, None);
+    let statistic = report
+        .modules
+        .iter()
+        .find(|module| module.template_key == "statistic")
+        .expect("statistic should be listed for iOS");
+
+    assert!(!statistic
+        .fields
+        .iter()
+        .any(|field| field.key == "LOCAL_POD"));
+    assert!(statistic.fields.iter().any(|field| {
+        field.key == "UMENG_APPKEY"
+            && field.value.as_deref() == Some("umeng-ios-key")
+            && field.value_source.as_deref() == Some("manifest")
+            && field.required
+    }));
+    assert!(statistic.fields.iter().any(|field| {
+        field.key == "UMENG_CHANNEL"
+            && field.value.as_deref() == Some("App Store")
+            && field.value_source.as_deref() == Some("manifest")
+            && !field.required
+    }));
+
+    let _ = std::fs::remove_dir_all(project_root);
 }

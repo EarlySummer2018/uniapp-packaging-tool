@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvReport {
@@ -218,7 +218,7 @@ fn check_android_studio() -> ToolInfo {
 }
 
 #[cfg(target_os = "macos")]
-fn read_android_studio_version(app_path: &PathBuf) -> Option<String> {
+fn read_android_studio_version(app_path: &Path) -> Option<String> {
     let plist = app_path.join("Contents").join("Info.plist");
     if !plist.exists() {
         return None;
@@ -229,7 +229,7 @@ fn read_android_studio_version(app_path: &PathBuf) -> Option<String> {
             .find(|l| l.contains("CFBundleShortVersionString"))
             .and_then(|line| {
                 line.split('>')
-                    .last()?
+                    .next_back()?
                     .split('<')
                     .next()
                     .map(|v| v.trim().to_string())
@@ -298,14 +298,14 @@ fn check_hbuilderx_env() -> Option<HBuilderXEnvInfo> {
     None
 }
 
-fn detect_hbx_version(hb_path: &PathBuf) -> String {
+fn detect_hbx_version(hb_path: &Path) -> String {
     let plist_path = hb_path.join("Contents").join("Info.plist");
     if plist_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&plist_path) {
             for line in content.lines() {
                 let line = line.trim();
                 if line.contains("CFBundleShortVersionString") {
-                    if let Some(rest) = line.split('>').last() {
+                    if let Some(rest) = line.split('>').next_back() {
                         if let Some(v) = rest.split('<').next() {
                             let v = v.trim().trim_matches('"');
                             if !v.is_empty() {

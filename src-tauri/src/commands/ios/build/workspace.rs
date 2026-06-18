@@ -11,7 +11,8 @@ use super::config::{
 };
 use super::entitlements::patch_ios_entitlements;
 use super::fs_utils::{
-    clean_copied_project, find_scheme_name, find_xcodeproj, link_ios_sdk_support, safe_file_name,
+    clean_copied_project, find_scheme_name, find_xcodeproj, prepare_ios_sdk_support,
+    repair_ios_sdk_support_alignment_for_project, safe_file_name,
 };
 use super::logging::{emit_ios_log, emit_version_warning_if_needed};
 use super::pbxproj::patch_pbxproj;
@@ -27,8 +28,13 @@ use crate::commands::ios::modules::ibeacon::apply_ios_ibeacon_module;
 use crate::commands::ios::modules::livepusher::apply_ios_livepusher_module;
 use crate::commands::ios::modules::map::apply_ios_map_module;
 use crate::commands::ios::modules::oauth::apply_ios_oauth_module;
+use crate::commands::ios::modules::payment::apply_ios_payment_module;
 use crate::commands::ios::modules::push::apply_ios_push_module;
 use crate::commands::ios::modules::share::apply_ios_share_module;
+use crate::commands::ios::modules::speech::apply_ios_speech_module;
+use crate::commands::ios::modules::statistic::apply_ios_statistic_module;
+use crate::commands::ios::modules::ui_webview::apply_ios_ui_webview_module;
+use crate::commands::ios::modules::uts_plugins::apply_ios_uts_plugins;
 use crate::commands::module::{
     manifest_push_unsupported_version, PUSH_UNSUPPORTED_VERSION_MESSAGE,
 };
@@ -137,14 +143,31 @@ pub(super) fn configure_ios_workspace(
     crate::utils::fs::copy_recursive(&sdk_project, &project_root)
         .map_err(|e| format!("复制 SDK 自带 HBuilder-Hello 失败: {}", e))?;
     clean_copied_project(&project_root)?;
-    if let Some(support_dir) = link_ios_sdk_support(&sdk_project, &workspace)? {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!("已关联 iOS SDK 支持目录: {}", support_dir.display()),
-            Some(20),
-        );
+    if let Some(support) = prepare_ios_sdk_support(&sdk_project, &workspace)? {
+        for log in &support.logs {
+            emit_ios_log(window, build_id, log.level, &log.message, Some(20));
+        }
+        let action = if support.copied_for_repair {
+            format!(
+                "已复制 iOS SDK 支持目录并完成静态库修复: {}",
+                support.path.display()
+            )
+        } else {
+            format!("已关联 iOS SDK 支持目录: {}", support.path.display())
+        };
+        emit_ios_log(window, build_id, "success", &action, Some(20));
+        if !support.repaired_libraries.is_empty() {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已按 DCloud 教程修复 iOS 静态库 8-byte alignment: {}",
+                    support.repaired_libraries.join("、")
+                ),
+                Some(21),
+            );
+        }
     }
     emit_ios_log(
         window,
@@ -203,70 +226,90 @@ pub(super) fn configure_ios_workspace(
         );
     }
     if let Some(map) = apply_ios_map_module(&project_root, &project_file, manifest_info)? {
-        let (level, message) = if map.local_pod {
-            (
-                "info",
-                format!(
-                    "已启用 iOS 地图模块本地 Pod 集成: {}，请确保使用 HBuilderX 5.13+ 导出的本地 APP 打包资源",
-                    map.summary()
-                ),
-            )
-        } else {
-            (
-                "success",
-                format!(
-                    "已自动接入 iOS 地图模块: {}，新增链接 {} 项，资源 {} 项",
-                    map.summary(),
-                    map.linked_count,
-                    map.resource_count
-                ),
-            )
-        };
-        emit_ios_log(window, build_id, level, &message, Some(29));
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已自动接入 iOS 地图模块: {}，新增链接 {} 项，资源 {} 项",
+                map.summary(),
+                map.linked_count,
+                map.resource_count
+            ),
+            Some(29),
+        );
     }
     if let Some(oauth) = apply_ios_oauth_module(&project_root, &project_file, manifest_info)? {
-        let (level, message) = if oauth.local_pod {
-            (
-                "info",
-                format!(
-                    "已启用 iOS Oauth 模块本地 Pod 集成: {}，请确保使用 HBuilderX 5.13+ 导出的本地 APP 打包资源",
-                    oauth.summary()
-                ),
-            )
-        } else {
-            (
-                "success",
-                format!(
-                    "已自动接入 iOS Oauth 模块: {}，新增链接 {} 项，资源 {} 项",
-                    oauth.summary(),
-                    oauth.linked_count,
-                    oauth.resource_count
-                ),
-            )
-        };
-        emit_ios_log(window, build_id, level, &message, Some(29));
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已自动接入 iOS Oauth 模块: {}，新增链接 {} 项，资源 {} 项",
+                oauth.summary(),
+                oauth.linked_count,
+                oauth.resource_count
+            ),
+            Some(29),
+        );
     }
     if let Some(share) = apply_ios_share_module(&project_root, &project_file, manifest_info)? {
-        let (level, message) = if share.local_pod {
-            (
-                "info",
-                format!(
-                    "已启用 iOS 分享模块本地 Pod 集成: {}，请确保使用 HBuilderX 5.13+ 导出的本地 APP 打包资源",
-                    share.summary()
-                ),
-            )
-        } else {
-            (
-                "success",
-                format!(
-                    "已自动接入 iOS 分享模块: {}，新增链接 {} 项，资源 {} 项",
-                    share.summary(),
-                    share.linked_count,
-                    share.resource_count
-                ),
-            )
-        };
-        emit_ios_log(window, build_id, level, &message, Some(29));
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已自动接入 iOS 分享模块: {}，新增链接 {} 项，资源 {} 项",
+                share.summary(),
+                share.linked_count,
+                share.resource_count
+            ),
+            Some(29),
+        );
+    }
+    if let Some(payment) = apply_ios_payment_module(&project_root, &project_file, manifest_info)? {
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已自动接入 iOS 支付模块: {}，新增链接 {} 项，资源 {} 项",
+                payment.summary(),
+                payment.linked_count,
+                payment.resource_count
+            ),
+            Some(29),
+        );
+    }
+    if let Some(speech) = apply_ios_speech_module(&project_root, &project_file, manifest_info)? {
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已自动接入 iOS 语音输入模块: {}，新增链接 {} 项，资源 {} 项",
+                speech.summary(),
+                speech.linked_count,
+                speech.resource_count
+            ),
+            Some(29),
+        );
+    }
+    if let Some(statistic) =
+        apply_ios_statistic_module(&project_root, &project_file, manifest_info)?
+    {
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已自动接入 iOS 统计模块: {}，新增链接 {} 项，资源 {} 项",
+                statistic.summary(),
+                statistic.linked_count,
+                statistic.resource_count
+            ),
+            Some(29),
+        );
     }
     if let Some(facial) =
         apply_ios_facial_recognition_verify_module(&project_root, &project_file, manifest_info)?
@@ -298,6 +341,20 @@ pub(super) fn configure_ios_workspace(
             &format!(
                 "已自动接入 iOS LivePusher 模块: 新增链接 {} 项，Embed {} 项",
                 livepusher.linked_count, livepusher.embedded_count
+            ),
+            Some(29),
+        );
+    }
+    if let Some(ui_webview) =
+        apply_ios_ui_webview_module(&project_root, &project_file, manifest_info)?
+    {
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已自动接入 iOS UIWebview 模块: 新增链接 {} 项",
+                ui_webview.linked_count
             ),
             Some(29),
         );
@@ -352,11 +409,72 @@ pub(super) fn configure_ios_workspace(
             Some(30),
         );
     }
+    if let Some(uts) = apply_ios_uts_plugins(&project_root, &project_file, &scan.uts)? {
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已自动接入 iOS UTS 插件: 新增链接 {} 项，Embed {} 项，自定义框架 {} 项，系统库 {} 项，资源 {} 项，plist {} 项，移除重复链接 {} 项",
+                uts.linked_count,
+                uts.embedded_count,
+                uts.custom_framework_count,
+                uts.system_framework_count,
+                uts.resource_count,
+                uts.plist_count,
+                uts.removed_duplicate_count
+            ),
+            Some(31),
+        );
+        if uts.pod_dependency_count > 0 {
+            emit_ios_log(
+                window,
+                build_id,
+                "warn",
+                &format!(
+                    "检测到 {} 项 iOS UTS CocoaPods 依赖；当前 iOS 构建方式不会执行 pod install，请确保插件已提供可直接集成的 framework/xcframework",
+                    uts.pod_dependency_count
+                ),
+                Some(31),
+            );
+        }
+    }
     let runtime_layout = resolve_ios_runtime_layout(&project_root)?;
     import_app_resource(&runtime_layout.apps_dir, &app_resource_dir, &scan.app_id)?;
     patch_control_xml(&runtime_layout.control_xml, &scan.app_id)?;
     generate_app_icons(&project_root, &config, manifest_info)?;
     verify_privacy_manifest(&workspace, &project_file)?;
+    if let Some(support) =
+        repair_ios_sdk_support_alignment_for_project(&sdk_project, &workspace, &project_file)?
+    {
+        for log in &support.logs {
+            emit_ios_log(window, build_id, log.level, &log.message, Some(52));
+        }
+        if support.copied_for_repair {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已使用 workspace SDK 副本完成静态库修复: {}",
+                    support.path.display()
+                ),
+                Some(53),
+            );
+        }
+        if !support.repaired_libraries.is_empty() {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已按 DCloud 教程修复 iOS 静态库 8-byte alignment: {}",
+                    support.repaired_libraries.join("、")
+                ),
+                Some(54),
+            );
+        }
+    }
     let profile = install_mobileprovision(&config, signing_validation_mode)?;
     import_p12_certificate(&config)?;
     emit_ios_log(window, build_id, "success", "iOS 工程配置完成", Some(55));

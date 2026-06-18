@@ -99,7 +99,7 @@ fn patch_ios_push_feature_plist(project_root: &Path, project_file: &Path) -> Res
 }
 
 fn ensure_ios_push_feature_plist_entry(feature_plist: &Path) -> Result<(), String> {
-    let mut value = plist::Value::from_file(&feature_plist).map_err(|e| {
+    let mut value = plist::Value::from_file(feature_plist).map_err(|e| {
         format!(
             "解析 PandoraApi.bundle/feature.plist 失败 {}: {}",
             feature_plist.display(),
@@ -113,7 +113,7 @@ fn ensure_ios_push_feature_plist_entry(feature_plist: &Path) -> Result<(), Strin
         "Push".into(),
         plist::Value::Dictionary(ios_push_feature_plist_entry()),
     );
-    value.to_file_xml(&feature_plist).map_err(|e| {
+    value.to_file_xml(feature_plist).map_err(|e| {
         format!(
             "写入 PandoraApi.bundle/feature.plist 失败 {}: {}",
             feature_plist.display(),

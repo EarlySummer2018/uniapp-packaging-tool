@@ -7,6 +7,7 @@ use crate::commands::ios::modules::common::{
     ios_manifest_info_has_detected_module, ios_manifest_module_enabled,
     ios_object_value_normalized, ios_sdk_config_value_enabled,
 };
+use crate::commands::module::{payment_provider_enabled_for_platform, PaymentProvider};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IosShareProvider {
@@ -23,20 +24,11 @@ impl IosShareProvider {
             Self::Sina => "新浪微博分享",
         }
     }
-
-    fn pod_name(self) -> &'static str {
-        match self {
-            Self::Weixin => "Share-Wechat",
-            Self::Qq => "Share-QQ",
-            Self::Sina => "Share-Sina",
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct IosShareIntegration {
     pub(crate) providers: Vec<IosShareProvider>,
-    pub(crate) local_pod: bool,
     pub(crate) linked_count: usize,
     pub(crate) resource_count: usize,
 }
@@ -49,24 +41,8 @@ impl IosShareIntegration {
             .map(|provider| provider.label())
             .collect::<Vec<_>>()
             .join("、");
-        if self.local_pod {
-            let pods = self
-                .providers
-                .iter()
-                .map(|provider| provider.pod_name())
-                .collect::<Vec<_>>()
-                .join("、");
-            format!("{}，本地 Pod 集成 Share、{}", providers, pods)
-        } else {
-            format!("{}，手动 SDK 集成", providers)
-        }
+        format!("{}，自动迁移依赖", providers)
     }
-}
-
-pub(crate) fn ios_share_enabled(
-    manifest_info: Option<&crate::commands::resource::UniappManifestInfo>,
-) -> bool {
-    ios_share_providers(manifest_info).is_some()
 }
 
 pub(crate) fn apply_ios_share_module(
@@ -77,24 +53,11 @@ pub(crate) fn apply_ios_share_module(
     let Some(info) = manifest_info else {
         return Ok(None);
     };
-    let Some(manifest) = info.manifest_value.as_ref() else {
-        return Ok(None);
-    };
     let Some(providers) = ios_share_providers(Some(info)) else {
         return Ok(None);
     };
-    let local_pod = ios_share_local_pod_enabled(manifest);
 
-    if local_pod {
-        return Ok(Some(IosShareIntegration {
-            providers,
-            local_pod,
-            linked_count: 0,
-            resource_count: 0,
-        }));
-    }
-
-    let linked_files = ios_share_linked_files(&providers);
+    let linked_files = ios_share_linked_files(&providers, ios_weixin_payment_enabled(Some(info)));
     validate_ios_share_local_linked_files(project_root, &linked_files)?;
     let resource_sources = ios_share_resource_sources(project_root, &providers)?;
     let linked_count = register_pbx_linked_files(project_file, &linked_files)?;
@@ -102,7 +65,6 @@ pub(crate) fn apply_ios_share_module(
 
     Ok(Some(IosShareIntegration {
         providers,
-        local_pod,
         linked_count,
         resource_count,
     }))
@@ -140,23 +102,6 @@ pub(crate) fn ios_share_providers(
     Some(providers)
 }
 
-pub(crate) fn ios_share_local_pod_enabled(manifest: &serde_json::Value) -> bool {
-    ios_share_sdk_config(manifest)
-        .and_then(|config| {
-            let config = config.as_object()?;
-            [
-                "localPod",
-                "local_pod",
-                "useLocalPod",
-                "use_local_pod",
-                "LOCAL_POD",
-            ]
-            .iter()
-            .find_map(|key| ios_object_value_normalized(config, key))
-        })
-        .is_some_and(ios_bool_value_enabled)
-}
-
 fn ios_share_sdk_config(manifest: &serde_json::Value) -> Option<&serde_json::Value> {
     let sdk_configs = manifest
         .get("app-plus")?
@@ -184,32 +129,25 @@ fn push_ios_share_provider(providers: &mut Vec<IosShareProvider>, provider: IosS
     }
 }
 
-fn ios_bool_value_enabled(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Bool(flag) => *flag,
-        serde_json::Value::String(value) => matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "y" | "on" | "是" | "开启"
-        ),
-        serde_json::Value::Number(value) => value.as_i64().is_some_and(|value| value != 0),
-        _ => false,
-    }
-}
-
-fn ios_share_linked_files(providers: &[IosShareProvider]) -> Vec<IosPbxLinkedFile> {
+fn ios_share_linked_files(
+    providers: &[IosShareProvider],
+    use_weixin_pay_sdk: bool,
+) -> Vec<IosPbxLinkedFile> {
     let mut files = Vec::new();
     push_ios_linked_file(&mut files, IosPbxLinkedFile::local_static("liblibShare.a"));
 
     if providers.contains(&IosShareProvider::Weixin) {
         for file in [
             IosPbxLinkedFile::local_static("libweixinShare.a"),
-            IosPbxLinkedFile::local_static("libWeChatSDK.a"),
             IosPbxLinkedFile::system_library("libsqlite3.0.tbd"),
             IosPbxLinkedFile::system_library("libz.tbd"),
             IosPbxLinkedFile::system_framework("CoreTelephony.framework"),
             IosPbxLinkedFile::system_framework("SystemConfiguration.framework"),
         ] {
             push_ios_linked_file(&mut files, file);
+        }
+        if !use_weixin_pay_sdk {
+            push_ios_linked_file(&mut files, IosPbxLinkedFile::local_static("libWeChatSDK.a"));
         }
     }
 
@@ -233,6 +171,16 @@ fn ios_share_linked_files(providers: &[IosShareProvider]) -> Vec<IosPbxLinkedFil
     }
 
     files
+}
+
+fn ios_weixin_payment_enabled(
+    manifest_info: Option<&crate::commands::resource::UniappManifestInfo>,
+) -> bool {
+    manifest_info
+        .and_then(|info| info.manifest_value.as_ref())
+        .is_some_and(|manifest| {
+            payment_provider_enabled_for_platform(manifest, PaymentProvider::Weixin, "ios")
+        })
 }
 
 fn push_ios_linked_file(files: &mut Vec<IosPbxLinkedFile>, file: IosPbxLinkedFile) {

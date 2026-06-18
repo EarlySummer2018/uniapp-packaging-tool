@@ -32,7 +32,7 @@ use crate::commands::android::types::{
 };
 use crate::commands::module::{
     manifest_push_unipush_v2_enabled, manifest_push_unsupported_version,
-    PUSH_UNSUPPORTED_VERSION_MESSAGE,
+    payment_provider_enabled_for_platform, PaymentProvider, PUSH_UNSUPPORTED_VERSION_MESSAGE,
 };
 
 const DEFAULT_ANDROIDX_VERSION: &str = "1.0.0";
@@ -145,11 +145,7 @@ fn google_oauth_enabled(manifest: Option<&serde_json::Value>) -> bool {
 fn stripe_payment_enabled(manifest: Option<&serde_json::Value>) -> bool {
     manifest
         .map(|manifest| {
-            crate::commands::module::android_module_gradle_dependency_enabled_for_manifest(
-                "payment",
-                "com.stripe:stripe-android:18.2.0 (Stripe)",
-                Some(manifest),
-            )
+            payment_provider_enabled_for_platform(manifest, PaymentProvider::Stripe, "android")
         })
         .unwrap_or(false)
 }
@@ -227,7 +223,7 @@ impl BuildContext {
 
         if resolve_env {
             emit_log_for_build(
-                &window,
+                window,
                 &build_id,
                 "info",
                 "开始 Android APK 构建流程",
@@ -235,7 +231,7 @@ impl BuildContext {
             );
         } else {
             emit_log_for_build(
-                &window,
+                window,
                 &build_id,
                 "info",
                 "开始生成 Android 工程（不执行打包）",
@@ -264,7 +260,7 @@ impl BuildContext {
         )?;
         let app_resource_dir = PathBuf::from(&scan.app_resource_path);
         emit_log_for_build(
-            &window,
+            window,
             &build_id,
             "info",
             &format!("检测到 UniApp AppId: {}", scan.app_id),
@@ -287,7 +283,7 @@ impl BuildContext {
             .map_err(|e| format!("设置工作区写权限失败: {}", e))?;
         clean_copied_gradle_outputs(&workspace)?;
         emit_log_for_build(
-            &window,
+            window,
             &build_id,
             "success",
             "已从 SDK 复制 HBuilder-Integrate-AS 到工作区",
@@ -382,23 +378,39 @@ impl BuildContext {
             emit_android_module_config_report(window, report);
         }
 
-        if self.scan.uts.has_uts_plugins {
+        if self.scan.uts.has_android_uts_plugins {
             self.extra_repos
                 .insert("maven { url 'https://jitpack.io' }".to_string());
             for dep in UTS_RUNTIME_DEPS {
                 self.extra_deps.insert((*dep).to_string());
             }
+            let android_builtin_modules = self
+                .scan
+                .uts
+                .builtin_modules
+                .iter()
+                .filter(|module| module.android_dir.is_some())
+                .cloned()
+                .collect::<Vec<_>>();
             super::uts_plugins::process_builtin_uts_modules(
-                &self.scan.uts.builtin_modules,
+                &android_builtin_modules,
                 &self.sdk_libs,
                 &self.libs_dst,
                 &mut self.extra_deps,
                 window,
             )?;
 
-            if !self.scan.uts.custom_plugins.is_empty() {
+            let android_custom_plugins = self
+                .scan
+                .uts
+                .custom_plugins
+                .iter()
+                .filter(|plugin| plugin.android_dir.is_some())
+                .cloned()
+                .collect::<Vec<_>>();
+            if !android_custom_plugins.is_empty() {
                 super::uts_plugins::process_custom_uts_plugins_uniapp(
-                    &self.scan.uts.custom_plugins,
+                    &android_custom_plugins,
                     &self.workspace,
                     &self.libs_dst,
                     &mut self.extra_repos,
@@ -408,7 +420,7 @@ impl BuildContext {
                     window,
                 )?;
                 super::uts_plugins::generate_dcloud_uniplugins_json(
-                    &self.scan.uts.custom_plugins,
+                    &android_custom_plugins,
                     &self.workspace,
                 )?;
             }
@@ -962,10 +974,15 @@ mod tests {
     fn stripe_payment_requires_android_min_sdk_21() {
         let stripe_manifest = serde_json::json!({
             "app-plus": {
+                "modules": {
+                    "Payment": {}
+                },
                 "distribute": {
                     "sdkConfigs": {
                         "payment": {
-                            "stripe": {}
+                            "stripe": {
+                                "__platform__": ["android"]
+                            }
                         }
                     }
                 }
@@ -973,10 +990,15 @@ mod tests {
         });
         let alipay_manifest = serde_json::json!({
             "app-plus": {
+                "modules": {
+                    "Payment": {}
+                },
                 "distribute": {
                     "sdkConfigs": {
                         "payment": {
-                            "alipay": {}
+                            "alipay": {
+                                "__platform__": ["android"]
+                            }
                         }
                     }
                 }

@@ -2,6 +2,7 @@ mod android_manifest;
 mod android_report;
 mod common;
 mod ios_report;
+mod payment;
 
 use std::collections::HashMap;
 
@@ -17,6 +18,9 @@ pub use android_manifest::{
 pub use android_report::android_module_config_report_from_value;
 pub use common::manifest_value_from_info;
 pub use ios_report::ios_module_config_report_from_value;
+pub use payment::{
+    manifest_payment_provider_value, payment_provider_enabled_for_platform, PaymentProvider,
+};
 
 // parse_project_modules 与 module_config_from_detected_modules 已移至 parsing.rs
 

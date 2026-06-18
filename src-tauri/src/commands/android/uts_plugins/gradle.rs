@@ -83,7 +83,7 @@ pub fn generate_uts_plugin_build_gradle(
         .iter()
         .flat_map(|info| {
             let mut deps = Vec::new();
-            deps.push(format!("    compileOnly files('libs/classes.jar')"));
+            deps.push("    compileOnly files('libs/classes.jar')".to_string());
             for jar in &info.extra_jars {
                 deps.push(format!("    compileOnly files('libs/{}')", jar));
             }
@@ -198,7 +198,8 @@ pub fn patch_uts_kotlin_plugin_versions(content: &str) -> String {
     );
 
     // 2. 然后添加版本号（如果缺失）
-    for plugin_id in ["org.jetbrains.kotlin.android"] {
+    {
+        let plugin_id = "org.jetbrains.kotlin.android";
         let re = regex::Regex::new(&format!(
             r#"(?m)^([ \t]*id\s+['"]{}['"])([ \t]*(?://.*)?$)"#,
             regex::escape(plugin_id)
@@ -257,6 +258,10 @@ pub fn extract_namespace_from_sources(module_dir: &Path) -> Option<String> {
 }
 
 fn extract_namespace_from_source_root(root: &Path) -> Option<String> {
+    let package_re = regex::Regex::new(
+        r#"(?m)^\s*package\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*$"#,
+    )
+    .ok()?;
     let entries = std::fs::read_dir(root).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
@@ -285,11 +290,7 @@ fn extract_namespace_from_source_root(root: &Path) -> Option<String> {
         }
 
         let content = std::fs::read_to_string(&path).ok()?;
-        let re = regex::Regex::new(
-            r#"(?m)^\s*package\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*$"#,
-        )
-        .ok()?;
-        if let Some(caps) = re.captures(&content) {
+        if let Some(caps) = package_re.captures(&content) {
             return caps.get(1).map(|m| m.as_str().to_string());
         }
     }

@@ -9,6 +9,7 @@ use crate::commands::shared::module::types::AndroidModuleConfigModule;
 
 use super::helpers::*;
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_patches(
     module: &AndroidModuleConfigModule,
     _permissions: &mut BTreeSet<String>,

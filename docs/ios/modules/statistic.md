@@ -2,134 +2,50 @@
 
 > **适用版本**：HBuilderX 5.0+
 > **平台**：iOS (iPhone/iPad)
-> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/
+> **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/iOSModuleConfig/statistic.html
 
 ---
 
-iOS 统计模块支持友盟统计和 Google Analytics。
+## HBuilderX 5.13+ 本地 Pod 集成（推荐）
 
-## 7.1 友盟统计
+HBuilderX 5.13+ 推荐使用本地 Pod 集成统计模块。统计基础模块使用 `Statistic`，友盟统计使用 `Statistic-Umeng`，Firebase 统计使用 `Statistic-Firebase`。
 
-### 需要引入的系统框架
+手动集成时再参考下方依赖表；`Statistic-Firebase` 通常还需要添加 Firebase 生成的 `GoogleService-Info.plist`。
 
-| 框架 | 说明 |
-|------|------|
-| CoreTelephony.framework | 设备信息 |
-| Security.framework | 数据安全 |
-| SystemConfiguration.framework | 网络状态 |
-| libz.tbd | 数据压缩 |
-| libsqlite3.tbd | 本地存储 |
-| libc++.tbd | C++ 运行时 |
+## 友盟统计
 
-### Info.plist 配置
+### 将友盟统计模块依赖库及资源添加到工程
 
-```xml
-<!-- 友盟 AppKey -->
-<key>UMENG_APPKEY</key>
-<string>%友盟AppKey%</string>
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibStatistic.a、libUmengStatistic.a、UMDevice.xcframework、UMCommon.xcframework、UMAPM.framework | libz.tbd、libsqlite3.tbd、SystemConfiguration.framework、CoreTelephony.framework | 无 |
 
-<!-- 渠道号（iOS 通常为 App Store） -->
-<key>UMENG_CHANNEL</key>
-<string>App Store</string>
-```
+### 帐号配置
 
-### CocoaPods 依赖
+1. 到[友盟开放平台](http://www.umeng.com/analytics)申请 Appkey。
 
-```ruby
-pod 'UMCommon', '~> 7.x.x'      # 友盟核心库
-pod 'UMAnalytics', '~> 9.x.x'   # 友盟统计分析
-```
+2. 打开 Info.plist 文件找到 `umeng` 项，如果没有按图片中的格式添加该项，在下图中的红色区域输入申请的 Appkey。
 
-### 需要拷贝的文件
+**注意：** IDFA 说明
 
-| 路径 | 文件 |
-|------|------|
-| SDK/libs | `UMCommon.framework`, `UMAnalytics.framework` 等 |
+从 HBuilderX 2.2.5 版本之后（含 2.2.5），基座里集成了友盟 v6.0.5 统计 SDK，因友盟官方，从组件化产品开始，【友盟+】SDK 默认采集 idfa 标识，用来更准确的分析核对数据。对于应用本身没有获取 idfa 的情况，建议将应用提交至 AppStore 时按如下方式配置：（以避免被苹果以"应用不含广告功能，但获取了广告标示符 IDFA"的而拒绝其上架。）
 
-### Objective-C 代码初始化
+### 隐私清单
 
-```objc
-#import <UMCommon/UMCommon.h>
-#import <UMAnalytics/MobClick.h>
+## Firebase Analytics （SDK 3.3.7+ 新增）
 
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-    
-    // 初始化友盟统计
-    [UMConfigure setLogEnabled:NO];  // 关闭日志（上线时应关闭）
-    [UMConfigure initWithAppkey:@"您的友盟AppKey" channel:@"App Store"];
-    
-    // 自动页面采集（可选）
-    [MobClick setAutoPageEnabled:YES];
-    
-    return YES;
-}
-```
+### 将 Firebase Analytics 模块依赖库及资源添加到工程
 
-### dcloud_properties.xml 配置
+需要在 `/SDK/Bundles/PandoraApi.bundle/feature.plist` 文件中修改如下字段：
 
-```xml
-<features>
-    <feature name="Statistic" value="io.dcloud.feature.statistics.StatisticsFeatureImpl">
-        <module name="Statistic-Umeng" value="io.dcloud.feature.statistics.umeng.UmengStatistics" />
-    </feature>
-</features>
-<services>
-    <service name="Statistic-Umeng" value="io.dcloud.feature.statistics.umeng.StatisticsBootImpl"/>
-</services>
-```
+| 依赖库 | 系统库 | 依赖资源 |
+|---|---|---|
+| liblibStatistic.a、libGoogleStatistic.a、FirebaseCore.xcframework、FirebaseCoreInternal.xcframework、FirebaseInstallations.xcframework、GoogleAppMeasurement.xcframework、GoogleAppMeasurementIdentitySupport.xcframework、GoogleUtilities.xcframework、FBLPromises.xcframework、nanopb.xcframework | 无 | GoogleService-Info.plist |
 
-## 7.2 Google Analytics（Firebase）
+### 帐号配置
 
-### 需要引入的系统框架
-
-| 框架 | 说明 |
-|------|------|
-| FirebaseAnalytics.framework | Firebase 分析框架 |
-| FirebaseInstanceID.framework | 实例ID框架 |
-| GoogleUtilities.framework | Google 工具库 |
-| nanopb.framework | Protocol Buffers 库 |
-
-### CocoaPods 依赖
-
-```ruby
-pod 'Firebase/Core'
-pod 'Firebase/Analytics'
-```
-
-### 需要拷贝的文件
-
-| 路径 | 文件 |
-|------|------|
-| 项目根目录 | `GoogleService-Info.plist`（从 Firebase 控制台下载） |
-
-### Objective-C 代码初始化
-
-```objc
-#import <Firebase/Firebase.h>
-
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-    
-    // 配置 Firebase
-    [FIRApp configure];
-    
-    return YES;
-}
-```
-
-### dcloud_properties.xml 配置
-
-```xml
-<feature name="Statistic" value="io.dcloud.feature.statistics.StatisticsFeatureImpl">
-    <module name="Statistic-Google" value="io.dcloud.feature.statistics.google.GoogleStatistics" />
-</feature>
-```
-
-## ⚠️ 统计注意事项
-
-1. **隐私合规**：收集用户数据前必须获得用户同意（GDPR/CCPA 等）
-2. **数据上报策略**：建议设置合理的上报间隔，避免频繁请求
-3. **渠道追踪**：不同分发渠道应使用不同的 channel 参数
-4. **调试模式**：开发阶段可开启日志，上线前务必关闭
+1. 在 [Firebase 官网](https://firebase.google.com/)创建新项目或找到已创建项目。
+2. 下载 Firebase 生成的 `GoogleService-Info.plist` 加到工程中。
 
 ---
 

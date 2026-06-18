@@ -295,9 +295,7 @@ fn versionless_artifact_parts(stem: &str) -> Option<AndroidArtifactVersionlessPa
         );
     }
 
-    let Some((start, end)) = version_span(stem) else {
-        return None;
-    };
+    let (start, end) = version_span(stem)?;
     let prefix = trim_artifact_separators(&stem[..start]).to_ascii_lowercase();
     let suffix = stable_suffix_after_version(&stem[end..]);
     (!prefix.is_empty() || !suffix.is_empty()).then_some(AndroidArtifactVersionlessParts {
@@ -444,10 +442,7 @@ fn is_artifact_separator(ch: char) -> bool {
 fn missing_android_required_aars(libs_dir: &Path) -> Vec<&'static AndroidRequiredAar> {
     ANDROID_REQUIRED_AARS
         .iter()
-        .filter_map(|requirement| {
-            let found = resolve_android_required_aar(libs_dir, requirement).is_some();
-            (!found).then_some(requirement)
-        })
+        .filter(|requirement| resolve_android_required_aar(libs_dir, requirement).is_none())
         .collect()
 }
 

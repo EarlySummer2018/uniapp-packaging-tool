@@ -569,6 +569,7 @@ iOS 平台各功能模块的详细配置说明：
 - [FaceRecognitionVerify（实人认证）](./modules/facial-recognition-verify.md) — 人脸识别认证
 - [LivePusher（直播推流）](./modules/livepusher.md) — 直播推流能力
 - [Native Plugins（原生插件）](./modules/native-plugins.md) — 原生插件开发指南
+- [UTS Plugin Build（UTS 插件构建）](./modules/uts-plugin-build.md) — UTS 插件完整构建流程
 - [Third Party Dependencies（第三方依赖）](./modules/third-party-dependencies.md) — 第三方 SDK 依赖说明
 - [uni-ad（广告）](./modules/uni-ad.md) — uni-ad 广告模块配置
 - [UTS Built-in Modules（UTS 内置模块）](./modules/uts-builtin-modules.md) — UTS 内置原生模块

@@ -27,6 +27,8 @@ pub struct ResourceScanResult {
 #[serde(rename_all = "camelCase")]
 pub struct UtsPluginScanResult {
     pub has_uts_plugins: bool,
+    pub has_android_uts_plugins: bool,
+    pub has_ios_uts_plugins: bool,
     pub builtin_modules: Vec<UtsBuiltinModule>,
     pub custom_plugins: Vec<UtsCustomPlugin>,
 }
@@ -38,6 +40,8 @@ pub struct UtsBuiltinModule {
     pub local_aar: String,
     pub online_deps: Vec<String>,
     pub depends_on: Vec<String>,
+    pub android_dir: Option<String>,
+    pub ios_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +52,10 @@ pub struct UtsCustomPlugin {
     pub ios_dir: Option<String>,
     pub android_deps: Vec<String>,
     pub ios_frameworks: Vec<String>,
+    pub ios_system_frameworks: Vec<String>,
+    pub ios_plists: std::collections::BTreeMap<String, String>,
+    pub ios_provider: Option<String>,
+    pub ios_dependencies_pods: std::collections::BTreeMap<String, String>,
     pub abis: Option<Vec<String>>,
     pub min_sdk_version: Option<u32>,
     pub dependencies: Vec<PluginDependency>,
@@ -80,6 +88,10 @@ pub struct UtsPluginConfig {
     pub dependencies: Vec<PluginDependency>,
     pub components: Vec<UtsComponent>,
     pub hooks_class: Option<String>,
+    pub ios_frameworks: Vec<String>,
+    pub ios_plists: std::collections::BTreeMap<String, String>,
+    pub ios_provider: Option<String>,
+    pub ios_dependencies_pods: std::collections::BTreeMap<String, String>,
     pub gradle_plugins: Vec<String>,
     pub project_dependencies: Vec<String>,
 }
@@ -336,7 +348,9 @@ pub fn scan_uts_plugins(resource_root: &std::path::Path) -> UtsPluginScanResult 
     }
 
     let mut result = UtsPluginScanResult {
-        has_uts_plugins: true,
+        has_uts_plugins: false,
+        has_android_uts_plugins: false,
+        has_ios_uts_plugins: false,
         builtin_modules: Vec::new(),
         custom_plugins: Vec::new(),
     };
@@ -349,25 +363,60 @@ pub fn scan_uts_plugins(resource_root: &std::path::Path) -> UtsPluginScanResult 
             }
             let id = entry.file_name().to_string_lossy().to_string();
             if let Some(module) = builtin_uts_module(&id) {
-                push_builtin_with_dependencies(&mut result.builtin_modules, module);
+                let android_dir = uts_platform_dir(&path, &["app-android"]);
+                let ios_dir = uts_platform_dir(&path, &["app-ios", "app-iOS"]);
+                if android_dir.is_some() || ios_dir.is_some() {
+                    result.has_android_uts_plugins |= android_dir.is_some();
+                    result.has_ios_uts_plugins |= ios_dir.is_some();
+                    push_builtin_with_dependencies(
+                        &mut result.builtin_modules,
+                        UtsBuiltinModule {
+                            android_dir: android_dir
+                                .as_ref()
+                                .map(|path| path.to_string_lossy().to_string()),
+                            ios_dir: ios_dir
+                                .as_ref()
+                                .map(|path| path.to_string_lossy().to_string()),
+                            ..module
+                        },
+                    );
+                }
             } else {
-                result
-                    .custom_plugins
-                    .push(scan_custom_uts_plugin(&id, &path));
+                let plugin = scan_custom_uts_plugin(&id, &path);
+                result.has_android_uts_plugins |= plugin.android_dir.is_some();
+                result.has_ios_uts_plugins |= plugin.ios_dir.is_some();
+                if plugin.android_dir.is_some() || plugin.ios_dir.is_some() {
+                    result.custom_plugins.push(plugin);
+                }
             }
         }
     }
 
+    result.has_uts_plugins = result.has_android_uts_plugins || result.has_ios_uts_plugins;
     result
 }
 
 fn push_builtin_with_dependencies(modules: &mut Vec<UtsBuiltinModule>, module: UtsBuiltinModule) {
     for dep in module.depends_on.clone() {
         if let Some(dep_module) = builtin_uts_module(&dep) {
-            push_builtin_with_dependencies(modules, dep_module);
+            push_builtin_with_dependencies(
+                modules,
+                UtsBuiltinModule {
+                    android_dir: module.android_dir.clone(),
+                    ios_dir: module.ios_dir.clone(),
+                    ..dep_module
+                },
+            );
         }
     }
-    if !modules.iter().any(|m| m.name == module.name) {
+    if let Some(existing) = modules.iter_mut().find(|m| m.name == module.name) {
+        if existing.android_dir.is_none() {
+            existing.android_dir = module.android_dir;
+        }
+        if existing.ios_dir.is_none() {
+            existing.ios_dir = module.ios_dir;
+        }
+    } else {
         modules.push(module);
     }
 }
@@ -427,17 +476,27 @@ pub fn builtin_uts_module(name: &str) -> Option<UtsBuiltinModule> {
         local_aar: module.0.to_string(),
         online_deps: module.1.into_iter().map(String::from).collect(),
         depends_on: module.2.into_iter().map(String::from).collect(),
+        android_dir: None,
+        ios_dir: None,
     })
 }
 
 fn scan_custom_uts_plugin(id: &str, plugin_root: &std::path::Path) -> UtsCustomPlugin {
     let package_id = read_uts_package_id(plugin_root);
     let module_id = package_id.clone().unwrap_or_else(|| id.to_string());
-    let source_android_dir = plugin_root.join("utssdk").join("app-android");
-    let android_dir =
-        resolve_android_uts_dir(plugin_root, &source_android_dir, id, package_id.as_deref());
-    let ios_dir = plugin_root.join("utssdk").join("app-ios");
-    let config = parse_uts_plugin_config(&android_dir.join("config.json"));
+    let source_android_dir = uts_platform_dir(plugin_root, &["app-android"]);
+    let android_dir = source_android_dir.as_ref().map(|source_android_dir| {
+        resolve_android_uts_dir(plugin_root, source_android_dir, id, package_id.as_deref())
+    });
+    let ios_dir = uts_platform_dir(plugin_root, &["app-ios", "app-iOS"]);
+    let config = android_dir
+        .as_ref()
+        .map(|android_dir| parse_uts_plugin_config(&android_dir.join("config.json")))
+        .unwrap_or_default();
+    let ios_config = ios_dir
+        .as_ref()
+        .map(|ios_dir| parse_uts_plugin_config(&ios_dir.join("config.json")))
+        .unwrap_or_default();
     let mut android_deps: Vec<String> = config
         .dependencies
         .iter()
@@ -445,14 +504,10 @@ fn scan_custom_uts_plugin(id: &str, plugin_root: &std::path::Path) -> UtsCustomP
         .collect();
     android_deps.sort();
     android_deps.dedup();
-    let ios_frameworks = if ios_dir.exists() {
-        crate::utils::fs::find_files_by_extension(&ios_dir, "framework")
+    let ios_frameworks = if let Some(ios_dir) = &ios_dir {
+        collect_xcode_package_dirs(ios_dir, &["framework", "xcframework"])
             .unwrap_or_default()
             .into_iter()
-            .chain(
-                crate::utils::fs::find_files_by_extension(&ios_dir, "xcframework")
-                    .unwrap_or_default(),
-            )
             .map(|p| p.to_string_lossy().to_string())
             .collect()
     } else {
@@ -462,21 +517,76 @@ fn scan_custom_uts_plugin(id: &str, plugin_root: &std::path::Path) -> UtsCustomP
     UtsCustomPlugin {
         id: module_id,
         android_dir: android_dir
-            .exists()
-            .then(|| android_dir.to_string_lossy().to_string()),
-        ios_dir: ios_dir
-            .exists()
-            .then(|| ios_dir.to_string_lossy().to_string()),
+            .filter(|android_dir| android_dir.exists())
+            .map(|android_dir| android_dir.to_string_lossy().to_string()),
+        ios_dir: ios_dir.map(|ios_dir| ios_dir.to_string_lossy().to_string()),
         android_deps,
         ios_frameworks,
+        ios_system_frameworks: ios_config.ios_frameworks,
+        ios_plists: ios_config.ios_plists,
+        ios_provider: ios_config.ios_provider,
+        ios_dependencies_pods: ios_config.ios_dependencies_pods,
         abis: config.abis,
         min_sdk_version: config.min_sdk_version,
         dependencies: config.dependencies,
-        components: config.components,
-        hooks_class: config.hooks_class,
+        components: if ios_config.components.is_empty() {
+            config.components
+        } else {
+            ios_config.components
+        },
+        hooks_class: ios_config.hooks_class.or(config.hooks_class),
         gradle_plugins: config.gradle_plugins,
         project_dependencies: config.project_dependencies,
     }
+}
+
+fn uts_platform_dir(plugin_root: &std::path::Path, names: &[&str]) -> Option<std::path::PathBuf> {
+    let utssdk = plugin_root.join("utssdk");
+    for name in names {
+        let candidate = utssdk.join(name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn collect_xcode_package_dirs(
+    root: &std::path::Path,
+    extensions: &[&str],
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let mut dirs = Vec::new();
+    collect_xcode_package_dirs_inner(root, extensions, &mut dirs)?;
+    Ok(dirs)
+}
+
+fn collect_xcode_package_dirs_inner(
+    current: &std::path::Path,
+    extensions: &[&str],
+    dirs: &mut Vec<std::path::PathBuf>,
+) -> Result<(), String> {
+    if !current.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(current).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase);
+        if extension
+            .as_deref()
+            .is_some_and(|extension| extensions.iter().any(|target| extension == *target))
+        {
+            dirs.push(path);
+            continue;
+        }
+        collect_xcode_package_dirs_inner(&path, extensions, dirs)?;
+    }
+    Ok(())
 }
 
 fn read_uts_package_id(plugin_root: &std::path::Path) -> Option<String> {
@@ -601,6 +711,13 @@ pub fn parse_uts_plugin_config(config_path: &std::path::Path) -> UtsPluginConfig
             .get("hooksClass")
             .and_then(|v| v.as_str())
             .map(String::from),
+        ios_frameworks: parse_string_array(value.get("frameworks")),
+        ios_plists: parse_string_map(value.get("plists")),
+        ios_provider: value
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        ios_dependencies_pods: parse_string_map(value.get("dependencies-pods")),
         gradle_plugins: value
             .get("project")
             .and_then(|p| p.get("plugins"))
@@ -624,6 +741,36 @@ pub fn parse_uts_plugin_config(config_path: &std::path::Path) -> UtsPluginConfig
             })
             .unwrap_or_default(),
     }
+}
+
+fn parse_string_array(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_string_map(
+    value: Option<&serde_json::Value>,
+) -> std::collections::BTreeMap<String, String> {
+    value
+        .and_then(|v| v.as_object())
+        .map(|map| {
+            map.iter()
+                .filter_map(|(key, value)| {
+                    Some((key.trim().to_string(), value.as_str()?.trim().to_string()))
+                })
+                .filter(|(key, value)| !key.is_empty() && !value.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_dependencies_array(value: &serde_json::Value) -> Vec<PluginDependency> {
@@ -662,5 +809,118 @@ fn parse_components_array(value: &serde_json::Value) -> Vec<UtsComponent> {
             })
             .collect(),
         None => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("{}-{}", name, uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn scan_uts_plugins_marks_custom_plugins_by_platform_dirs() {
+        let root = temp_root("unipack-uts-platforms");
+        let modules = root.join("uni_modules");
+        std::fs::create_dir_all(&modules).unwrap();
+
+        let android = modules.join("android-only/utssdk/app-android");
+        std::fs::create_dir_all(&android).unwrap();
+        std::fs::write(
+            android.join("config.json"),
+            r#"{"dependencies":["com.example:android-only:1.0.0"]}"#,
+        )
+        .unwrap();
+
+        let ios = modules.join("ios-only/utssdk/app-iOS");
+        std::fs::create_dir_all(ios.join("Demo.framework")).unwrap();
+        std::fs::write(
+            ios.join("config.json"),
+            r#"{
+                "frameworks":["CoreLocation.framework"],
+                "plists":{"NSCameraUsageDescription":"camera"},
+                "hooksClass":"DemoHook",
+                "provider":"DemoProvider",
+                "components":[{"name":"demo-view","class":"DemoView"}]
+            }"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(modules.join("both/utssdk/app-android")).unwrap();
+        std::fs::create_dir_all(modules.join("both/utssdk/app-ios/Both.xcframework")).unwrap();
+        std::fs::create_dir_all(modules.join("none/utssdk")).unwrap();
+
+        let scan = scan_uts_plugins(&root);
+        assert!(scan.has_uts_plugins);
+        assert!(scan.has_android_uts_plugins);
+        assert!(scan.has_ios_uts_plugins);
+        assert_eq!(scan.custom_plugins.len(), 3);
+
+        let android = scan
+            .custom_plugins
+            .iter()
+            .find(|plugin| plugin.id == "android-only")
+            .unwrap();
+        assert!(android.android_dir.is_some());
+        assert!(android.ios_dir.is_none());
+        assert_eq!(
+            android.android_deps,
+            vec!["com.example:android-only:1.0.0".to_string()]
+        );
+
+        let ios = scan
+            .custom_plugins
+            .iter()
+            .find(|plugin| plugin.id == "ios-only")
+            .unwrap();
+        assert!(ios.android_dir.is_none());
+        assert!(ios.ios_dir.is_some());
+        assert_eq!(ios.ios_frameworks.len(), 1);
+        assert_eq!(
+            ios.ios_system_frameworks,
+            vec!["CoreLocation.framework".to_string()]
+        );
+        assert_eq!(
+            ios.ios_plists.get("NSCameraUsageDescription"),
+            Some(&"camera".to_string())
+        );
+        assert_eq!(ios.hooks_class.as_deref(), Some("DemoHook"));
+        assert_eq!(ios.ios_provider.as_deref(), Some("DemoProvider"));
+        assert_eq!(ios.components.len(), 1);
+
+        let both = scan
+            .custom_plugins
+            .iter()
+            .find(|plugin| plugin.id == "both")
+            .unwrap();
+        assert!(both.android_dir.is_some());
+        assert!(both.ios_dir.is_some());
+        assert_eq!(both.ios_frameworks.len(), 1);
+
+        assert!(!scan.custom_plugins.iter().any(|plugin| plugin.id == "none"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_builtin_uts_plugin_does_not_enable_android_without_android_dir() {
+        let root = temp_root("unipack-uts-builtin-ios");
+        let ios_dir = root.join("uni_modules/uni-getNetworkType/utssdk/app-iOS");
+        std::fs::create_dir_all(&ios_dir).unwrap();
+
+        let scan = scan_uts_plugins(&root);
+        assert!(scan.has_uts_plugins);
+        assert!(!scan.has_android_uts_plugins);
+        assert!(scan.has_ios_uts_plugins);
+        assert_eq!(scan.builtin_modules.len(), 1);
+        assert_eq!(scan.builtin_modules[0].name, "uni-getNetworkType");
+        assert!(scan.builtin_modules[0].android_dir.is_none());
+        assert!(scan.builtin_modules[0].ios_dir.is_some());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

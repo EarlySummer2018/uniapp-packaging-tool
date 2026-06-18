@@ -24,7 +24,7 @@ HBuilderX 5.13+ 推荐使用本地 Pod 集成支付模块。支付基础模块�
 
 | 依赖库 | 系统库 | 资源文件 |
 |---|---|---|
-| liblibPayment.a、libalixpayment.a、AlipaySDK.framework | Security.framework、CoreMotion.framework、SystemConfiguration.framework、CFNetwork.framework、libc++.tbd | AlipaySDK.bundle |
+| liblibPayment.a、libalixpayment.a、AlipaySDK.framework 或 AlipaySDK.xcframework | Security.framework、CoreMotion.framework、SystemConfiguration.framework、CFNetwork.framework、libc++.tbd | AlipaySDK.bundle |
 
 ### 工程配置
 

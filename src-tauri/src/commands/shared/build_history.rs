@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildRecord {
@@ -30,7 +30,7 @@ fn get_history_file_path() -> PathBuf {
         .join("build-history.json")
 }
 
-fn ensure_parent_dir(path: &PathBuf) -> Result<(), String> {
+fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
     }

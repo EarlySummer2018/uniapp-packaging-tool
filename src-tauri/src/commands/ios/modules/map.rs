@@ -39,14 +39,6 @@ impl IosMapProvider {
             Self::Google => "Google 地图",
         }
     }
-
-    fn pod_name(self) -> &'static str {
-        match self {
-            Self::Baidu => "Map-Baidu",
-            Self::Amap => "Map-Gaode",
-            Self::Google => "Map-Google",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,37 +60,20 @@ impl IosMapPageType {
 pub(crate) struct IosMapIntegration {
     pub(crate) provider: IosMapProvider,
     pub(crate) page_type: IosMapPageType,
-    pub(crate) local_pod: bool,
     pub(crate) linked_count: usize,
     pub(crate) resource_count: usize,
 }
 
 impl IosMapIntegration {
     pub(crate) fn summary(&self) -> String {
-        if self.local_pod {
-            if self.provider == IosMapProvider::Google {
-                return format!(
-                    "{}，本地 Pod 集成 {}",
-                    self.provider.label(),
-                    self.provider.pod_name()
-                );
-            }
-            format!(
-                "{}，{} 页面，本地 Pod 集成 {}",
-                self.provider.label(),
-                self.page_type.label(),
-                self.provider.pod_name()
-            )
-        } else {
-            if self.provider == IosMapProvider::Google {
-                return format!("{}，手动 SDK 集成", self.provider.label());
-            }
-            format!(
-                "{}，{} 页面，手动 SDK 集成",
-                self.provider.label(),
-                self.page_type.label()
-            )
+        if self.provider == IosMapProvider::Google {
+            return format!("{}，自动迁移依赖", self.provider.label());
         }
+        format!(
+            "{}，{} 页面，自动迁移依赖",
+            self.provider.label(),
+            self.page_type.label()
+        )
     }
 }
 
@@ -136,17 +111,6 @@ pub(crate) fn apply_ios_map_module(
         return Ok(None);
     };
     let page_type = ios_map_page_type(manifest, provider);
-    let local_pod = ios_map_local_pod_enabled(manifest);
-
-    if local_pod {
-        return Ok(Some(IosMapIntegration {
-            provider,
-            page_type,
-            local_pod,
-            linked_count: 0,
-            resource_count: 0,
-        }));
-    }
 
     let linked_files = ios_map_linked_files(provider, page_type);
     validate_ios_map_local_linked_files(project_root, &linked_files)?;
@@ -157,7 +121,6 @@ pub(crate) fn apply_ios_map_module(
     Ok(Some(IosMapIntegration {
         provider,
         page_type,
-        local_pod,
         linked_count,
         resource_count,
     }))
@@ -209,23 +172,6 @@ pub(crate) fn ios_map_page_type(
     normalize_ios_map_page_type(provider, value)
 }
 
-pub(crate) fn ios_map_local_pod_enabled(manifest: &serde_json::Value) -> bool {
-    ios_map_sdk_config(manifest)
-        .and_then(|config| {
-            let config = config.as_object()?;
-            [
-                "localPod",
-                "local_pod",
-                "useLocalPod",
-                "use_local_pod",
-                "LOCAL_POD",
-            ]
-            .iter()
-            .find_map(|key| ios_object_value_normalized(config, key))
-        })
-        .is_some_and(ios_bool_value_enabled)
-}
-
 fn ios_map_sdk_config(manifest: &serde_json::Value) -> Option<&serde_json::Value> {
     let sdk_configs = manifest
         .get("app-plus")?
@@ -257,18 +203,6 @@ fn normalize_ios_map_page_type(provider: IosMapProvider, value: &str) -> IosMapP
         IosMapProvider::Amap => IosMapPageType::Nvue,
         IosMapProvider::Google if normalized(value) == "nvue" => IosMapPageType::Nvue,
         IosMapProvider::Google => IosMapPageType::Vue,
-    }
-}
-
-fn ios_bool_value_enabled(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Bool(flag) => *flag,
-        serde_json::Value::String(value) => matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "y" | "on" | "是" | "开启"
-        ),
-        serde_json::Value::Number(value) => value.as_i64().is_some_and(|value| value != 0),
-        _ => false,
     }
 }
 

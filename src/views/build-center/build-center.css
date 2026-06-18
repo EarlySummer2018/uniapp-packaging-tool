@@ -1,0 +1,346 @@
+.build-center {
+  max-width: 1280px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.page-header {
+  margin-bottom: 2px;
+}
+
+.build-grid {
+  align-items: start;
+}
+
+.build-step-card {
+  height: auto;
+}
+
+.import-card {
+  min-height: 220px;
+}
+
+.build-action-row {
+  margin-top: 18px;
+}
+
+.build-section-card {
+  margin-top: 0;
+}
+
+.scan-result {
+  margin-top: 16px;
+}
+
+.insight-panel {
+  padding: 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.insight-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.insight-title {
+  display: block;
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.insight-subtitle {
+  display: block;
+  margin-top: 4px;
+}
+
+.insight-grid {
+  margin-top: 14px;
+}
+
+.summary-tile {
+  min-height: 72px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: var(--surface-color);
+}
+
+.summary-value {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.summary-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.module-section {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.module-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 14px;
+  align-items: start;
+}
+
+.module-box {
+  min-height: 96px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-color);
+}
+
+.module-box-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.tag-row {
+  margin-top: 10px;
+}
+
+.module-choice-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.module-choice {
+  --module-choice-bg: var(--surface-color);
+  --module-choice-border: var(--border-soft);
+  --module-choice-text: inherit;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--module-choice-border);
+  border-radius: 6px;
+  background: var(--module-choice-bg);
+  color: var(--module-choice-text);
+  transition: border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.module-choice--success {
+  --module-choice-bg: #f0fdf4;
+  --module-choice-border: #86d7a2;
+}
+
+.module-choice--warning {
+  --module-choice-bg: #fff8e1;
+  --module-choice-border: #f3c969;
+}
+
+.module-choice--error {
+  --module-choice-bg: #fff1f0;
+  --module-choice-border: #ef9a9a;
+}
+
+.module-choice--default {
+  --module-choice-bg: #f6f7f9;
+  --module-choice-border: #d8dde6;
+  --module-choice-text: #8a929e;
+}
+
+.build-center .module-choice .n-checkbox__label {
+  flex: 1;
+  min-width: 0;
+  padding-left: 8px;
+  color: var(--module-choice-text);
+}
+
+.module-choice-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.module-choice-main,
+.module-choice-platform {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.module-choice-main {
+  font-weight: 500;
+}
+
+.module-choice-platform {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.module-empty {
+  display: block;
+  margin-top: 10px;
+}
+
+.path-summary {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-color);
+}
+
+.build-center .path-summary .n-text {
+  word-break: break-all;
+}
+
+.android-config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.android-config-switcher {
+  margin-bottom: 2px;
+}
+
+.android-config-chip {
+  cursor: pointer;
+}
+
+.android-config-chip--active {
+  box-shadow: 0 0 0 2px rgba(24, 160, 88, 0.12);
+}
+
+.android-config-module {
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.android-config-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ios-module-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ios-privacy-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-color);
+}
+
+.ios-privacy-summary-hint {
+  display: block;
+  margin-top: 6px;
+}
+
+.ios-module-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.file-field-row {
+  width: 100%;
+}
+
+.file-field-hint {
+  font-size: 12px;
+}
+
+.build-progress {
+  margin-top: 16px;
+}
+
+.log-result-stack {
+  margin-top: 12px;
+}
+
+.ios-privacy-modal {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.ios-privacy-field-list {
+  max-height: min(58vh, 560px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 4px;
+}
+
+.ios-privacy-field {
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-color);
+}
+
+.ios-privacy-field--missing {
+  border-color: #ef9a9a;
+  background: #fff7f7;
+}
+
+.ios-privacy-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 1180px) {
+  .android-config-head,
+  .ios-privacy-summary,
+  .ios-module-head,
+  .insight-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .path-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .module-grid {
+    grid-template-columns: 1fr;
+  }
+}

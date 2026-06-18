@@ -1,7 +1,9 @@
-use crate::commands::shared::module::parsing::normalize_config_key;
 use crate::commands::shared::module::push::manifest_push_unipush_v2_enabled;
 use crate::commands::shared::module::templates::android_module_template_key;
 use crate::commands::shared::module::types::AndroidConfigFieldSpec;
+
+use super::payment::{payment_provider_enabled_for_platform, PaymentProvider};
+use crate::commands::shared::module::parsing::normalize_config_key;
 
 const MAVEN_CENTRAL_MIRROR_REPOSITORY: &str =
     "maven { url 'https://maven.aliyun.com/repository/public' }";
@@ -195,15 +197,21 @@ pub fn android_module_gradle_repositories_for_manifest(
         }
         "payment" => {
             let mut repos = Vec::new();
-            if manifest_has_enabled_provider(
-                manifest,
-                &["payment", "pay", "payments"],
-                &["paypal", "stripe", "google", "googlepay", "google_pay"],
-            ) {
+            if payment_provider_enabled_for_platform(manifest, PaymentProvider::Paypal, "android")
+                || payment_provider_enabled_for_platform(
+                    manifest,
+                    PaymentProvider::Stripe,
+                    "android",
+                )
+                || payment_provider_enabled_for_platform(
+                    manifest,
+                    PaymentProvider::Google,
+                    "android",
+                )
+            {
                 repos.push(MAVEN_CENTRAL_MIRROR_REPOSITORY);
             }
-            if manifest_has_enabled_provider(manifest, &["payment", "pay", "payments"], &["paypal"])
-            {
+            if payment_provider_enabled_for_platform(manifest, PaymentProvider::Paypal, "android") {
                 repos.push(PAYPAL_MAVEN_REPOSITORY);
             }
             repos
@@ -226,6 +234,9 @@ fn android_module_entry_enabled_for_manifest(
     let note = android_entry_provider_note(entry);
     if template_key == "geolocation" && !android_geolocation_enabled(Some(manifest)) {
         return false;
+    }
+    if template_key == "payment" {
+        return payment_entry_enabled_for_android(&note, manifest);
     }
     if template_key == "geolocation"
         && android_entry_mentions_any(&note, &["amap", "gaode", "高德"])
@@ -341,37 +352,6 @@ fn android_module_entry_enabled_for_manifest(
             manifest,
         ),
         "geolocation" => geolocation_provider_entry_enabled(&note, manifest),
-        "payment" => provider_entry_enabled(
-            &note,
-            &[
-                (
-                    &["alipay", "支付宝"][..],
-                    &["payment", "pay", "payments"][..],
-                    &["alipay"][..],
-                ),
-                (
-                    &["weixin", "wechat", "wx", "微信"][..],
-                    &["payment", "pay", "payments"][..],
-                    &["weixin", "wechat", "wx"][..],
-                ),
-                (
-                    &["paypal"][..],
-                    &["payment", "pay", "payments"][..],
-                    &["paypal"][..],
-                ),
-                (
-                    &["stripe"][..],
-                    &["payment", "pay", "payments"][..],
-                    &["stripe"][..],
-                ),
-                (
-                    &["google"][..],
-                    &["payment", "pay", "payments"][..],
-                    &["google", "googlepay", "google_pay"][..],
-                ),
-            ],
-            manifest,
-        ),
         "map" => provider_entry_enabled(
             &note,
             &[
@@ -459,6 +439,27 @@ fn android_module_entry_enabled_for_manifest(
         ),
         _ => true,
     }
+}
+
+fn payment_entry_enabled_for_android(note: &str, manifest: &serde_json::Value) -> bool {
+    if android_entry_mentions_any(note, &["apple", "iap", "in app purchase", "apple pay"]) {
+        return false;
+    }
+    for (markers, provider) in [
+        (&["alipay", "支付宝"][..], PaymentProvider::Alipay),
+        (
+            &["weixin", "wechat", "wx", "微信"][..],
+            PaymentProvider::Weixin,
+        ),
+        (&["paypal"][..], PaymentProvider::Paypal),
+        (&["stripe"][..], PaymentProvider::Stripe),
+        (&["google"][..], PaymentProvider::Google),
+    ] {
+        if android_entry_mentions_any(note, markers) {
+            return payment_provider_enabled_for_platform(manifest, provider, "android");
+        }
+    }
+    false
 }
 
 pub fn android_amap_map_enabled(manifest: Option<&serde_json::Value>) -> bool {

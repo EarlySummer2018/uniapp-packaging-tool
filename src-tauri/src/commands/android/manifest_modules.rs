@@ -6,6 +6,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use crate::commands::module::{payment_provider_enabled_for_platform, PaymentProvider};
+
 // ===== 模块 Activity 源文件复制 =====
 
 /// 从 DCloud SDK 的 src 目录复制模块所需的 Activity Java 源文件到 Android 工作区。
@@ -382,6 +384,7 @@ pub fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
 // ===== Manifest 模块应用与补丁渲染 =====
 
 /// 应用 Android manifest 模块（公开接口，供 commands.rs 调用）
+#[allow(clippy::too_many_arguments)]
 pub fn apply_android_manifest_modules(
     modules: &[crate::commands::resource::DetectedModule],
     config_report: Option<&crate::commands::module::AndroidModuleConfigReport>,
@@ -644,24 +647,33 @@ pub fn module_config_tree_for_android_build(
     if let Some(ref mut payment) = tree.payment {
         if manifest.is_some() {
             payment.alipay =
-                payment_provider_enabled_for_manifest(manifest, "支付宝").then(HashMap::new);
+                payment_provider_enabled_for_manifest(manifest, PaymentProvider::Alipay)
+                    .then(HashMap::new);
             payment.weixin =
-                payment_provider_enabled_for_manifest(manifest, "微信支付").then(HashMap::new);
+                payment_provider_enabled_for_manifest(manifest, PaymentProvider::Weixin)
+                    .then(HashMap::new);
             payment.paypal =
-                payment_provider_enabled_for_manifest(manifest, "PayPal").then(HashMap::new);
+                payment_provider_enabled_for_manifest(manifest, PaymentProvider::Paypal)
+                    .then(HashMap::new);
             payment.stripe =
-                payment_provider_enabled_for_manifest(manifest, "Stripe").then(HashMap::new);
+                payment_provider_enabled_for_manifest(manifest, PaymentProvider::Stripe)
+                    .then(HashMap::new);
             payment.google =
-                payment_provider_enabled_for_manifest(manifest, "Google Pay").then(HashMap::new);
+                payment_provider_enabled_for_manifest(manifest, PaymentProvider::Google)
+                    .then(HashMap::new);
         }
-        if let Some(wx_appid) = report_value(report, "payment", "WX_APPID") {
-            payment.weixin = Some(HashMap::from([("WX_APPID".to_string(), wx_appid)]));
+        if payment.weixin.is_some() {
+            if let Some(wx_appid) = report_value(report, "payment", "WX_APPID") {
+                payment.weixin = Some(HashMap::from([("WX_APPID".to_string(), wx_appid)]));
+            }
         }
-        if let Some(return_scheme) = report_value(report, "payment", "PAYPAL_RETURN_SCHEME") {
-            payment.paypal = Some(HashMap::from([(
-                "PAYPAL_RETURN_SCHEME".to_string(),
-                return_scheme,
-            )]));
+        if payment.paypal.is_some() {
+            if let Some(return_scheme) = report_value(report, "payment", "PAYPAL_RETURN_SCHEME") {
+                payment.paypal = Some(HashMap::from([(
+                    "PAYPAL_RETURN_SCHEME".to_string(),
+                    return_scheme,
+                )]));
+            }
         }
     }
 
@@ -719,16 +731,10 @@ fn login_provider_enabled_for_manifest(
 
 fn payment_provider_enabled_for_manifest(
     manifest: Option<&serde_json::Value>,
-    provider_note: &str,
+    provider: PaymentProvider,
 ) -> bool {
     manifest
-        .map(|manifest| {
-            crate::commands::module::android_module_artifact_enabled_for_manifest(
-                "payment",
-                &format!("payment-provider.aar ({})", provider_note),
-                Some(manifest),
-            )
-        })
+        .map(|manifest| payment_provider_enabled_for_platform(manifest, provider, "android"))
         .unwrap_or(false)
 }
 
@@ -904,13 +910,16 @@ mod payment_config_tests {
         }];
         let manifest = serde_json::json!({
             "app-plus": {
+                "modules": {
+                    "Payment": {}
+                },
                 "distribute": {
                     "sdkConfigs": {
                         "payment": {
-                            "alipay": {},
-                            "weixin": {},
-                            "paypal": {},
-                            "stripe": {},
+                            "alipay": { "__platform__": ["android"] },
+                            "weixin": { "__platform__": ["android"] },
+                            "paypal": { "__platform__": ["android"] },
+                            "stripe": { "__platform__": ["android"] },
                             "googlepay": {}
                         }
                     }

@@ -59,6 +59,39 @@ const MULTIPLE_SUBSTITUTIONS_RE = /Multiple substitutions specified in non-posit
 const UNABLE_TO_STRIP_RE = /^Unable to strip the following libraries, packaging them as they are:\s*(.+?)\.\s*Run with --info option/i
 const AGCONNECT_NO_CONFIG_RE = /^(?:--I- there's no config file|--W- The variant: ([^,]+), There's no json file)$/i
 const GRADLE_HELPER_NOISE_RE = /^(?:\[Incubating\] Problems report is available at:|You can use '--warning-mode all'|For more on this, please refer to https:\/\/docs\.gradle\.org\/|\d+ actionable tasks:)/
+const IOS_XCODE_ERROR_RE = /(?:^|[\s:])(?:error|fatal error):|ld: (?:multiple errors|.*duplicate symbols?|framework not found|library not found|symbol\(s\) not found|Assertion failed)|clang: error:|swiftc: error:|linker command failed/i
+const IOS_XCODE_WARNING_RE = /(?:^|[\s:])warning:|ld: warning:/i
+const IOS_XCODE_NOISE_LINE_RE = /^(?:Command line invocation:|Build settings from command line:|ComputePackagePrebuildTargetDependencyGraph|Prepare packages|CreateBuildRequest|SendProjectDescription|CreateBuildOperation|ComputeTargetDependencyGraph|GatherProvisioningInputs|CreateBuildDescription|Build description (?:signature|path):|note: Building targets in dependency order|note: Target dependency graph \(\d+ targets?\)|In module '[^']+':|\/\* com\.apple\.(?:actool\.compilation-results|ibtool\.document\.warnings) \*\/)/
+const IOS_XCODE_BUILD_STEP_RE = /^(?:CreateBuildDirectory|ClangStatCache|ExecuteExternalTool|SignatureCollection|WriteAuxiliaryFile|ProcessProductPackaging(?:DER)?|MkDir|GenerateAssetSymbols|CpResource|Swift\w+|EmitSwiftModule|CompileC|CompileSwift|CompileAssetCatalog|ProcessInfoPlistFile|CodeSign|CopySwiftLibs|Touch|Validate|RegisterExecutionPolicyException|ExtractAppIntentsMetadata|AppIntentsSSUTraining|GenerateDSYMFile|Strip|SetOwnerAndGroup|SetMode|SymLink|PhaseScriptExecution|Ditto|CopyStringsFile|CopyPlistFile|Ld)\b/
+const IOS_XCODE_INDENTED_NOISE_RE = /^\s+(?:\/Applications\/Xcode\.app|\/Users\/.*(?:Library\/Developer\/Xcode|\.unipack\/projects)|\/usr\/bin|\/bin\/|builtin-|cd\s|write-file\b|CODE_SIGN_STYLE\s*=|DEVELOPMENT_TEAM\s*=|PRODUCT_BUNDLE_IDENTIFIER\s*=|PROVISIONING_PROFILE_SPECIFIER\s*=|Target '.+' in project|Entitlements:|\{|\}|"[^"]+"\s*=)/
+const IOS_XCODE_DERIVED_PATH_RE = /^\/Users\/.+\/Library\/Developer\/Xcode\/DerivedData\//
+const IOS_XCODE_TOOL_COMMAND_RE = /^\/(?:Applications\/Xcode\.app|usr\/bin|bin)\//
+const IOS_XCODE_DIAGNOSTIC_CONTEXT_RE = /^\s*(?:\d+\s*\|.*|\|.*|\d+\s+warnings?\s+generated\.)$/i
+const BUILD_LOG_LEVELS = ['info', 'warn', 'error', 'success'] as const
+
+const IOS_XCODE_IGNORABLE_INFO_RE = [
+  /IDEDistributionLogging _createLoggingBundleAtPath:.*Created bundle at path/i,
+  /^note: while processing .*(?:\.pcm|\.pch\.gch|\.swiftinterface)$/i
+]
+
+const IOS_XCODE_IGNORABLE_WARNING_RE = [
+  /IDERunDestination: Supported platforms for the buildables in the current scheme is empty\./,
+  /LaunchScreen\.storyboard:.*warning: Constraint referencing items turned off in current configuration/i,
+  /\/(?:AppDelegate|ViewController)\.m:\d+:\d+: warning: /i,
+  /ld: warning: .*\/SDK\/(?:libs|Libs)\/.*(?:was built for newer iOS version|arm64 function not 4-byte aligned|pointer not aligned|Incompatible Objective-C category definitions|method '.*' in category .* conflicts|direct access in function .* weak symbol)/i,
+  /ld: warning: section __DATA\/__cfstring is not pointer aligned in .*\/SDK\/(?:libs|Libs)\/.*\.a/i,
+  /ld: warning: no platform load command found in ['"].*(?:\/SDK\/(?:libs|Libs)\/|\/BuildProductsPath\/).*['"], assuming: iOS/i,
+  /ld: warning: mixed ObjC ABI, .* compiled (?:with|without) category class properties/i,
+  /ld: warning: .* was built for newer iOS version \([^)]+\) than being linked \([^)]+\)/i,
+  /ld: warning: -ld_classic is deprecated/i,
+  /warning: \(arm64\)\s+skipping debug map object with duplicate name and timestamp: .*\/SDK\/(?:libs|Libs)\/.*\.a/i,
+  /warning: .*\/(?:ModuleCache(?:\.noindex)?|SharedPrecompiledHeaders|ExplicitPrecompiledModules)\/.*(?:\.pcm|\.pch\.gch): No such file or directory/i,
+  /warning: cannot copy parseable Swift interface .*\.swiftinterface: No such file or directory/i,
+  /warning: couldn`t find compile unit for the macro table/i,
+  /warning: .*\/SDK\/(?:libs|Libs)\/.*_CodeSignature\/CodeSignature: Failed to parse executable/i,
+  /warning: 'UILaunchImages' has been deprecated, use launch storyboards instead\./i,
+  /IDEDistribution: Command line name "app-store" is deprecated\. Use "app-store-connect" instead\./i
+]
 
 export const useBuildStore = defineStore('build', () => {
   const builds = ref<Record<string, BuildTask>>({})
@@ -323,13 +356,8 @@ export const useBuildStore = defineStore('build', () => {
     const line = payload.message || payload.line
     if (!line) return null
 
-    const level: BuildLog['level'] = payload.level === 'error' || payload.type === 'stderr'
-      ? 'error'
-      : payload.level === 'warn'
-        ? 'warn'
-        : payload.level === 'success'
-          ? 'success'
-          : 'info'
+    const message = String(line)
+    const level = normalizeIncomingLogLevel(payload.level, payload.type, message)
 
     const buildId = payload.buildId || payload.build_id
     const progress = typeof payload.progress === 'number' ? payload.progress : undefined
@@ -337,9 +365,22 @@ export const useBuildStore = defineStore('build', () => {
     return {
       buildId: typeof buildId === 'string' && buildId.trim() ? buildId : undefined,
       level,
-      message: String(line),
+      message,
       progress
     }
+  }
+
+  function normalizeIncomingLogLevel(rawLevel: unknown, type: unknown, message: string): BuildLog['level'] {
+    const explicitLevel = typeof rawLevel === 'string' && (BUILD_LOG_LEVELS as readonly string[]).includes(rawLevel)
+      ? rawLevel as BuildLog['level']
+      : null
+    if (isIosXcodeDistributionInfo(message)) return 'info'
+    if (isIgnorableIosXcodeWarning(message)) return 'warn'
+    const level: BuildLog['level'] = explicitLevel || (type === 'stderr' ? 'error' : 'info')
+    if (level !== 'info') return level
+    if (IOS_XCODE_ERROR_RE.test(message)) return 'error'
+    if (IOS_XCODE_WARNING_RE.test(message)) return 'warn'
+    return level
   }
 
   function resolveEventBuildId(payloadBuildId?: string): string | null {
@@ -456,6 +497,7 @@ export const useBuildStore = defineStore('build', () => {
     let unstrippedWarningCount = 0
     let agconnectNoConfigCount = 0
     let suppressingD8Details = false
+    const isIosBuild = builds.value[buildId]?.platform === 'ios'
 
     function pushEntry(entry: BufferedLog) {
       flushStack()
@@ -563,6 +605,8 @@ export const useBuildStore = defineStore('build', () => {
     for (const entry of entries) {
       const message = entry.message.trimEnd()
       if (!message || GRADLE_HELPER_NOISE_RE.test(message)) continue
+      if (isIosBuild && isIgnorableIosXcodeInfo(message)) continue
+      if (isIosBuild && isIgnorableIosXcodeWarning(message)) continue
       if (GRADLE_TASK_RE.test(message) && !GRADLE_FAILED_TASK_RE.test(message)) continue
       if (MANIFEST_WARNING_HEADER_RE.test(message) || MANIFEST_NOOP_RE.test(message) || USES_SDK_IGNORED_RE.test(message)) continue
 
@@ -647,6 +691,24 @@ export const useBuildStore = defineStore('build', () => {
     flushSettingsRepositorySummary()
     flushGradleNoiseSummaries()
     return result
+  }
+
+  function isIgnorableIosXcodeWarning(message: string): boolean {
+    return IOS_XCODE_IGNORABLE_WARNING_RE.some(rule => rule.test(message))
+  }
+
+  function isIosXcodeDistributionInfo(message: string): boolean {
+    return IOS_XCODE_IGNORABLE_INFO_RE.some(rule => rule.test(message))
+  }
+
+  function isIgnorableIosXcodeInfo(message: string): boolean {
+    return isIosXcodeDistributionInfo(message)
+      || IOS_XCODE_NOISE_LINE_RE.test(message)
+      || IOS_XCODE_BUILD_STEP_RE.test(message)
+      || IOS_XCODE_INDENTED_NOISE_RE.test(message)
+      || IOS_XCODE_DERIVED_PATH_RE.test(message)
+      || IOS_XCODE_TOOL_COMMAND_RE.test(message)
+      || IOS_XCODE_DIAGNOSTIC_CONTEXT_RE.test(message)
   }
 
   function extractD8Dependency(message: string): string {

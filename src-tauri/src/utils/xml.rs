@@ -3,6 +3,7 @@ use anyhow::Result;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::collections::HashMap;
+use std::fmt;
 use std::path::Path;
 
 pub struct XmlDocument {
@@ -24,9 +25,11 @@ impl XmlDocument {
     pub fn as_str(&self) -> &str {
         &self.content
     }
+}
 
-    pub fn to_string(&self) -> String {
-        self.content.clone()
+impl fmt::Display for XmlDocument {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.content)
     }
 }
 
@@ -43,7 +46,7 @@ pub fn parse_xml_attributes(content: &str, xpath: &str) -> Result<HashMap<String
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
     let mut attrs = HashMap::new();
-    let target_tag = xpath.split('/').last().unwrap_or(xpath);
+    let target_tag = xpath.split('/').next_back().unwrap_or(xpath);
     let target_bytes = target_tag.as_bytes();
 
     let mut buf = Vec::new();
@@ -51,15 +54,13 @@ pub fn parse_xml_attributes(content: &str, xpath: &str) -> Result<HashMap<String
         match reader.read_event_into(&mut buf)? {
             Event::Start(e) => {
                 if e.local_name().as_ref() == target_bytes {
-                    for attr_result in e.attributes() {
-                        if let Ok(attr) = attr_result {
-                            let key = name_str(attr.key);
-                            let value = attr
-                                .unescape_value()
-                                .map(|v| v.into_owned())
-                                .unwrap_or_default();
-                            attrs.insert(key, value);
-                        }
+                    for attr in e.attributes().flatten() {
+                        let key = name_str(attr.key);
+                        let value = attr
+                            .unescape_value()
+                            .map(|v| v.into_owned())
+                            .unwrap_or_default();
+                        attrs.insert(key, value);
                     }
                     break;
                 }
@@ -78,7 +79,7 @@ pub fn set_xml_attribute(
     attr_name: &str,
     attr_value: &str,
 ) -> Result<String> {
-    let target_tag = xpath.split('/').last().unwrap_or(xpath);
+    let target_tag = xpath.split('/').next_back().unwrap_or(xpath);
     let target_bytes = target_tag.as_bytes();
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
@@ -126,19 +127,17 @@ pub fn set_xml_attribute(
             Event::Start(e) => {
                 output.push('<');
                 output.push_str(&name_str(e.name()));
-                for attr_result in e.attributes() {
-                    if let Ok(attr) = attr_result {
-                        output.push(' ');
-                        output.push_str(&name_str(attr.key));
-                        output.push_str("=\"");
-                        output.push_str(
-                            &attr
-                                .unescape_value()
-                                .map(|v| v.into_owned())
-                                .unwrap_or_default(),
-                        );
-                        output.push('"');
-                    }
+                for attr in e.attributes().flatten() {
+                    output.push(' ');
+                    output.push_str(&name_str(attr.key));
+                    output.push_str("=\"");
+                    output.push_str(
+                        &attr
+                            .unescape_value()
+                            .map(|v| v.into_owned())
+                            .unwrap_or_default(),
+                    );
+                    output.push('"');
                 }
                 output.push('>');
             }
@@ -180,19 +179,17 @@ pub fn set_xml_attribute(
             Event::Empty(e) => {
                 output.push('<');
                 output.push_str(&name_str(e.name()));
-                for attr_result in e.attributes() {
-                    if let Ok(attr) = attr_result {
-                        output.push(' ');
-                        output.push_str(&name_str(attr.key));
-                        output.push_str("=\"");
-                        output.push_str(
-                            &attr
-                                .unescape_value()
-                                .map(|v| v.into_owned())
-                                .unwrap_or_default(),
-                        );
-                        output.push('"');
-                    }
+                for attr in e.attributes().flatten() {
+                    output.push(' ');
+                    output.push_str(&name_str(attr.key));
+                    output.push_str("=\"");
+                    output.push_str(
+                        &attr
+                            .unescape_value()
+                            .map(|v| v.into_owned())
+                            .unwrap_or_default(),
+                    );
+                    output.push('"');
                 }
                 output.push_str("/>");
             }
@@ -227,7 +224,7 @@ pub fn set_xml_attribute(
 }
 
 pub fn get_xml_text_content(content: &str, xpath: &str) -> Result<Option<String>> {
-    let target_tag = xpath.split('/').last().unwrap_or(xpath);
+    let target_tag = xpath.split('/').next_back().unwrap_or(xpath);
     let target_bytes = target_tag.as_bytes();
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
@@ -250,7 +247,7 @@ pub fn get_xml_text_content(content: &str, xpath: &str) -> Result<Option<String>
 }
 
 pub fn set_xml_text_content(content: &str, xpath: &str, text_value: &str) -> Result<String> {
-    let target_tag = xpath.split('/').last().unwrap_or(xpath);
+    let target_tag = xpath.split('/').next_back().unwrap_or(xpath);
     let target_bytes = target_tag.as_bytes();
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
@@ -264,38 +261,34 @@ pub fn set_xml_text_content(content: &str, xpath: &str, text_value: &str) -> Res
                 inside_target = true;
                 output.push('<');
                 output.push_str(&name_str(e.name()));
-                for attr_result in e.attributes() {
-                    if let Ok(attr) = attr_result {
-                        output.push(' ');
-                        output.push_str(&name_str(attr.key));
-                        output.push_str("=\"");
-                        output.push_str(
-                            &attr
-                                .unescape_value()
-                                .map(|v| v.into_owned())
-                                .unwrap_or_default(),
-                        );
-                        output.push('"');
-                    }
+                for attr in e.attributes().flatten() {
+                    output.push(' ');
+                    output.push_str(&name_str(attr.key));
+                    output.push_str("=\"");
+                    output.push_str(
+                        &attr
+                            .unescape_value()
+                            .map(|v| v.into_owned())
+                            .unwrap_or_default(),
+                    );
+                    output.push('"');
                 }
                 output.push('>');
             }
             Event::Start(e) => {
                 output.push('<');
                 output.push_str(&name_str(e.name()));
-                for attr_result in e.attributes() {
-                    if let Ok(attr) = attr_result {
-                        output.push(' ');
-                        output.push_str(&name_str(attr.key));
-                        output.push_str("=\"");
-                        output.push_str(
-                            &attr
-                                .unescape_value()
-                                .map(|v| v.into_owned())
-                                .unwrap_or_default(),
-                        );
-                        output.push('"');
-                    }
+                for attr in e.attributes().flatten() {
+                    output.push(' ');
+                    output.push_str(&name_str(attr.key));
+                    output.push_str("=\"");
+                    output.push_str(
+                        &attr
+                            .unescape_value()
+                            .map(|v| v.into_owned())
+                            .unwrap_or_default(),
+                    );
+                    output.push('"');
                 }
                 output.push('>');
             }
@@ -309,19 +302,17 @@ pub fn set_xml_text_content(content: &str, xpath: &str, text_value: &str) -> Res
             Event::Empty(e) => {
                 output.push('<');
                 output.push_str(&name_str(e.name()));
-                for attr_result in e.attributes() {
-                    if let Ok(attr) = attr_result {
-                        output.push(' ');
-                        output.push_str(&name_str(attr.key));
-                        output.push_str("=\"");
-                        output.push_str(
-                            &attr
-                                .unescape_value()
-                                .map(|v| v.into_owned())
-                                .unwrap_or_default(),
-                        );
-                        output.push('"');
-                    }
+                for attr in e.attributes().flatten() {
+                    output.push(' ');
+                    output.push_str(&name_str(attr.key));
+                    output.push_str("=\"");
+                    output.push_str(
+                        &attr
+                            .unescape_value()
+                            .map(|v| v.into_owned())
+                            .unwrap_or_default(),
+                    );
+                    output.push('"');
                 }
                 output.push_str("/>");
             }

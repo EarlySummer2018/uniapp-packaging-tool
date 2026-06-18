@@ -245,7 +245,7 @@ pub fn normalize_global_sdk_path(platform: &str, path: &Path) -> Result<PathBuf,
         }
         "ios" => crate::commands::ios::sdk_layout::resolve_ios_sdk_root(path),
         "harmony" => Ok(canonicalize_or_self(path)),
-        _ => return Err(format!("不支持的 SDK 类型: {}", platform)),
+        _ => Err(format!("不支持的 SDK 类型: {}", platform)),
     }
 }
 

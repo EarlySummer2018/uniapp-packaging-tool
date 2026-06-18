@@ -57,7 +57,7 @@ HBuilderX 5.13+ 推荐使用本地 Pod 集成登录鉴权模块：
 
 | 依赖库 | 系统库 | 依赖资源 |
 |---|---|---|
-| liblibOauth.a、libSinaWBOauth.a、liblWeiboSDK.a | ImageIO.framework、libsqlite3.0.tbd | WeiboSDK.bundle |
+| liblibOauth.a、libSinaWBOauth.a、libWeiboSDK.a | ImageIO.framework、libsqlite3.0.tbd | WeiboSDK.bundle |
 
 ### 工程配置
 

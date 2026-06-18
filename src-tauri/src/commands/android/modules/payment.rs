@@ -89,14 +89,13 @@ pub fn render_patches(
         add_application_entries(application_entries, &paypal_entries);
         mod_entries.extend(paypal_entries.iter().cloned());
     }
-    let provider_entries = [
-        service_entry(
+    if has_report_value(module, "androidxVersion") {
+        let stripe_entries = [service_entry(
             r#"<activity android:name="io.dcloud.feature.payment.stripe.TransparentActivity" android:excludeFromRecents="true" android:exported="false" android:theme="@style/TranslucentTheme" />"#,
-        ),
-        meta_data("com.google.android.gms.wallet.api.enabled", "true"),
-    ];
-    add_application_entries(application_entries, &provider_entries);
-    mod_entries.extend(provider_entries.iter().cloned());
+        )];
+        add_application_entries(application_entries, &stripe_entries);
+        mod_entries.extend(stripe_entries.iter().cloned());
+    }
 
     // 写入 patch group
     let group_name = module.template_key.clone();

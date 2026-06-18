@@ -112,6 +112,7 @@ pub fn inject_huawei_agconnect_json(
 }
 
 /// 应用 Android manifest 模块（内部实现，供 manifest_modules.rs 公开接口调用）
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_android_manifest_modules_internal(
     modules: &[crate::commands::resource::DetectedModule],
     config_report: Option<&crate::commands::module::AndroidModuleConfigReport>,

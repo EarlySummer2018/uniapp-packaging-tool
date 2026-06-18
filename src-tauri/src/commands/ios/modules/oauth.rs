@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use crate::commands::ios::build::pbxproj::{
-    register_pbx_linked_files, register_pbx_resources, IosPbxLinkedFile,
+    register_pbx_linked_file_specs, register_pbx_linked_files, register_pbx_resources,
+    IosPbxFileSpec, IosPbxLinkedFile,
 };
 use crate::commands::ios::modules::common::{
     ios_manifest_info_has_detected_module, ios_manifest_module_enabled,
     ios_object_value_normalized, ios_sdk_config_value_enabled,
 };
+use crate::commands::module::{payment_provider_enabled_for_platform, PaymentProvider};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IosOauthProvider {
@@ -31,24 +33,14 @@ impl IosOauthProvider {
             Self::Facebook => "Facebook 登录",
         }
     }
-
-    fn pod_name(self) -> Option<&'static str> {
-        match self {
-            Self::Univerify => Some("Oauth-Univerify"),
-            Self::Sina => Some("Oauth-Sina"),
-            Self::Qq => Some("Oauth-QQ"),
-            Self::Weixin => Some("Oauth-Wechat"),
-            Self::Apple | Self::Google | Self::Facebook => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct IosOauthIntegration {
     pub(crate) providers: Vec<IosOauthProvider>,
-    pub(crate) local_pod: bool,
     pub(crate) linked_count: usize,
     pub(crate) resource_count: usize,
+    pub(crate) facebook_compat_xcframework_count: usize,
 }
 
 impl IosOauthIntegration {
@@ -62,19 +54,12 @@ impl IosOauthIntegration {
                 .collect::<Vec<_>>()
                 .join("、")
         };
-        if self.local_pod {
-            let pods = std::iter::once("Oauth")
-                .chain(
-                    self.providers
-                        .iter()
-                        .filter_map(|provider| provider.pod_name()),
-                )
-                .collect::<Vec<_>>()
-                .join("、");
-            format!("{}，本地 Pod 集成 {}", providers, pods)
+        let facebook_compat = if self.facebook_compat_xcframework_count > 0 {
+            "，Facebook 静态 SDK 已做 Xcode 签名兼容"
         } else {
-            format!("{}，手动 SDK 集成", providers)
-        }
+            ""
+        };
+        format!("{}，自动迁移依赖{}", providers, facebook_compat)
     }
 }
 
@@ -96,31 +81,25 @@ pub(crate) fn apply_ios_oauth_module(
     }
 
     let providers = ios_oauth_providers(Some(info)).unwrap_or_default();
-    let local_pod = ios_oauth_local_pod_enabled(manifest);
-
-    if local_pod {
-        return Ok(Some(IosOauthIntegration {
-            providers,
-            local_pod,
-            linked_count: 0,
-            resource_count: 0,
-        }));
-    }
     if providers.is_empty() {
         return Ok(None);
     }
 
-    let linked_files = ios_oauth_linked_files(&providers);
+    let linked_files = ios_oauth_linked_files(&providers, ios_weixin_payment_enabled(Some(info)));
     validate_ios_oauth_local_linked_files(project_root, &linked_files)?;
+    let facebook_xcframework_specs =
+        prepare_ios_facebook_xcframework_specs(project_root, &providers)?;
     let resource_sources = ios_oauth_resource_sources(project_root, &providers)?;
-    let linked_count = register_pbx_linked_files(project_file, &linked_files)?;
+    let mut linked_count = register_pbx_linked_files(project_file, &linked_files)?;
+    linked_count += register_pbx_linked_file_specs(project_file, &facebook_xcframework_specs)?;
     let resource_count = copy_ios_oauth_resources(project_root, project_file, &resource_sources)?;
+    let facebook_compat_xcframework_count = facebook_xcframework_specs.len();
 
     Ok(Some(IosOauthIntegration {
         providers,
-        local_pod,
         linked_count,
         resource_count,
+        facebook_compat_xcframework_count,
     }))
 }
 
@@ -168,23 +147,6 @@ pub(crate) fn ios_oauth_providers(
     Some(providers)
 }
 
-pub(crate) fn ios_oauth_local_pod_enabled(manifest: &serde_json::Value) -> bool {
-    ios_oauth_sdk_config(manifest)
-        .and_then(|config| {
-            let config = config.as_object()?;
-            [
-                "localPod",
-                "local_pod",
-                "useLocalPod",
-                "use_local_pod",
-                "LOCAL_POD",
-            ]
-            .iter()
-            .find_map(|key| ios_object_value_normalized(config, key))
-        })
-        .is_some_and(ios_bool_value_enabled)
-}
-
 fn ios_oauth_sdk_config(manifest: &serde_json::Value) -> Option<&serde_json::Value> {
     let sdk_configs = manifest
         .get("app-plus")?
@@ -212,19 +174,10 @@ fn push_ios_oauth_provider(providers: &mut Vec<IosOauthProvider>, provider: IosO
     }
 }
 
-fn ios_bool_value_enabled(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Bool(flag) => *flag,
-        serde_json::Value::String(value) => matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "y" | "on" | "是" | "开启"
-        ),
-        serde_json::Value::Number(value) => value.as_i64().is_some_and(|value| value != 0),
-        _ => false,
-    }
-}
-
-fn ios_oauth_linked_files(providers: &[IosOauthProvider]) -> Vec<IosPbxLinkedFile> {
+fn ios_oauth_linked_files(
+    providers: &[IosOauthProvider],
+    use_weixin_pay_sdk: bool,
+) -> Vec<IosPbxLinkedFile> {
     let mut files = Vec::new();
     push_ios_linked_file(&mut files, IosPbxLinkedFile::local_static("liblibOauth.a"));
 
@@ -245,7 +198,7 @@ fn ios_oauth_linked_files(providers: &[IosOauthProvider]) -> Vec<IosPbxLinkedFil
     if providers.contains(&IosOauthProvider::Sina) {
         for file in [
             IosPbxLinkedFile::local_static("libSinaWBOauth.a"),
-            IosPbxLinkedFile::local_static("liblWeiboSDK.a"),
+            IosPbxLinkedFile::local_static("libWeiboSDK.a"),
             IosPbxLinkedFile::system_framework("ImageIO.framework"),
             IosPbxLinkedFile::system_library("libsqlite3.0.tbd"),
         ] {
@@ -265,13 +218,15 @@ fn ios_oauth_linked_files(providers: &[IosOauthProvider]) -> Vec<IosPbxLinkedFil
     if providers.contains(&IosOauthProvider::Weixin) {
         for file in [
             IosPbxLinkedFile::local_static("libWXOauth.a"),
-            IosPbxLinkedFile::local_static("libWeChatSDK.a"),
             IosPbxLinkedFile::system_library("libsqlite3.0.tbd"),
             IosPbxLinkedFile::system_library("libz.tbd"),
             IosPbxLinkedFile::system_framework("CoreTelephony.framework"),
             IosPbxLinkedFile::system_framework("SystemConfiguration.framework"),
         ] {
             push_ios_linked_file(&mut files, file);
+        }
+        if !use_weixin_pay_sdk {
+            push_ios_linked_file(&mut files, IosPbxLinkedFile::local_static("libWeChatSDK.a"));
         }
     }
 
@@ -304,10 +259,6 @@ fn ios_oauth_linked_files(providers: &[IosOauthProvider]) -> Vec<IosPbxLinkedFil
     if providers.contains(&IosOauthProvider::Facebook) {
         for file in [
             IosPbxLinkedFile::local_static("libFBOauth.a"),
-            IosPbxLinkedFile::local_xcframework("FBSDKCoreKit.xcframework"),
-            IosPbxLinkedFile::local_xcframework("FBAEMKit.xcframework"),
-            IosPbxLinkedFile::local_xcframework("FBSDKCoreKit_Basics.xcframework"),
-            IosPbxLinkedFile::local_xcframework("FBSDKLoginKit.xcframework"),
             IosPbxLinkedFile::system_library("libc++.tbd"),
             IosPbxLinkedFile::system_framework("Accelerate.framework"),
             IosPbxLinkedFile::system_framework("Accounts.framework"),
@@ -324,6 +275,16 @@ fn ios_oauth_linked_files(providers: &[IosOauthProvider]) -> Vec<IosPbxLinkedFil
     }
 
     files
+}
+
+fn ios_weixin_payment_enabled(
+    manifest_info: Option<&crate::commands::resource::UniappManifestInfo>,
+) -> bool {
+    manifest_info
+        .and_then(|info| info.manifest_value.as_ref())
+        .is_some_and(|manifest| {
+            payment_provider_enabled_for_platform(manifest, PaymentProvider::Weixin, "ios")
+        })
 }
 
 fn push_ios_linked_file(files: &mut Vec<IosPbxLinkedFile>, file: IosPbxLinkedFile) {
@@ -344,6 +305,103 @@ fn validate_ios_oauth_local_linked_files(
                 "iOS Oauth 模块缺少 SDK 依赖文件: {}",
                 candidate.display()
             ));
+        }
+    }
+    Ok(())
+}
+
+const IOS_FACEBOOK_XCFRAMEWORKS: &[&str] = &[
+    "FBSDKCoreKit.xcframework",
+    "FBAEMKit.xcframework",
+    "FBSDKCoreKit_Basics.xcframework",
+    "FBSDKLoginKit.xcframework",
+];
+
+fn prepare_ios_facebook_xcframework_specs(
+    project_root: &Path,
+    providers: &[IosOauthProvider],
+) -> Result<Vec<IosPbxFileSpec>, String> {
+    if !providers.contains(&IosOauthProvider::Facebook) {
+        return Ok(Vec::new());
+    }
+
+    let libs_dir = ios_sdk_support_dir(project_root)?.join("Libs");
+    let target_dir = project_root.join("UniPackSanitizedSDK");
+    crate::utils::fs::ensure_directory(&target_dir).map_err(|e| e.to_string())?;
+
+    let mut specs = Vec::new();
+    for name in IOS_FACEBOOK_XCFRAMEWORKS {
+        let source = libs_dir.join(name);
+        if !source.exists() {
+            return Err(format!(
+                "iOS Oauth 模块缺少 SDK 依赖文件: {}",
+                source.display()
+            ));
+        }
+
+        let target = target_dir.join(name);
+        remove_file_or_dir_if_exists(&target).map_err(|e| {
+            format!(
+                "清理 iOS Oauth Facebook SDK 兼容副本失败 {}: {}",
+                target.display(),
+                e
+            )
+        })?;
+        crate::utils::fs::copy_recursive(&source, &target).map_err(|e| {
+            format!(
+                "复制 iOS Oauth Facebook SDK 兼容副本失败 {} -> {}: {}",
+                source.display(),
+                target.display(),
+                e
+            )
+        })?;
+        remove_code_signature_dirs(&target).map_err(|e| {
+            format!(
+                "清理 iOS Oauth Facebook SDK 签名目录失败 {}: {}",
+                target.display(),
+                e
+            )
+        })?;
+        specs.push(IosPbxFileSpec::project_xcframework(
+            (*name).to_string(),
+            format!("UniPackSanitizedSDK/{}", name),
+        ));
+    }
+
+    Ok(specs)
+}
+
+fn remove_file_or_dir_if_exists(path: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn remove_code_signature_dirs(root: &Path) -> std::io::Result<usize> {
+    let mut removed = 0usize;
+    remove_code_signature_dirs_inner(root, &mut removed)?;
+    Ok(removed)
+}
+
+fn remove_code_signature_dirs_inner(root: &Path, removed: &mut usize) -> std::io::Result<()> {
+    if !root.is_dir() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) == Some("_CodeSignature") {
+            std::fs::remove_dir_all(&path)?;
+            *removed += 1;
+        } else {
+            remove_code_signature_dirs_inner(&path, removed)?;
         }
     }
     Ok(())

@@ -117,6 +117,70 @@ impl IosPbxLinkedFile {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct IosPbxFileSpec {
+    pub(crate) name: String,
+    path: String,
+    last_known_file_type: &'static str,
+    source_tree: &'static str,
+}
+
+impl IosPbxFileSpec {
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) fn project_framework(name: impl Into<String>, path: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path: path.into(),
+            last_known_file_type: "wrapper.framework",
+            source_tree: "<group>",
+        }
+    }
+
+    pub(crate) fn project_xcframework(name: impl Into<String>, path: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path: path.into(),
+            last_known_file_type: "wrapper.xcframework",
+            source_tree: "<group>",
+        }
+    }
+
+    pub(crate) fn project_resource(name: impl Into<String>, path: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            last_known_file_type: pbx_resource_file_type(&name),
+            name,
+            path: path.into(),
+            source_tree: "<group>",
+        }
+    }
+
+    pub(crate) fn system_framework(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            path: format!("System/Library/Frameworks/{}", name),
+            name,
+            last_known_file_type: "wrapper.framework",
+            source_tree: "SDKROOT",
+        }
+    }
+
+    fn file_reference_line(&self, file_ref: &str) -> String {
+        format!(
+            "\t\t{} /* {} */ = {{isa = PBXFileReference; lastKnownFileType = {}; name = {}; path = {}; sourceTree = {}; }};\n",
+            file_ref,
+            self.name,
+            self.last_known_file_type,
+            render_pbx_value(&self.name),
+            render_pbx_value(&self.path),
+            render_pbx_value(self.source_tree)
+        )
+    }
+}
+
 pub(crate) fn register_pbx_linked_files(
     project_file: &Path,
     files: &[IosPbxLinkedFile],
@@ -166,6 +230,62 @@ pub(crate) fn register_pbx_linked_files(
                 &content,
                 "/* Begin PBXFileReference section */\n",
                 &file_line,
+                "PBXFileReference section",
+            )?;
+            content = insert_into_pbx_list(
+                &content,
+                r"(?s)(/\* Frameworks \*/ = \{\s*isa = PBXGroup;\s*children = \(\n)",
+                &format!("\t\t\t\t{} /* {} */,\n", file_ref, file.name),
+                "Frameworks group",
+            )?;
+        }
+
+        content = insert_into_pbx_list(
+            &content,
+            r"(?s)(/\* Frameworks \*/ = \{\s*isa = PBXFrameworksBuildPhase;.*?files = \(\n)",
+            &format!("\t\t\t\t{} /* {} in Frameworks */,\n", build_ref, file.name),
+            "PBXFrameworksBuildPhase",
+        )?;
+        linked_count += 1;
+    }
+
+    std::fs::write(&pbxproj, content).map_err(|e| format!("写入 project.pbxproj 失败: {}", e))?;
+    Ok(linked_count)
+}
+
+pub(crate) fn register_pbx_linked_file_specs(
+    project_file: &Path,
+    files: &[IosPbxFileSpec],
+) -> Result<usize, String> {
+    let pbxproj = project_file.join("project.pbxproj");
+    let mut content = std::fs::read_to_string(&pbxproj)
+        .map_err(|e| format!("读取 project.pbxproj 失败: {}", e))?;
+    let mut linked_count = 0usize;
+
+    for file in files {
+        if content.contains(&format!("/* {} in Frameworks */", file.name)) {
+            continue;
+        }
+
+        let existing_file_ref = find_pbx_file_reference_id(&content, &file.name);
+        let file_ref = existing_file_ref.clone().unwrap_or_else(pbx_object_id);
+        let build_ref = pbx_object_id();
+        let build_line = format!(
+            "\t\t{} /* {} in Frameworks */ = {{isa = PBXBuildFile; fileRef = {} /* {} */; }};\n",
+            build_ref, file.name, file_ref, file.name
+        );
+        content = insert_after_marker(
+            &content,
+            "/* Begin PBXBuildFile section */\n",
+            &build_line,
+            "PBXBuildFile section",
+        )?;
+
+        if existing_file_ref.is_none() {
+            content = insert_after_marker(
+                &content,
+                "/* Begin PBXFileReference section */\n",
+                &file.file_reference_line(&file_ref),
                 "PBXFileReference section",
             )?;
             content = insert_into_pbx_list(
@@ -263,6 +383,71 @@ pub(crate) fn register_pbx_embedded_frameworks(
     Ok(embedded_count)
 }
 
+pub(crate) fn register_pbx_embedded_file_specs(
+    project_file: &Path,
+    files: &[IosPbxFileSpec],
+) -> Result<usize, String> {
+    let pbxproj = project_file.join("project.pbxproj");
+    let mut content = std::fs::read_to_string(&pbxproj)
+        .map_err(|e| format!("读取 project.pbxproj 失败: {}", e))?;
+    let (updated, copy_phase_id) = ensure_embed_frameworks_copy_phase(&content)?;
+    content = updated;
+    let mut embedded_count = 0usize;
+
+    for file in files {
+        if content.contains(&format!("/* {} in Embed Frameworks */", file.name)) {
+            content = ensure_pbx_build_file_embed_signed(&content, &file.name);
+            continue;
+        }
+
+        let existing_file_ref = find_pbx_file_reference_id(&content, &file.name);
+        let file_ref = existing_file_ref.clone().unwrap_or_else(pbx_object_id);
+        let build_ref = pbx_object_id();
+        let build_line = format!(
+            "\t\t{} /* {} in Embed Frameworks */ = {{isa = PBXBuildFile; fileRef = {} /* {} */; settings = {{ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }}; }};\n",
+            build_ref, file.name, file_ref, file.name
+        );
+        content = insert_after_marker(
+            &content,
+            "/* Begin PBXBuildFile section */\n",
+            &build_line,
+            "PBXBuildFile section",
+        )?;
+
+        if existing_file_ref.is_none() {
+            content = insert_after_marker(
+                &content,
+                "/* Begin PBXFileReference section */\n",
+                &file.file_reference_line(&file_ref),
+                "PBXFileReference section",
+            )?;
+            content = insert_into_pbx_list(
+                &content,
+                r"(?s)(/\* Frameworks \*/ = \{\s*isa = PBXGroup;\s*children = \(\n)",
+                &format!("\t\t\t\t{} /* {} */,\n", file_ref, file.name),
+                "Frameworks group",
+            )?;
+        }
+
+        content = insert_into_pbx_list(
+            &content,
+            &format!(
+                r"(?s)({} /\* .*? \*/ = \{{\s*isa = PBXCopyFilesBuildPhase;.*?files = \(\n)",
+                regex::escape(&copy_phase_id)
+            ),
+            &format!(
+                "\t\t\t\t{} /* {} in Embed Frameworks */,\n",
+                build_ref, file.name
+            ),
+            "Embed Frameworks build phase",
+        )?;
+        embedded_count += 1;
+    }
+
+    std::fs::write(&pbxproj, content).map_err(|e| format!("写入 project.pbxproj 失败: {}", e))?;
+    Ok(embedded_count)
+}
+
 pub(crate) fn remove_pbx_linked_or_embedded_files(
     project_file: &Path,
     names: &[&str],
@@ -305,6 +490,182 @@ pub(crate) fn remove_pbx_linked_or_embedded_files(
             .map_err(|e| format!("写入 project.pbxproj 失败: {}", e))?;
     }
     Ok(removed_count)
+}
+
+pub(crate) fn append_pbx_build_setting_paths(
+    project_file: &Path,
+    key: &str,
+    paths: &[String],
+) -> Result<usize, String> {
+    if paths.is_empty() {
+        return Ok(0);
+    }
+
+    let pbxproj = project_file.join("project.pbxproj");
+    let content = std::fs::read_to_string(&pbxproj)
+        .map_err(|e| format!("读取 project.pbxproj 失败: {}", e))?;
+    let (updated, changed_count) = append_pbx_build_setting_paths_to_content(&content, key, paths);
+    if changed_count > 0 {
+        std::fs::write(&pbxproj, updated)
+            .map_err(|e| format!("写入 project.pbxproj 失败: {}", e))?;
+    }
+    Ok(changed_count)
+}
+
+pub(super) fn append_pbx_build_setting_paths_to_content(
+    content: &str,
+    key: &str,
+    paths: &[String],
+) -> (String, usize) {
+    let paths = paths
+        .iter()
+        .map(|path| path.trim())
+        .filter(|path| !path.is_empty())
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return (content.to_string(), 0);
+    }
+
+    let mut updated = content.to_string();
+    let mut changed_count = 0usize;
+    for path in paths {
+        let (next, changed) = append_pbx_build_setting_path_to_content(&updated, key, path);
+        updated = next;
+        changed_count += changed;
+    }
+    (updated, changed_count)
+}
+
+fn append_pbx_build_setting_path_to_content(
+    content: &str,
+    key: &str,
+    path: &str,
+) -> (String, usize) {
+    let array_pattern = regex::Regex::new(&format!(
+        r"(?ms)^([ \t]*{}\s*=\s*\(\n)(.*?)(^[ \t]*\);\n?)",
+        regex::escape(key)
+    ))
+    .expect("valid pbx array setting regex");
+    let mut matched_array = false;
+    let mut changed_count = 0usize;
+    let updated = array_pattern
+        .replace_all(content, |caps: &regex::Captures| {
+            matched_array = true;
+            let full = caps.get(0).map_or("", |value| value.as_str());
+            let body = caps.get(2).map_or("", |value| value.as_str());
+            if pbx_setting_value_contains_path(body, path) {
+                return full.to_string();
+            }
+            let key_line = caps.get(1).map_or("", |value| value.as_str());
+            let indent = key_line
+                .chars()
+                .take_while(|ch| matches!(ch, ' ' | '\t'))
+                .collect::<String>();
+            let item_indent = format!("{}\t", indent);
+            changed_count += 1;
+            format!(
+                "{}{}{}{},\n{}",
+                key_line,
+                body,
+                item_indent,
+                render_pbx_value(path),
+                caps.get(3).map_or("", |value| value.as_str())
+            )
+        })
+        .into_owned();
+    if matched_array {
+        return (updated, changed_count);
+    }
+
+    let line_pattern = regex::Regex::new(&format!(
+        r"(?m)^([ \t]*{}[ \t]*=[ \t]*)([^;\n]*)(;\n?)",
+        regex::escape(key)
+    ))
+    .expect("valid pbx line setting regex");
+    let mut matched_line = false;
+    let mut changed_count = 0usize;
+    let updated = line_pattern
+        .replace_all(content, |caps: &regex::Captures| {
+            matched_line = true;
+            let full = caps.get(0).map_or("", |value| value.as_str());
+            let existing = caps.get(2).map_or("", |value| value.as_str()).trim();
+            if pbx_setting_value_contains_path(existing, path) {
+                return full.to_string();
+            }
+            let prefix = caps.get(1).map_or("", |value| value.as_str());
+            let indent = prefix
+                .chars()
+                .take_while(|ch| matches!(ch, ' ' | '\t'))
+                .collect::<String>();
+            let item_indent = format!("{}\t", indent);
+            changed_count += 1;
+            let mut body = String::new();
+            if !existing.is_empty() {
+                body.push_str(&format!("{}{},\n", item_indent, existing));
+            }
+            body.push_str(&format!("{}{},\n", item_indent, render_pbx_value(path)));
+            format!(
+                "{}(\n{}{}){}",
+                prefix,
+                body,
+                indent,
+                caps.get(3).map_or(";", |value| value.as_str())
+            )
+        })
+        .into_owned();
+    if matched_line {
+        return (updated, changed_count);
+    }
+
+    insert_pbx_build_setting_path_when_missing(content, key, path)
+}
+
+fn insert_pbx_build_setting_path_when_missing(
+    content: &str,
+    key: &str,
+    path: &str,
+) -> (String, usize) {
+    let mut output = String::with_capacity(content.len() + key.len() + path.len() + 96);
+    let mut in_build_settings = false;
+    let mut changed_count = 0usize;
+
+    for line in content.lines() {
+        if in_build_settings && line.trim() == "};" {
+            let indent = line
+                .chars()
+                .take_while(|ch| matches!(ch, ' ' | '\t'))
+                .collect::<String>();
+            let item_indent = format!("{}\t", indent);
+            output.push_str(&format!("{}{} = (\n", indent, key));
+            output.push_str(&format!("{}\"$(inherited)\",\n", item_indent));
+            output.push_str(&format!("{}{},\n", item_indent, render_pbx_value(path)));
+            output.push_str(&format!("{});\n", indent));
+            changed_count += 1;
+            in_build_settings = false;
+        }
+        output.push_str(line);
+        output.push('\n');
+        if line.contains("buildSettings = {") {
+            in_build_settings = true;
+        }
+    }
+
+    if changed_count == 0 {
+        (content.to_string(), 0)
+    } else {
+        (output, changed_count)
+    }
+}
+
+fn pbx_setting_value_contains_path(value: &str, path: &str) -> bool {
+    let rendered = render_pbx_value(path);
+    value.lines().any(|line| {
+        let token = line.trim().trim_end_matches(',').trim();
+        token == path || token == rendered
+    }) || value
+        .split_whitespace()
+        .map(|token| token.trim().trim_end_matches(',').trim())
+        .any(|token| token == path || token == rendered)
 }
 
 fn ensure_pbx_build_file_weak_linked(content: &str, name: &str) -> String {
@@ -521,11 +882,7 @@ pub(super) fn patch_pbxproj(
         "CURRENT_PROJECT_VERSION",
         &effective_app_version_code(config, manifest_info).to_string(),
     );
-    let content = if classic_linker_available() {
-        append_pbx_build_setting_flag(&content, "OTHER_LDFLAGS", "-ld_classic")
-    } else {
-        content
-    };
+    let content = remove_pbx_build_setting_flag(&content, "OTHER_LDFLAGS", "-ld_classic");
     let uses_legacy_simulator_arch = legacy_simulator_x86_64_required(project_file);
     let content = if uses_legacy_simulator_arch {
         set_pbx_build_setting(&content, "\"ARCHS[sdk=iphonesimulator*]\"", "x86_64")
@@ -548,15 +905,7 @@ pub(super) fn legacy_simulator_x86_64_required(project_file: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn classic_linker_available() -> bool {
-    std::process::Command::new("xcrun")
-        .args(["--find", "ld-classic"])
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
-
-pub(super) fn append_pbx_build_setting_flag(content: &str, key: &str, flag: &str) -> String {
+pub(super) fn remove_pbx_build_setting_flag(content: &str, key: &str, flag: &str) -> String {
     let pattern = regex::Regex::new(&format!(
         r"(?m)^(\s*{}\s*=\s*)([^;]*)(;)",
         regex::escape(key)
@@ -565,20 +914,21 @@ pub(super) fn append_pbx_build_setting_flag(content: &str, key: &str, flag: &str
     pattern
         .replace_all(content, |caps: &regex::Captures| {
             let value = caps.get(2).map(|value| value.as_str()).unwrap_or_default();
-            if pbx_value_contains_flag(value, flag) {
+            if !pbx_value_contains_flag(value, flag) {
                 return caps
                     .get(0)
                     .map(|value| value.as_str())
                     .unwrap_or_default()
                     .to_string();
             }
-            let trimmed = value.trim();
-            let updated = if trimmed.starts_with('"') && trimmed.ends_with('"') {
-                format!("\"{} {}\"", &trimmed[1..trimmed.len() - 1], flag)
-            } else if trimmed.is_empty() {
-                render_pbx_value(flag)
+            let flags = pbx_flag_tokens(value)
+                .into_iter()
+                .filter(|token| *token != flag)
+                .collect::<Vec<_>>();
+            let updated = if flags.is_empty() {
+                "\"\"".to_string()
             } else {
-                render_pbx_value(&format!("{} {}", trimmed, flag))
+                render_pbx_value(&flags.join(" "))
             };
             format!("{}{}{}", &caps[1], updated, &caps[3])
         })
@@ -586,9 +936,16 @@ pub(super) fn append_pbx_build_setting_flag(content: &str, key: &str, flag: &str
 }
 
 fn pbx_value_contains_flag(value: &str, flag: &str) -> bool {
-    value
-        .split(|ch: char| ch.is_whitespace() || matches!(ch, '"' | ',' | '(' | ')'))
+    pbx_flag_tokens(value)
+        .into_iter()
         .any(|token| token == flag)
+}
+
+fn pbx_flag_tokens(value: &str) -> Vec<&str> {
+    value
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, '"' | ','))
+        .filter(|token| !token.is_empty() && *token != "(" && *token != ")")
+        .collect()
 }
 
 pub(super) fn set_pbx_build_setting(content: &str, key: &str, value: &str) -> String {
@@ -621,6 +978,89 @@ pub(super) fn set_pbx_build_setting(content: &str, key: &str, value: &str) -> St
         }
     }
     output
+}
+
+pub(crate) fn raise_pbx_ios_deployment_target(
+    project_file: &Path,
+    minimum: &str,
+) -> Result<bool, String> {
+    let pbxproj = project_file.join("project.pbxproj");
+    let content = std::fs::read_to_string(&pbxproj)
+        .map_err(|e| format!("读取 project.pbxproj 失败: {}", e))?;
+    let pattern = regex::Regex::new(r"(?m)^(\s*IPHONEOS_DEPLOYMENT_TARGET\s*=\s*)([^;]+)(;)")
+        .expect("valid deployment target regex");
+    let minimum_version = parse_ios_deployment_version(minimum)
+        .ok_or_else(|| format!("无效的 iOS 最低版本: {}", minimum))?;
+    let mut found = false;
+    let mut changed = false;
+    let updated = pattern
+        .replace_all(&content, |captures: &regex::Captures| {
+            found = true;
+            let value = captures
+                .get(2)
+                .map(|value| value.as_str())
+                .unwrap_or_default()
+                .trim()
+                .trim_matches('"');
+            let should_raise = parse_ios_deployment_version(value)
+                .map(|version| compare_ios_deployment_version(&version, &minimum_version).is_lt())
+                .unwrap_or(true);
+            if !should_raise {
+                return captures
+                    .get(0)
+                    .map(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+            }
+            changed = true;
+            format!(
+                "{}{}{}",
+                captures.get(1).map_or("", |value| value.as_str()),
+                render_pbx_value(minimum),
+                captures.get(3).map_or("", |value| value.as_str())
+            )
+        })
+        .into_owned();
+    if found {
+        if !changed {
+            return Ok(false);
+        }
+        std::fs::write(&pbxproj, updated)
+            .map_err(|e| format!("写入 project.pbxproj 失败: {}", e))?;
+        return Ok(true);
+    }
+    let updated = set_pbx_build_setting(&content, "IPHONEOS_DEPLOYMENT_TARGET", minimum);
+    if updated == content {
+        return Ok(false);
+    }
+    std::fs::write(&pbxproj, updated).map_err(|e| format!("写入 project.pbxproj 失败: {}", e))?;
+    Ok(true)
+}
+
+fn parse_ios_deployment_version(value: &str) -> Option<Vec<u32>> {
+    let parts = value
+        .split('.')
+        .map(str::trim)
+        .map(str::parse::<u32>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    if parts.is_empty() {
+        return None;
+    }
+    Some(parts)
+}
+
+fn compare_ios_deployment_version(left: &[u32], right: &[u32]) -> std::cmp::Ordering {
+    let max_len = left.len().max(right.len());
+    for index in 0..max_len {
+        let left_part = left.get(index).copied().unwrap_or_default();
+        let right_part = right.get(index).copied().unwrap_or_default();
+        match left_part.cmp(&right_part) {
+            std::cmp::Ordering::Equal => {}
+            ordering => return ordering,
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 fn render_pbx_value(value: &str) -> String {
@@ -686,6 +1126,62 @@ pub(crate) fn register_pbx_resources(
         )?;
     }
     std::fs::write(&pbxproj, content).map_err(|e| format!("写入 project.pbxproj 失败: {}", e))
+}
+
+pub(crate) fn register_pbx_resource_file_specs(
+    project_file: &Path,
+    resources: &[IosPbxFileSpec],
+) -> Result<usize, String> {
+    if resources.is_empty() {
+        return Ok(0);
+    }
+    let pbxproj = project_file.join("project.pbxproj");
+    let mut content = std::fs::read_to_string(&pbxproj)
+        .map_err(|e| format!("读取 project.pbxproj 失败: {}", e))?;
+    let mut registered_count = 0usize;
+
+    for resource in resources {
+        if content.contains(&format!("/* {} in Resources */", resource.name)) {
+            continue;
+        }
+        let file_ref = pbx_object_id();
+        let build_ref = pbx_object_id();
+        let build_line = format!(
+            "\t\t{} /* {} in Resources */ = {{isa = PBXBuildFile; fileRef = {} /* {} */; }};\n",
+            build_ref, resource.name, file_ref, resource.name
+        );
+        content = insert_after_marker(
+            &content,
+            "/* Begin PBXBuildFile section */\n",
+            &build_line,
+            "PBXBuildFile section",
+        )?;
+        content = insert_after_marker(
+            &content,
+            "/* Begin PBXFileReference section */\n",
+            &resource.file_reference_line(&file_ref),
+            "PBXFileReference section",
+        )?;
+        content = insert_into_pbx_list(
+            &content,
+            r"(?s)(/\* Supporting Files \*/ = \{\s*isa = PBXGroup;\s*children = \(\n)",
+            &format!("\t\t\t\t{} /* {} */,\n", file_ref, resource.name),
+            "Supporting Files group",
+        )?;
+        content = insert_into_pbx_list(
+            &content,
+            r"(?s)(/\* Resources \*/ = \{\s*isa = PBXResourcesBuildPhase;.*?files = \(\n)",
+            &format!(
+                "\t\t\t\t{} /* {} in Resources */,\n",
+                build_ref, resource.name
+            ),
+            "PBXResourcesBuildPhase",
+        )?;
+        registered_count += 1;
+    }
+
+    std::fs::write(&pbxproj, content).map_err(|e| format!("写入 project.pbxproj 失败: {}", e))?;
+    Ok(registered_count)
 }
 
 fn insert_after_marker(

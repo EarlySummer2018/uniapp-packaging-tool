@@ -90,13 +90,16 @@ fn all_selected_payment_providers_include_official_manifest_entries() {
     };
     let manifest = serde_json::json!({
         "app-plus": {
+            "modules": {
+                "Payment": {}
+            },
             "distribute": {
                 "sdkConfigs": {
                     "payment": {
-                        "alipay": {},
-                        "weixin": {},
-                        "paypal": {},
-                        "stripe": {},
+                        "alipay": { "__platform__": ["android"] },
+                        "weixin": { "__platform__": ["android"] },
+                        "paypal": { "__platform__": ["android"] },
+                        "stripe": { "__platform__": ["android"] },
                         "google": {}
                     }
                 }
@@ -142,10 +145,15 @@ fn payment_manifest_entries_follow_selected_providers() {
     };
     let manifest = serde_json::json!({
         "app-plus": {
+            "modules": {
+                "Payment": {}
+            },
             "distribute": {
                 "sdkConfigs": {
                     "payment": {
-                        "alipay": {}
+                        "alipay": {
+                            "__platform__": ["android"]
+                        }
                     }
                 }
             }

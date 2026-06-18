@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -83,16 +85,64 @@ jobs:
           )
 
           release_api="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases"
+
+          node - "$release_tag" <<'NODE' > generated-notes-payload.json
+          const tag = process.argv[2];
+          process.stdout.write(JSON.stringify({
+            tag_name: tag,
+            target_commitish: process.env.GITHUB_SHA
+          }));
+          NODE
+
+          curl -sS -f -o generated-notes.json -X POST "${headers[@]}" \
+            -d @generated-notes-payload.json \
+            "$release_api/generate-notes"
+
+          git fetch --tags --force
+          if git rev-parse -q --verify "$release_tag^{commit}" >/dev/null; then
+            previous_tag="$(git describe --tags --abbrev=0 "$release_tag^{commit}^" 2>/dev/null || true)"
+            if [ -n "$previous_tag" ]; then
+              changelog_range="$previous_tag..$release_tag"
+            else
+              changelog_range="$release_tag"
+            fi
+            git log --no-merges --format='%B%x00' "$changelog_range" > commit-messages.txt
+          else
+            git log -1 --format='%B%x00' "$GITHUB_SHA" > commit-messages.txt
+          fi
+
           status="$(curl -sS -o release.json -w "%{http_code}" "${headers[@]}" "$release_api/tags/$release_tag")"
 
           if [ "$status" = "404" ]; then
             node - "$release_tag" <<'NODE' > release-payload.json
+          const fs = require("fs");
           const tag = process.argv[2];
+          const generated = JSON.parse(fs.readFileSync("generated-notes.json", "utf8"));
+          const messages = fs.readFileSync("commit-messages.txt", "utf8")
+            .split("\0")
+            .map((message) => message.trim())
+            .filter(Boolean);
+          const importantChanges = messages.map((message) => {
+            const [subject, ...bodyLines] = message.split(/\r?\n/);
+            const body = bodyLines.map((line) => line.trim()).filter(Boolean).join("\n");
+            return body ? `### ${subject}\n\n${body}` : `### ${subject}`;
+          }).join("\n\n");
+          const downloadNotes = [
+            "## 下载",
+            "",
+            "- `UniPack-Tool-macOS.dmg`：macOS 安装包",
+            "- `UniPack-Tool-macOS.dmg.sha256`：安装包 SHA-256 校验文件"
+          ].join("\n");
+          const body = [
+            importantChanges && `## 重要变更\n\n${importantChanges}`,
+            generated.body && generated.body.trim(),
+            downloadNotes
+          ].filter(Boolean).join("\n\n");
           process.stdout.write(JSON.stringify({
             tag_name: tag,
             target_commitish: process.env.GITHUB_SHA,
             name: `UniPack Tool ${tag}`,
-            body: "Download `UniPack-Tool-macOS.dmg` below.",
+            body,
             draft: false,
             prerelease: false,
             make_latest: "true"
@@ -103,10 +153,32 @@ jobs:
               "$release_api"
           elif [ "$status" = "200" ]; then
             node - "$release_tag" <<'NODE' > release-payload.json
+          const fs = require("fs");
           const tag = process.argv[2];
+          const generated = JSON.parse(fs.readFileSync("generated-notes.json", "utf8"));
+          const messages = fs.readFileSync("commit-messages.txt", "utf8")
+            .split("\0")
+            .map((message) => message.trim())
+            .filter(Boolean);
+          const importantChanges = messages.map((message) => {
+            const [subject, ...bodyLines] = message.split(/\r?\n/);
+            const body = bodyLines.map((line) => line.trim()).filter(Boolean).join("\n");
+            return body ? `### ${subject}\n\n${body}` : `### ${subject}`;
+          }).join("\n\n");
+          const downloadNotes = [
+            "## 下载",
+            "",
+            "- `UniPack-Tool-macOS.dmg`：macOS 安装包",
+            "- `UniPack-Tool-macOS.dmg.sha256`：安装包 SHA-256 校验文件"
+          ].join("\n");
+          const body = [
+            importantChanges && `## 重要变更\n\n${importantChanges}`,
+            generated.body && generated.body.trim(),
+            downloadNotes
+          ].filter(Boolean).join("\n\n");
           process.stdout.write(JSON.stringify({
             name: `UniPack Tool ${tag}`,
-            body: "Download `UniPack-Tool-macOS.dmg` below.",
+            body,
             draft: false,
             prerelease: false,
             make_latest: "true"

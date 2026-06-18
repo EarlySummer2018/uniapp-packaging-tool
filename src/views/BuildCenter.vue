@@ -1,212 +1,85 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  NAlert,
   NButton,
-  NCard,
-  NCheckbox,
-  NFormItem,
   NGi,
   NGrid,
   NIcon,
-  NInput,
-  NProgress,
-  NSelect,
+  NRadio,
+  NRadioGroup,
   NSpace,
-  NTag,
   NText,
   useDialog,
   useMessage
 } from 'naive-ui'
-import { ArrowBackOutline, FolderOpenOutline, PlayOutline } from '@vicons/ionicons5'
+import { ArrowBackOutline } from '@vicons/ionicons5'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
 import { invoke } from '@tauri-apps/api/core'
-import { LogoAndroid, LogoApple, PhonePortraitOutline } from '@vicons/ionicons5'
-import PlatformCard from '../components/PlatformCard.vue'
-import LogPanel from '../components/LogPanel.vue'
 import { useBuildStore } from '../stores/build'
 import { useProjectsStore } from '../stores/projects'
-
-type Platform = 'android' | 'ios' | 'harmony'
-type NonIosPlatform = Exclude<Platform, 'ios'>
-
-interface UtsBuiltinModule {
-  name: string
-  localAar: string
-  onlineDeps: string[]
-  dependsOn: string[]
-}
-
-interface UtsCustomPlugin {
-  id: string
-  androidDir?: string | null
-  iosDir?: string | null
-  androidDeps: string[]
-  iosFrameworks: string[]
-}
-
-interface DetectedModule {
-  name: string
-  category: string
-  platforms: string[]
-  configured: boolean
-  requiredKeys: string[]
-  source: string
-}
-
-interface AndroidManifestConfig {
-  packageName?: string | null
-  minSdkVersion?: number | null
-  targetSdkVersion?: number | null
-  compileSdkVersion?: number | null
-  permissions?: string[]
-  excludePermissions?: string[]
-  schemes?: string[]
-  abiFilters?: string[]
-}
-
-interface PlatformPackages {
-  androidPackage?: string | null
-  iosBundleId?: string | null
-  harmonyBundle?: string | null
-}
-
-interface SplashscreenConfig {
-  androidStyle?: string | null
-  android: Record<string, string>
-  iosStyle?: string | null
-  iosStoryboard?: string | null
-  useOriginalMsgbox?: boolean | null
-}
-
-interface UniappManifestInfo {
-  appName?: string | null
-  appId?: string | null
-  versionName?: string | null
-  versionCode?: number | null
-  hbuilderxVersion?: string | null
-  androidIcons?: { android: Record<string, string> } | null
-  iosIcons?: { ios: Record<string, string> } | null
-  iosPrivacyDescriptions?: Record<string, string>
-  splashscreen?: SplashscreenConfig | null
-  manifestValue?: Record<string, any> | null
-  manifestPath: string
-  projectRoot: string
-  android: AndroidManifestConfig
-  packageNames: PlatformPackages
-  detectedModules: DetectedModule[]
-  warnings: string[]
-}
-
-interface AndroidModuleConfigField {
-  key: string
-  label: string
-  required: boolean
-  secret: boolean
-  value?: string | null
-  valueSource?: string | null
-  placeholder: string
-  fieldType?: string
-  field_type?: string
-}
-
-interface IosModuleConfigField {
-  key: string
-  label: string
-  required: boolean
-  secret: boolean
-  value?: string | null
-  valueSource?: string | null
-  placeholder: string
-  fieldType?: string
-  field_type?: string
-}
-
-interface AndroidModuleConfigModule {
-  name: string
-  templateKey: string
-  category: string
-  platforms: string[]
-  source: string
-  fields: AndroidModuleConfigField[]
-}
-
-interface AndroidModuleMissingConfig {
-  moduleName: string
-  key: string
-  label: string
-}
-
-interface AndroidModuleConfigReport {
-  modules: AndroidModuleConfigModule[]
-  missingRequired: AndroidModuleMissingConfig[]
-  allConfigured: boolean
-}
-
-interface IosModuleConfigModule {
-  name: string
-  templateKey: string
-  category: string
-  platforms: string[]
-  source: string
-  fields: IosModuleConfigField[]
-}
-
-interface IosModuleConfigReport {
-  modules: IosModuleConfigModule[]
-}
-
-interface ResourceScanResult {
-  appId: string
-  appName?: string | null
-  versionName?: string | null
-  versionCode?: number | null
-  hbuilderxVersion?: string | null
-  sourcePath: string
-  importedPath: string
-  appResourcePath: string
-  isZip: boolean
-  manifestPath?: string | null
-  splashscreen?: SplashscreenConfig | null
-  detectedModules: DetectedModule[]
-  uts: {
-    hasUtsPlugins: boolean
-    builtinModules: UtsBuiltinModule[]
-    customPlugins: UtsCustomPlugin[]
-  }
-  warnings: string[]
-}
-
-interface BuildArtifact {
-  platform: Platform
-  path: string
-  fileName: string
-  sizeBytes: number
-  buildId: string
-}
-
-interface BuildRecord {
-  id: string
-  project_id: string
-  project_name: string
-  platform: Platform
-  status: string
-  artifact_path?: string | null
-  artifact_size_mb?: number | null
-  version_name: string
-  version_code: number
-  build_mode: string
-  duration_secs: number
-  started_at: string
-  finished_at?: string | null
-  error_message?: string | null
-  log_path?: string | null,
-  resource_path?: string | null
-}
-
-type ModuleStatusTone = 'default' | 'success' | 'warning' | 'error'
+import AndroidModuleConfigPanel from './build-center/AndroidModuleConfigPanel.vue'
+import BuildLogCard from './build-center/BuildLogCard.vue'
+import IosOfflineSdkPanel from './build-center/IosOfflineSdkPanel.vue'
+import IosPrivacyDescriptionModal from './build-center/IosPrivacyDescriptionModal.vue'
+import PlatformSelectCard from './build-center/PlatformSelectCard.vue'
+import ResourceImportCard from './build-center/ResourceImportCard.vue'
+import ResourceInsightPanel from './build-center/ResourceInsightPanel.vue'
+import { platforms } from './build-center/platforms'
+import type {
+  AndroidModuleConfigField,
+  AndroidModuleConfigModule,
+  AndroidModuleConfigReport,
+  BuildArtifact,
+  BuildRecord,
+  DetectedModule,
+  IosModuleConfigField,
+  IosModuleConfigModule,
+  IosModuleConfigReport,
+  IosPrivacyDescriptionItem,
+  ModuleStatusTone,
+  NonIosPlatform,
+  Platform,
+  ResourceScanResult,
+  UniappManifestInfo
+} from './build-center/types'
+import {
+  androidConfigModuleKey,
+  androidModuleFieldValueKey,
+  formatModuleWithPlatforms,
+  generateProjectCommand,
+  generateProjectKind,
+  iosConfigModuleKey,
+  iosModuleFieldValueKey,
+  isIosPrivacyField,
+  manifestModuleKey,
+  platformProjectName
+} from './build-center/moduleKeys'
+import {
+  iosMapProviderForModule,
+  normalizeIosFieldValue,
+  normalizeIosMapPageTypeValue
+} from './build-center/moduleFields'
+import {
+  cloneJson,
+  ensureObjectPath,
+  normalizeBooleanFieldValue
+} from './build-center/manifestObject'
+import {
+  cleanupIosPushSdkConfigs,
+  clearIosMapPageTypeConfig,
+  ensureIosGeolocationSdkConfig,
+  ensureIosMapSdkConfig,
+  ensureIosPushSdkConfig,
+  ensureIosStatisticSdkConfig,
+  ensureIosUnipushConfig,
+  setIosAllowsArbitraryLoads,
+  setIosBluetoothBackgroundModes,
+  setIosGeolocationProviderValue,
+  setIosMapProviderValue,
+  setIosProviderValue
+} from './build-center/iosManifestConfig'
 
 const route = useRoute()
 const router = useRouter()
@@ -232,15 +105,17 @@ const selectedManifestModuleKeys = ref<Set<string>>(new Set())
 const manifestModuleSelectionTouched = ref(false)
 const activeAndroidConfigModuleKey = ref<string | null>(null)
 const activeIosConfigModuleKey = ref<string | null>(null)
+const iosPrivacyDialogVisible = ref(false)
 
 let androidModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 let iosModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 
-const platforms = [
-  { key: 'android' as const, label: 'Android', icon: LogoAndroid, description: 'APK 安装包', color: '#2f9e44', bgColor: '#e8f5e9' },
-  { key: 'ios' as const, label: 'iOS', icon: LogoApple, description: '离线 SDK / IPA', color: '#1c7ed6', bgColor: '#e7f5ff' },
-  { key: 'harmony' as const, label: '鸿蒙', icon: PhonePortraitOutline, description: 'HAP 安装包', color: '#d6336c', bgColor: '#fff0f6' }
-]
+type IosPackagingMode = 'autoMigration' | 'localPod'
+
+function iosPackagingModeLabel(mode: IosPackagingMode) {
+  if (mode === 'autoMigration') return '自动迁移打包'
+  return '本地 Pod 打包'
+}
 
 const selectedNeedsAndroidConfig = computed(() => selectedPlatforms.value.includes('android'))
 const selectedNeedsIosConfig = computed(() => selectedPlatforms.value.includes('ios'))
@@ -283,6 +158,7 @@ const iosModuleMissingRequired = computed(() => {
   for (const mod of report.modules) {
     if (!isIosConfigModuleSelected(mod)) continue
     for (const field of mod.fields) {
+      if (isIosPrivacyField(field)) continue
       if (!field.required || iosFieldValue(mod, field).trim()) continue
       const key = iosModuleFieldValueKey(mod, field)
       if (!missing.has(key)) {
@@ -291,6 +167,64 @@ const iosModuleMissingRequired = computed(() => {
     }
   }
   return Array.from(missing.values())
+})
+const iosPrivacyDescriptionItems = computed<IosPrivacyDescriptionItem[]>(() => {
+  const report = iosModuleConfigReport.value
+  if (!report) return []
+  const groups = new Map<string, {
+    key: string
+    fieldKey: string
+    baseLabel: string
+    modules: string[]
+    required: boolean
+    placeholder: string
+    value: string
+  }>()
+  for (const mod of report.modules) {
+    if (!isIosConfigModuleSelected(mod)) continue
+    for (const field of mod.fields) {
+      if (!isIosPrivacyField(field)) continue
+      const fieldKey = iosModuleFieldValueKey(mod, field)
+      const plistKey = field.key.slice('privacy.'.length)
+      const moduleLabel = iosPrivacyModuleLabel(mod)
+      const currentValue = iosFieldValue(mod, field)
+      const existing = groups.get(fieldKey)
+      if (existing) {
+        if (!existing.modules.includes(moduleLabel)) existing.modules.push(moduleLabel)
+        existing.required = existing.required || field.required
+        if (!existing.value.trim() && currentValue.trim()) existing.value = currentValue
+        if (!existing.placeholder && field.placeholder) existing.placeholder = field.placeholder
+        continue
+      }
+      groups.set(fieldKey, {
+        key: plistKey,
+        fieldKey,
+        baseLabel: iosPrivacyPermissionLabel(plistKey, field.label),
+        modules: [moduleLabel],
+        required: field.required,
+        placeholder: field.placeholder,
+        value: currentValue
+      })
+    }
+  }
+  return Array.from(groups.values()).map(item => {
+    const value = item.value.trim()
+    return {
+      key: item.key,
+      fieldKey: item.fieldKey,
+      label: item.modules.length
+        ? `${item.baseLabel}（${item.modules.join('、')}）`
+        : item.baseLabel,
+      modules: item.modules,
+      required: item.required,
+      placeholder: item.placeholder,
+      value: item.value,
+      missing: item.required && !value
+    }
+  })
+})
+const iosPrivacyDescriptionMissingCount = computed(() => {
+  return iosPrivacyDescriptionItems.value.filter(item => item.missing).length
 })
 const iosMissingRequired = computed(() => {
   if (!selectedNeedsIosConfig.value) return []
@@ -412,7 +346,7 @@ const iosConfigModulesByKey = computed(() => {
 })
 const iosConfigurableModules = computed(() => {
   const modules = iosModuleConfigReport.value?.modules || []
-  return modules.filter(mod => mod.fields.length > 0 && isIosConfigModuleSelected(mod))
+  return modules.filter(mod => mod.fields.some(isIosInlineConfigField) && isIosConfigModuleSelected(mod))
 })
 const activeIosConfigModule = computed(() => {
   if (!activeIosConfigModuleKey.value) return null
@@ -515,6 +449,61 @@ function togglePlatform(platform: Platform) {
   else selectedPlatforms.value.push(platform)
 }
 
+function chooseIosPackagingMode(actionLabel: string): Promise<IosPackagingMode | null> {
+  return new Promise(resolve => {
+    let settled = false
+    const selectedMode = ref<IosPackagingMode>('autoMigration')
+    const dialogInstance = dialog.create({
+      type: 'info',
+      title: '选择 iOS 打包方式',
+      content: () => h(NSpace, { vertical: true, size: 12 }, {
+        default: () => [
+          h(NText, { depth: 3 }, {
+            default: () => `${actionLabel}将使用本次选择的 iOS 打包方式。`
+          }),
+          h(NRadioGroup, {
+            value: selectedMode.value,
+            'onUpdate:value': (value: IosPackagingMode) => {
+              if (value === 'autoMigration') selectedMode.value = value
+            }
+          }, {
+            default: () => h(NSpace, { vertical: true, size: 8 }, {
+              default: () => [
+                h(NRadio, { value: 'autoMigration' }, { default: () => '自动迁移打包' }),
+                h(NRadio, { value: 'localPod', disabled: true }, { default: () => '本地 Pod（暂不可用）' })
+              ]
+            })
+          })
+        ]
+      }),
+      closable: true,
+      maskClosable: false,
+      onClose: () => {
+        if (!settled) resolve(null)
+      },
+      action: () => h(NSpace, { justify: 'end' }, {
+        default: () => [
+          h(NButton, {
+            onClick: () => {
+              settled = true
+              dialogInstance.destroy()
+              resolve(null)
+            }
+          }, { default: () => '取消' }),
+          h(NButton, {
+            type: 'primary',
+            onClick: () => {
+              settled = true
+              dialogInstance.destroy()
+              resolve(selectedMode.value)
+            }
+          }, { default: () => `使用${iosPackagingModeLabel(selectedMode.value)}` })
+        ]
+      })
+    })
+  })
+}
+
 function canGenerateNativeProject(platform: Platform) {
   return !!scanResult.value && singleSelectedPlatform.value === platform && !isBuildLocked.value
 }
@@ -540,6 +529,11 @@ async function startBuild() {
   if (!(await ensureIosModuleConfigReadyForBuild())) {
     return
   }
+  let iosPackagingMode: IosPackagingMode | null = null
+  if (selectedNeedsIosConfig.value) {
+    iosPackagingMode = await chooseIosPackagingMode('开始打包')
+    if (!iosPackagingMode) return
+  }
   const buildManifestInfo = selectedManifestInfoForBuild(manifestInfo)
   const androidModuleConfig = buildAndroidModuleConfigPayload()
   await persistAndroidModuleConfigCache()
@@ -548,7 +542,7 @@ async function startBuild() {
   const buildIds: string[] = []
   for (const platform of selectedPlatforms.value) {
     const buildId = platform === 'ios'
-      ? await buildIosIpa(runProjectId, runProjectName, importedResourcePath, buildManifestInfo)
+      ? await buildIosIpa(runProjectId, runProjectName, importedResourcePath, buildManifestInfo, iosPackagingMode!)
       : await buildStandardPackage(platform, runProjectId, runProjectName, importedResourcePath, buildManifestInfo, androidModuleConfig)
     lastBuildId = buildId
     buildIds.push(buildId)
@@ -569,7 +563,8 @@ async function buildIosIpa(
   runProjectId: string,
   runProjectName: string,
   importedResourcePath: string,
-  buildManifestInfo: UniappManifestInfo
+  buildManifestInfo: UniappManifestInfo,
+  packagingMode: IosPackagingMode
 ) {
   const platform: Platform = 'ios'
   const buildId = buildStore.startBuild(runProjectId, platform, 'package')
@@ -580,6 +575,7 @@ async function buildIosIpa(
   await appendManifestLog(buildId, buildManifestInfo, platform)
   await buildStore.appendBuildLogLines(buildId, [
     '[info] iOS 离线 SDK 流程: 复制 SDK 自带 HBuilder-Hello* 并配置 workspace 副本',
+    `[info] iOS 打包方式: ${iosPackagingModeLabel(packagingMode)}`,
     `[info] iOS 图标配置: ${iosIconCount.value} 项，隐私描述: ${iosPrivacyDescriptionCount.value} 项`
   ])
   try {
@@ -693,6 +689,8 @@ async function generateIosOfflineProject() {
   if (!(await ensureIosModuleConfigReadyForBuild())) {
     return
   }
+  const iosPackagingMode = await chooseIosPackagingMode('生成 iOS 原生项目')
+  if (!iosPackagingMode) return
   const buildManifestInfo = selectedManifestInfoForBuild(manifestInfo)
   await persistAndroidModuleConfigCache()
   await persistIosModuleConfigCache()
@@ -704,6 +702,7 @@ async function generateIosOfflineProject() {
   await appendManifestLog(buildId, buildManifestInfo, 'ios')
   await buildStore.appendBuildLogLines(buildId, [
     '[info] iOS 工程生成: 复制 SDK 自带 HBuilder-Hello* 后配置 workspace 副本',
+    `[info] iOS 打包方式: ${iosPackagingModeLabel(iosPackagingMode)}`,
     `[info] iOS 图标配置: ${iosIconCount.value} 项，隐私描述: ${iosPrivacyDescriptionCount.value} 项`
   ])
   try {
@@ -828,60 +827,6 @@ function scheduleIosModuleConfigCacheSave() {
 
 function getProjectName() {
   return currentProject.value?.name || currentProject.value?.app.name || projectId.value
-}
-
-function platformProjectName(platform: Platform) {
-  if (platform === 'android') return '安卓'
-  if (platform === 'ios') return '苹果'
-  return '鸿蒙'
-}
-
-function generateProjectKind(platform: NonIosPlatform) {
-  if (platform === 'android') return 'generateAndroidProject' as const
-  return 'generateHarmonyProject' as const
-}
-
-function generateProjectCommand(platform: NonIosPlatform) {
-  if (platform === 'android') return 'generate_android_project'
-  return 'generate_harmony_project'
-}
-
-function formatPlatforms(platforms: string[]) {
-  return platforms.filter(platform => platform && platform !== 'all').join(' / ')
-}
-
-function formatModuleWithPlatforms(mod: { name: string; platforms: string[] }) {
-  const platforms = formatPlatforms(mod.platforms)
-  return platforms ? `${mod.name}(${platforms})` : mod.name
-}
-
-function moduleKeyParts(name: string, category: string, platforms: string[], source: string) {
-  return [name, category, platforms.join('|'), source || 'manifest.json'].join('::')
-}
-
-function manifestModuleKey(mod: DetectedModule) {
-  return moduleKeyParts(mod.name, mod.category, mod.platforms, mod.source)
-}
-
-function androidConfigModuleKey(mod: AndroidModuleConfigModule) {
-  return moduleKeyParts(mod.name, mod.category, mod.platforms, mod.source)
-}
-
-function iosConfigModuleKey(mod: IosModuleConfigModule) {
-  return moduleKeyParts(mod.name, mod.category, mod.platforms, mod.source)
-}
-
-function androidModuleFieldValueKey(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
-  return `${mod.templateKey}.${field.key}`
-}
-
-function iosModuleFieldValueKey(mod: IosModuleConfigModule, field: IosModuleConfigField) {
-  if (isIosPrivacyField(field)) return field.key
-  return `${mod.templateKey}.${field.key}`
-}
-
-function isIosPrivacyField(field: IosModuleConfigField) {
-  return field.key.startsWith('privacy.')
 }
 
 function isManifestModuleSelected(mod: DetectedModule) {
@@ -1030,6 +975,78 @@ function openIosConfigModule(mod: IosModuleConfigModule) {
   activeIosConfigModuleKey.value = iosConfigModuleKey(mod)
 }
 
+function isIosLocalPodField(field: IosModuleConfigField) {
+  return field.key === 'LOCAL_POD'
+}
+
+function isIosInlineConfigField(field: IosModuleConfigField) {
+  return !isIosLocalPodField(field) && !isIosPrivacyField(field)
+}
+
+function stripIosLocalPodFields(report: IosModuleConfigReport): IosModuleConfigReport {
+  return {
+    modules: report.modules.map(mod => ({
+      ...mod,
+      fields: mod.fields.filter(field => !isIosLocalPodField(field))
+    }))
+  }
+}
+
+function iosPrivacyModuleLabel(mod: IosModuleConfigModule) {
+  const labels: Record<string, string> = {
+    barcode: '扫码',
+    bluetooth: '蓝牙',
+    camera: '相机',
+    contacts: '通讯录',
+    face_id: 'Face ID',
+    face_recognition: '实人认证',
+    fingerprint: '指纹/面容识别',
+    geolocation: '定位',
+    ibeacon: 'iBeacon',
+    livepusher: 'livePusher',
+    map: '地图',
+    record: '录音',
+    speech: '语音识别'
+  }
+  return labels[mod.templateKey] || mod.name
+}
+
+function iosPrivacyPermissionLabel(plistKey: string, fallback: string) {
+  const labels: Record<string, string> = {
+    NSBluetoothAlwaysUsageDescription: '蓝牙权限',
+    NSBluetoothPeripheralUsageDescription: '蓝牙权限',
+    NSCameraUsageDescription: '相机权限',
+    NSContactsUsageDescription: '通讯录权限',
+    NSFaceIDUsageDescription: 'Face ID 权限',
+    NSLocationAlwaysAndWhenInUseUsageDescription: '始终和使用期间定位权限',
+    NSLocationAlwaysUsageDescription: '始终定位权限',
+    NSLocationWhenInUseUsageDescription: '使用期间定位权限',
+    NSMicrophoneUsageDescription: '麦克风权限',
+    NSPhotoLibraryAddUsageDescription: '保存到相册权限',
+    NSPhotoLibraryUsageDescription: '相册权限',
+    NSSpeechRecognitionUsageDescription: '语音识别权限'
+  }
+  return labels[plistKey] || fallback.replace(/说明$/, '').replace(/权限$/, '权限')
+}
+
+function openIosPrivacyDescriptionDialog() {
+  if (!iosPrivacyDescriptionItems.value.length) {
+    message.info('当前已选 iOS 模块暂无权限说明需要填写')
+    return
+  }
+  iosPrivacyDialogVisible.value = true
+}
+
+function updateIosPrivacyDescription(item: IosPrivacyDescriptionItem, value: string) {
+  if (isBuildLocked.value) return
+  iosModuleConfigValues.value = {
+    ...iosModuleConfigValues.value,
+    [item.fieldKey]: value
+  }
+  syncIosModuleConfigCache()
+  scheduleIosModuleConfigCacheSave()
+}
+
 function selectedManifestInfoForBuild(info: UniappManifestInfo): UniappManifestInfo {
   const detectedModules = !manifestModuleSelectionTouched.value && selectedManifestModuleKeys.value.size === 0
     ? info.detectedModules
@@ -1049,8 +1066,7 @@ function applyIosModuleConfigToManifestInfo(info: UniappManifestInfo): UniappMan
     applyIosPushConfigToManifestValue(manifestValue)
     applyIosBluetoothConfigToManifestValue(manifestValue)
     applyIosVideoPlayerConfigToManifestValue(manifestValue)
-    applyIosOauthConfigToManifestValue(manifestValue)
-    applyIosShareConfigToManifestValue(manifestValue)
+    applyIosStatisticConfigToManifestValue(manifestValue)
   }
   return {
     ...info,
@@ -1105,16 +1121,8 @@ function applyIosMapConfigToManifestValue(manifestValue: Record<string, any>) {
         if (value) setIosMapProviderValue(mapConfig, 'google', ['google', 'googleMap'], 'apikey_ios', value)
       } else if (field.key === 'MAP_PAGE_TYPE') {
         mapConfig.pageType = normalizeIosMapPageTypeValue(provider, value)
-      } else if (field.key === 'LOCAL_POD') {
-        mapConfig.localPod = normalizeBooleanFieldValue(value)
       }
     }
-  }
-}
-
-function clearIosMapPageTypeConfig(mapConfig: Record<string, any>) {
-  for (const key of ['pageType', 'page_type', 'MAP_PAGE_TYPE', 'page']) {
-    delete mapConfig[key]
   }
 }
 
@@ -1149,16 +1157,6 @@ function applyIosBluetoothConfigToManifestValue(manifestValue: Record<string, an
   setIosBluetoothBackgroundModes(iosConfig, enabled)
 }
 
-function setIosBluetoothBackgroundModes(iosConfig: Record<string, any>, enabled: boolean) {
-  const currentModes = collectStringValues(iosConfig.UIBackgroundModes)
-    .filter(mode => mode !== 'bluetooth-central' && mode !== 'bluetooth-peripheral')
-  if (enabled) {
-    currentModes.push('bluetooth-central', 'bluetooth-peripheral')
-  }
-  const modes = uniqueNonEmptyStrings(currentModes)
-  iosConfig.UIBackgroundModes = modes
-}
-
 function applyIosVideoPlayerConfigToManifestValue(manifestValue: Record<string, any>) {
   const videoPlayerModule = (iosModuleConfigReport.value?.modules || [])
     .find(mod => mod.templateKey === 'video_player' && isIosConfigModuleSelected(mod))
@@ -1170,196 +1168,23 @@ function applyIosVideoPlayerConfigToManifestValue(manifestValue: Record<string, 
   setIosAllowsArbitraryLoads(iosConfig, enabled)
 }
 
-function setIosAllowsArbitraryLoads(iosConfig: Record<string, any>, enabled: boolean) {
-  const ats = isPlainRecord(iosConfig.NSAppTransportSecurity)
-    ? { ...iosConfig.NSAppTransportSecurity }
-    : {}
-  ats.NSAllowsArbitraryLoads = enabled
-  iosConfig.NSAppTransportSecurity = ats
-}
-
-function applyIosShareConfigToManifestValue(manifestValue: Record<string, any>) {
-  const shareModules = (iosModuleConfigReport.value?.modules || [])
-    .filter(mod => mod.templateKey === 'share' && isIosConfigModuleSelected(mod))
-  if (!shareModules.length) return
+function applyIosStatisticConfigToManifestValue(manifestValue: Record<string, any>) {
+  const statisticModules = (iosModuleConfigReport.value?.modules || [])
+    .filter(mod => mod.templateKey === 'statistic' && isIosConfigModuleSelected(mod))
+  if (!statisticModules.length) return
 
   const sdkConfigs = ensureObjectPath(manifestValue, ['app-plus', 'distribute', 'sdkConfigs'])
-  const shareConfig = ensureIosShareSdkConfig(sdkConfigs)
-  for (const mod of shareModules) {
+  const statisticConfig = ensureIosStatisticSdkConfig(sdkConfigs)
+  for (const mod of statisticModules) {
     for (const field of mod.fields) {
       const value = iosFieldValue(mod, field).trim()
-      if (field.key === 'LOCAL_POD') {
-        shareConfig.localPod = normalizeBooleanFieldValue(value)
+      if (field.key === 'UMENG_APPKEY') {
+        if (value) setIosProviderValue(statisticConfig, 'umeng', ['umeng', 'umeng-ios'], 'appkey_ios', value)
+      } else if (field.key === 'UMENG_CHANNEL') {
+        if (value) setIosProviderValue(statisticConfig, 'umeng', ['umeng', 'umeng-ios'], 'channelid_ios', value)
       }
     }
   }
-}
-
-function applyIosOauthConfigToManifestValue(manifestValue: Record<string, any>) {
-  const oauthModule = (iosModuleConfigReport.value?.modules || [])
-    .find(mod => mod.templateKey === 'login' && isIosConfigModuleSelected(mod))
-  if (!oauthModule) return
-
-  const sdkConfigs = ensureObjectPath(manifestValue, ['app-plus', 'distribute', 'sdkConfigs'])
-  const oauthConfig = ensureIosOauthSdkConfig(sdkConfigs)
-  for (const field of oauthModule.fields) {
-    const value = iosFieldValue(oauthModule, field).trim()
-    if (field.key === 'LOCAL_POD') {
-      oauthConfig.localPod = normalizeBooleanFieldValue(value)
-    }
-  }
-}
-
-function ensureIosOauthSdkConfig(sdkConfigs: Record<string, any>) {
-  if (isPlainRecord(sdkConfigs.oauth)) return sdkConfigs.oauth
-  const alias = findFirstObjectEntry(sdkConfigs, ['login', 'oauths'])
-  const next = alias ? cloneJson(alias.value) : {}
-  sdkConfigs.oauth = next
-  return next
-}
-
-function ensureIosShareSdkConfig(sdkConfigs: Record<string, any>) {
-  if (isPlainRecord(sdkConfigs.share)) return sdkConfigs.share
-  const alias = findFirstObjectEntry(sdkConfigs, ['shares'])
-  const next = alias ? cloneJson(alias.value) : {}
-  sdkConfigs.share = next
-  return next
-}
-
-function ensureIosGeolocationSdkConfig(sdkConfigs: Record<string, any>) {
-  if (isPlainRecord(sdkConfigs.geolocation)) return sdkConfigs.geolocation
-  const alias = findFirstObjectEntry(sdkConfigs, ['location', 'position'])
-  const next = alias ? cloneJson(alias.value) : {}
-  sdkConfigs.geolocation = next
-  return next
-}
-
-function ensureIosMapSdkConfig(sdkConfigs: Record<string, any>) {
-  if (isPlainRecord(sdkConfigs.maps)) return sdkConfigs.maps
-  const alias = findFirstObjectEntry(sdkConfigs, ['map'])
-  const next = alias ? cloneJson(alias.value) : {}
-  sdkConfigs.maps = next
-  return next
-}
-
-function ensureIosPushSdkConfig(sdkConfigs: Record<string, any>) {
-  if (isPlainRecord(sdkConfigs.push)) return sdkConfigs.push
-  const next = {}
-  sdkConfigs.push = next
-  return next
-}
-
-function cleanupIosPushSdkConfigs(sdkConfigs: Record<string, any>, pushConfig: Record<string, any>) {
-  const unipush = isPlainRecord(pushConfig.unipush) ? cloneJson(pushConfig.unipush) : {}
-  for (const key of Object.keys(pushConfig)) {
-    delete pushConfig[key]
-  }
-  pushConfig.unipush = unipush
-  for (const key of ['unipush', 'getui', 'igetui', 'gcm', 'fcm', 'google', 'googleCloudMessage']) {
-    delete sdkConfigs[key]
-  }
-}
-
-function ensureIosUnipushConfig(pushConfig: Record<string, any>) {
-  if (isPlainRecord(pushConfig.unipush)) return pushConfig.unipush
-  const alias = findFirstObjectEntry(pushConfig, ['unipush'])
-  const next = alias ? cloneJson(alias.value) : {}
-  pushConfig.unipush = next
-  return next
-}
-
-function setIosGeolocationProviderValue(
-  geolocationConfig: Record<string, any>,
-  canonicalProvider: string,
-  aliases: string[],
-  key: string,
-  value: string
-) {
-  let provider = isPlainRecord(geolocationConfig[canonicalProvider])
-    ? geolocationConfig[canonicalProvider]
-    : null
-  if (!provider) {
-    const alias = findFirstObjectEntry(geolocationConfig, aliases)
-    provider = alias ? cloneJson(alias.value) : {}
-    geolocationConfig[canonicalProvider] = provider
-  }
-  provider[key] = value
-  delete provider.__platform__
-}
-
-function setIosMapProviderValue(
-  mapConfig: Record<string, any>,
-  canonicalProvider: string,
-  aliases: string[],
-  key: string,
-  value: string
-) {
-  let provider = isPlainRecord(mapConfig[canonicalProvider])
-    ? mapConfig[canonicalProvider]
-    : null
-  if (!provider) {
-    const alias = findFirstObjectEntry(mapConfig, aliases)
-    provider = alias ? cloneJson(alias.value) : {}
-    mapConfig[canonicalProvider] = provider
-  }
-  provider[key] = value
-  delete provider.__platform__
-}
-
-function ensureObjectPath(root: Record<string, any>, keys: string[]) {
-  let current = root
-  for (const key of keys) {
-    if (!isPlainRecord(current[key])) current[key] = {}
-    current = current[key]
-  }
-  return current
-}
-
-function findFirstObjectEntry(root: Record<string, any>, keys: string[]) {
-  for (const key of keys) {
-    const direct = root[key]
-    if (isPlainRecord(direct)) return { key, value: direct }
-    const normalizedKey = normalizeManifestConfigKey(key)
-    const matchedKey = Object.keys(root).find(candidate => normalizeManifestConfigKey(candidate) === normalizedKey)
-    if (matchedKey && isPlainRecord(root[matchedKey])) return { key: matchedKey, value: root[matchedKey] }
-  }
-  return null
-}
-
-function isPlainRecord(value: unknown): value is Record<string, any> {
-  return !!value && typeof value === 'object' && !Array.isArray(value)
-}
-
-function normalizeManifestConfigKey(value: string) {
-  return value.replace(/[^a-z0-9]/gi, '').toLowerCase()
-}
-
-function collectStringValues(value: unknown): string[] {
-  if (Array.isArray(value)) return value.flatMap(item => collectStringValues(item))
-  if (typeof value === 'string') {
-    return value.split(',').map(item => item.trim()).filter(Boolean)
-  }
-  return []
-}
-
-function uniqueNonEmptyStrings(values: string[]) {
-  const seen = new Set<string>()
-  const result: string[] = []
-  for (const value of values) {
-    const item = value.trim()
-    if (!item || seen.has(item)) continue
-    seen.add(item)
-    result.push(item)
-  }
-  return result
-}
-
-function normalizeBooleanFieldValue(value: string) {
-  return ['1', 'true', 'yes', 'y', 'on', '是', '开启'].includes(value.trim().toLowerCase())
-}
-
-function cloneJson<T>(value: T): T {
-  return value == null ? value : JSON.parse(JSON.stringify(value))
 }
 
 async function refreshManifestFromLocalProject(options: { required: boolean; persist: boolean }) {
@@ -1451,10 +1276,11 @@ async function refreshIosModuleConfig() {
   }
   iosModuleConfigLoading.value = true
   try {
-    iosModuleConfigReport.value = await invoke<IosModuleConfigReport>('analyze_ios_module_config', {
+    const report = await invoke<IosModuleConfigReport>('analyze_ios_module_config', {
       manifestInfo: latestManifestInfo.value,
       userConfig: cachedIosModuleConfig()
     })
+    iosModuleConfigReport.value = stripIosLocalPodFields(report)
     mergeIosModuleConfigDefaults(iosModuleConfigReport.value)
   } catch (e: any) {
     iosModuleConfigReport.value = null
@@ -1503,6 +1329,10 @@ async function ensureIosModuleConfigReadyForBuild() {
     message.error(manifestReadWarning.value || 'iOS 模块配置分析失败')
     return false
   }
+  if (iosPrivacyDescriptionMissingCount.value) {
+    openIosPrivacyDescriptionDialog()
+    return false
+  }
   if (iosModuleMissingRequired.value.length) {
     message.error(`请先填写 iOS 模块配置: ${iosModuleMissingRequired.value.map(item => `${item.moduleName}-${item.label}`).join('、')}`)
     return false
@@ -1529,6 +1359,7 @@ function mergeIosModuleConfigDefaults(report: IosModuleConfigReport) {
   const cached = cachedIosModuleConfig()
   for (const mod of report.modules) {
     for (const field of mod.fields) {
+      if (isIosLocalPodField(field)) continue
       const scopedKey = iosModuleFieldValueKey(mod, field)
       if (next[scopedKey] === undefined) {
         const value = cached[scopedKey] ?? field.value ?? ''
@@ -1574,19 +1405,7 @@ function iosFieldValue(mod: IosModuleConfigModule, field: IosModuleConfigField) 
 
 function updateIosField(mod: IosModuleConfigModule, field: IosModuleConfigField, value: string) {
   if (isBuildLocked.value) return
-  const currentValue = iosFieldValue(mod, field)
-  if (
-    ['map', 'share', 'login'].includes(mod.templateKey)
-    && field.key === 'LOCAL_POD'
-    && !normalizeBooleanFieldValue(currentValue)
-    && normalizeBooleanFieldValue(value)
-  ) {
-    dialog.warning({
-      title: '本地 Pod 集成',
-      content: '本地 Pod 集成需要确保使用HBuilderX 5.13+ 导出本地 APP 打包资源',
-      positiveText: '知道了'
-    })
-  }
+  if (isIosLocalPodField(field)) return
   iosModuleConfigValues.value = {
     ...iosModuleConfigValues.value,
     [iosModuleFieldValueKey(mod, field)]: normalizeIosFieldValue(mod, field, value)
@@ -1629,33 +1448,6 @@ function clearAndroidFileField(mod: AndroidModuleConfigModule, field: AndroidMod
   updateAndroidField(mod, field, '')
 }
 
-function isFileField(field: AndroidModuleConfigField): boolean {
-  return androidFieldType(field) === 'file'
-}
-
-function isSelectField(field: AndroidModuleConfigField): boolean {
-  return androidFieldType(field) === 'select'
-}
-
-function selectFieldOptions(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
-  if (mod.templateKey === 'map' && field.key === 'MAP_PAGE_TYPE') {
-    const provider = mapProviderForModule(mod)
-    return [
-      { label: 'vue', value: 'vue', disabled: provider === 'google' },
-      { label: 'nvue', value: 'nvue', disabled: provider === 'baidu' }
-    ]
-  }
-  return []
-}
-
-function mapProviderForModule(mod: AndroidModuleConfigModule) {
-  if (mod.fields.some(field => field.key === 'BAIDU_MAP_AK')) return 'baidu'
-  if (mod.fields.some(field => field.key === 'AMAP_KEY')) return 'amap'
-  if (mod.fields.some(field => field.key === 'GOOGLE_MAPS_API_KEY')) return 'google'
-  if (mod.fields.some(field => field.key === 'TENCENT_MAP_KEY')) return 'tencent'
-  return 'amap'
-}
-
 function formatFileSize(base64Value: string): string {
   if (!base64Value) return ''
   const kb = Math.ceil((base64Value.length * 3 / 4) / 1024)
@@ -1688,6 +1480,7 @@ function buildIosPrivacyDescriptionPayload() {
   for (const mod of report.modules) {
     if (!isIosConfigModuleSelected(mod)) continue
     for (const field of mod.fields) {
+      if (isIosLocalPodField(field)) continue
       if (!isIosPrivacyField(field)) continue
       const value = iosFieldValue(mod, field).trim()
       if (!value) continue
@@ -1730,6 +1523,7 @@ function syncIosModuleConfigCache() {
   const next: Record<string, string> = {}
   for (const mod of report.modules) {
     for (const field of mod.fields) {
+      if (isIosLocalPodField(field)) continue
       const rawValue = iosFieldValue(mod, field).trim()
       const value = normalizeIosFieldValue(mod, field, rawValue).trim()
       if (value) next[iosModuleFieldValueKey(mod, field)] = value
@@ -1772,84 +1566,6 @@ function iosFieldStatusLabel(mod: IosModuleConfigModule, field: IosModuleConfigF
   if (field.valueSource === 'manifest') return 'manifest'
   if (field.valueSource === 'default') return '默认'
   return '已填写'
-}
-
-function androidFieldType(field: AndroidModuleConfigField): string {
-  return field.fieldType || field.field_type || 'text'
-}
-
-function iosFieldType(field: IosModuleConfigField): string {
-  return field.fieldType || field.field_type || 'text'
-}
-
-function isIosSelectField(field: IosModuleConfigField): boolean {
-  return iosFieldType(field) === 'select'
-}
-
-function normalizeIosFieldValue(mod: IosModuleConfigModule, field: IosModuleConfigField, value: string | null | undefined): string {
-  const rawValue = String(value ?? '')
-  const normalized = rawValue.trim()
-  if (field.key === 'pushProvider') return normalizeIosPushProviderValue(normalized)
-  if (mod.templateKey === 'map' && field.key === 'MAP_PAGE_TYPE') {
-    return normalizeIosMapPageTypeValue(iosMapProviderForModule(mod), normalized)
-  }
-  if (['map', 'share', 'login'].includes(mod.templateKey) && field.key === 'LOCAL_POD') {
-    return normalizeBooleanFieldValue(normalized) ? 'true' : 'false'
-  }
-  return rawValue
-}
-
-function normalizeIosPushProviderValue(value: string | null | undefined): string {
-  const normalized = String(value ?? '').trim()
-  return normalized === 'unipush' ? normalized : 'unipush'
-}
-
-function normalizeIosMapPageTypeValue(provider: string, value: string | null | undefined): string {
-  const normalized = normalizeManifestConfigKey(String(value ?? ''))
-  if (provider === 'baidu') return 'vue'
-  if (provider === 'amap') return 'nvue'
-  return normalized === 'nvue' ? 'nvue' : 'vue'
-}
-
-function iosMapProviderForModule(mod: IosModuleConfigModule) {
-  if (mod.fields.some(field => field.key === 'baidu.appkey_ios')) return 'baidu'
-  if (mod.fields.some(field => field.key === 'amap.appkey_ios')) return 'amap'
-  if (mod.fields.some(field => field.key === 'google.apikey_ios')) return 'google'
-  return 'amap'
-}
-
-function iosSelectFieldOptions(mod: IosModuleConfigModule | null, field: IosModuleConfigField) {
-  if (field.key === 'pushProvider') {
-    return [
-      { label: 'uniPush', value: 'unipush' },
-      { label: '个推推送', value: 'getui', disabled: true },
-      { label: 'Google Cloud Message', value: 'gcm', disabled: true }
-    ]
-  }
-  if (
-    field.key === 'backgroundBluetooth'
-    || field.key === 'allowArbitraryLoads'
-    || field.key === 'customComponentMode'
-  ) {
-    return [
-      { label: '否', value: 'false' },
-      { label: '是', value: 'true' }
-    ]
-  }
-  if (mod?.templateKey === 'map' && field.key === 'MAP_PAGE_TYPE') {
-    const provider = iosMapProviderForModule(mod)
-    return [
-      { label: 'vue', value: 'vue', disabled: provider === 'amap' },
-      { label: 'nvue', value: 'nvue', disabled: provider === 'baidu' }
-    ]
-  }
-  if (mod && ['map', 'share', 'login'].includes(mod.templateKey) && field.key === 'LOCAL_POD') {
-    return [
-      { label: '否', value: 'false' },
-      { label: '是', value: 'true' }
-    ]
-  }
-  return []
 }
 
 function manifestLogLines(info: UniappManifestInfo, platform: Platform) {
@@ -1999,6 +1715,14 @@ async function appendCleanupLines(buildId: string, lines: string[]) {
   await buildStore.appendBuildLogLines(buildId, lines).catch(() => undefined)
 }
 
+async function openGeneratedProject() {
+  if (!currentGeneratedProjectPath.value) return
+  await invoke('tauri', {
+    __tauriModule: 'shell',
+    message: { cmd: 'open', path: currentGeneratedProjectPath.value }
+  })
+}
+
 function goBack() {
   router.push(`/project/${projectId.value}`)
 }
@@ -2019,704 +1743,132 @@ function goBack() {
     </div>
     <n-grid cols="1 s:1 m:2" :x-gap="18" :y-gap="18" responsive="screen" class="build-grid">
       <n-gi>
-        <n-card data-guide="resource-import" title="1. 导入 UniApp 资源" class="build-step-card import-card">
-          <n-space>
-            <n-button type="primary" :loading="importing" :disabled="isBuildLocked" @click="chooseResource">
-              <template #icon><n-icon><FolderOpenOutline /></n-icon></template>
-              选择 resources 目录
-            </n-button>
-          </n-space>
-          <div v-if="scanResult" class="scan-result">
-            <div class="alert-stack">
-              <n-alert type="success" title="资源扫描完成">
-                <n-space vertical :size="8">
-                  <n-text>AppId: <n-text code class="path-text">{{ insightAppId }}</n-text></n-text>
-                  <n-text>版本: {{ insightVersionName }} / {{ insightVersionCode }}</n-text>
-                  <n-text>资源包根目录: <n-text code class="path-text">{{ scanResult.importedPath }}</n-text></n-text>
-                  <n-text>应用资源目录: <n-text code class="path-text">{{ scanResult.appResourcePath }}</n-text></n-text>
-                  <n-text>manifest 路径: <n-text code class="path-text">{{ insightManifestPath }}</n-text></n-text>
-                </n-space>
-              </n-alert>
-              <n-alert v-for="warning in scanResult.warnings" :key="warning" type="warning">
-                {{ warning }}
-              </n-alert>
-              <n-alert v-if="manifestReadWarning" type="warning">
-                {{ manifestReadWarning }}
-              </n-alert>
-            </div>
-          </div>
-        </n-card>
+        <ResourceImportCard
+          :importing="importing"
+          :is-build-locked="isBuildLocked"
+          :scan-result="scanResult"
+          :insight-app-id="insightAppId"
+          :insight-version-name="insightVersionName"
+          :insight-version-code="insightVersionCode"
+          :insight-manifest-path="insightManifestPath"
+          :manifest-read-warning="manifestReadWarning"
+          @choose-resource="chooseResource"
+        />
       </n-gi>
       <n-gi>
-        <n-card data-guide="platform-select" title="2. 选择平台" class="build-step-card">
-          <PlatformCard
-            :platforms="platforms"
-            :selected-platforms="selectedPlatforms"
-            :disabled="isBuildLocked"
-            @toggle="togglePlatform"
-          />
-          <n-space justify="end" class="build-action-row">
-            <n-text v-if="buildDisabledReason && !canBuild" depth="3">{{ buildDisabledReason }}</n-text>
-            <n-button v-if="singleSelectedPlatform === 'android'" type="primary" :disabled="!canGenerateAndroid" :loading="androidGenerateLoading" @click="generateAndroidProject">
-              <template #icon><n-icon><LogoAndroid /></n-icon></template>
-              生成安卓项目
-            </n-button>
-            <n-button v-if="singleSelectedPlatform === 'ios'" type="primary" :disabled="!canGenerateIos" :loading="iosGenerateLoading" @click="generateIosProject">
-              <template #icon><n-icon><LogoApple /></n-icon></template>
-              生成苹果项目
-            </n-button>
-            <n-button v-if="singleSelectedPlatform === 'harmony'" type="primary" :disabled="!canGenerateHarmony" :loading="harmonyGenerateLoading" @click="generateHarmonyProject">
-              <template #icon><n-icon><PhonePortraitOutline /></n-icon></template>
-              生成鸿蒙项目
-            </n-button>
-            <n-button type="success" :disabled="!canBuild" :loading="packageBuildLoading" @click="startBuild">
-              <template #icon><n-icon><PlayOutline /></n-icon></template>
-              开始打包
-            </n-button>
-          </n-space>
-        </n-card>
+        <PlatformSelectCard
+          :platforms="platforms"
+          :selected-platforms="selectedPlatforms"
+          :is-build-locked="isBuildLocked"
+          :build-disabled-reason="buildDisabledReason"
+          :can-build="canBuild"
+          :can-generate-android="canGenerateAndroid"
+          :can-generate-ios="canGenerateIos"
+          :can-generate-harmony="canGenerateHarmony"
+          :package-build-loading="packageBuildLoading"
+          :android-generate-loading="androidGenerateLoading"
+          :ios-generate-loading="iosGenerateLoading"
+          :harmony-generate-loading="harmonyGenerateLoading"
+          :single-selected-platform="singleSelectedPlatform"
+          @toggle-platform="togglePlatform"
+          @generate-android="generateAndroidProject"
+          @generate-ios="generateIosProject"
+          @generate-harmony="generateHarmonyProject"
+          @start-build="startBuild"
+        />
       </n-gi>
     </n-grid>
-    <n-card v-if="scanResult" title="识别到的资源与模块" class="build-section-card">
-      <div class="insight-panel">
-        <div class="insight-head">
-          <div>
-            <n-text strong class="insight-title">{{ insightAppName }}</n-text>
-            <n-text depth="3" class="insight-subtitle">{{ insightAppId }} · {{ insightVersionName }} / {{ insightVersionCode }}</n-text>
-          </div>
-          <n-tag :type="scanResult.isZip ? 'warning' : 'success'">{{ scanResult.isZip ? 'ZIP 导入' : '目录导入' }}</n-tag>
-        </div>
-        <n-grid :cols="4" :x-gap="12" :y-gap="12" responsive="screen" class="insight-grid">
-          <n-gi>
-            <div class="summary-tile">
-              <n-text depth="3">已选模块</n-text>
-              <n-text strong class="summary-value">{{ selectedManifestModules.length }} / {{ manifestModules.length }}</n-text>
-            </div>
-          </n-gi>
-          <n-gi>
-            <div class="summary-tile">
-              <n-text depth="3">UTS 内置模块</n-text>
-              <n-text strong class="summary-value">{{ scanResult.uts.builtinModules.length }}</n-text>
-            </div>
-          </n-gi>
-          <n-gi>
-            <div class="summary-tile">
-              <n-text depth="3">UTS 自定义插件</n-text>
-              <n-text strong class="summary-value">{{ scanResult.uts.customPlugins.length }}</n-text>
-            </div>
-          </n-gi>
-          <n-gi>
-            <div class="summary-tile">
-              <n-text depth="3">远程依赖</n-text>
-              <n-text strong class="summary-value">{{ utsDependencyCount }}</n-text>
-            </div>
-          </n-gi>
-        </n-grid>
+    <ResourceInsightPanel
+      :scan-result="scanResult"
+      :insight-app-name="insightAppName"
+      :insight-app-id="insightAppId"
+      :insight-version-name="insightVersionName"
+      :insight-version-code="insightVersionCode"
+      :insight-manifest-path="insightManifestPath"
+      :selected-manifest-modules="selectedManifestModules"
+      :manifest-modules="manifestModules"
+      :uts-dependency-count="utsDependencyCount"
+      :uts-plugin-labels="utsPluginLabels"
+      :manifest-read-warning="manifestReadWarning"
+      :is-build-locked="isBuildLocked"
+      :is-manifest-module-selected="isManifestModuleSelected"
+      :manifest-module-status-type="manifestModuleStatusType"
+      :manifest-module-status-class="manifestModuleStatusClass"
+      :manifest-module-status-label="manifestModuleStatusLabel"
+      @set-manifest-module-selected="setManifestModuleSelected"
+    />
 
-        <div class="module-grid">
-          <div class="module-box module-box--manifest">
-            <div class="module-box-head">
-              <n-text strong>Manifest 模块</n-text>
-              <n-text v-if="manifestModules.length" depth="3">{{ selectedManifestModules.length }} / {{ manifestModules.length }} 已选</n-text>
-            </div>
-            <div v-if="manifestModules.length" class="module-choice-grid">
-              <n-checkbox
-                v-for="mod in manifestModules"
-                :key="manifestModuleKey(mod)"
-                class="module-choice"
-                :class="manifestModuleStatusClass(mod)"
-                :checked="isManifestModuleSelected(mod)"
-                :disabled="isBuildLocked"
-                @update:checked="(checked: boolean) => setManifestModuleSelected(mod, checked)"
-              >
-                <span class="module-choice-content">
-                  <span class="module-choice-main">{{ mod.name }}</span>
-                  <span v-if="formatPlatforms(mod.platforms)" class="module-choice-platform">{{ formatPlatforms(mod.platforms) }}</span>
-                  <n-tag size="tiny" :type="manifestModuleStatusType(mod)" :bordered="false">
-                    {{ manifestModuleStatusLabel(mod) }}
-                  </n-tag>
-                </span>
-              </n-checkbox>
-            </div>
-            <n-text v-else depth="3" class="module-empty">未声明 App 模块</n-text>
-          </div>
-          <div class="module-box">
-            <n-text strong>UTS 插件</n-text>
-            <n-space v-if="utsPluginLabels.length" wrap :size="8" class="tag-row">
-              <n-tag v-for="label in utsPluginLabels" :key="label" type="success">{{ label }}</n-tag>
-            </n-space>
-            <n-text v-else depth="3" class="module-empty">未检测到 UTS 插件</n-text>
-          </div>
-        </div>
-        <div class="path-summary">
-          <n-text depth="3">manifest 路径</n-text>
-          <n-text code>{{ insightManifestPath }}</n-text>
-          <n-text depth="3">资源包根目录</n-text>
-          <n-text code>{{ scanResult.importedPath }}</n-text>
-          <n-text depth="3">应用资源目录</n-text>
-          <n-text code>{{ scanResult.appResourcePath }}</n-text>
-        </div>
-      </div>
+    <IosOfflineSdkPanel
+      :visible="!!scanResult && selectedPlatforms.includes('ios')"
+      :ios-missing-required="iosMissingRequired"
+      :bundle-id="currentProject?.ios.bundleId || '-'"
+      :team-id="currentProject?.ios.teamId || '-'"
+      :ios-icon-count="iosIconCount"
+      :ios-privacy-description-count="iosPrivacyDescriptionCount"
+      :ios-privacy-description-item-count="iosPrivacyDescriptionItems.length"
+      :ios-privacy-description-missing-count="iosPrivacyDescriptionMissingCount"
+      :insight-app-id="insightAppId"
+      :ios-module-summary-label="iosModuleSummaryLabel"
+      :ios-configurable-modules="iosConfigurableModules"
+      :selected-manifest-module-count="selectedManifestModules.length"
+      :ios-module-config-loading="iosModuleConfigLoading"
+      :latest-manifest-info="latestManifestInfo"
+      :manifest-read-warning="manifestReadWarning"
+      :ios-module-missing-required-count="iosModuleMissingRequired.length"
+      :active-ios-config-module-key="activeIosConfigModuleKey"
+      :active-ios-config-module="activeIosConfigModule"
+      :is-build-locked="isBuildLocked"
+      :ios-config-module-status-type="iosConfigModuleStatusType"
+      :ios-config-module-status-label="iosConfigModuleStatusLabel"
+      :ios-field-value="iosFieldValue"
+      :ios-field-status-type="iosFieldStatusType"
+      :ios-field-status-label="iosFieldStatusLabel"
+      @edit-privacy="openIosPrivacyDescriptionDialog"
+      @open-module="openIosConfigModule"
+      @update-field="updateActiveIosField"
+    />
 
-      <div v-if="scanResult.warnings.length" class="module-section">
-        <n-alert v-for="warning in scanResult.warnings" :key="warning" type="warning">
-          {{ warning }}
-        </n-alert>
-      </div>
-      <div v-if="manifestReadWarning" class="module-section">
-        <n-alert type="warning">{{ manifestReadWarning }}</n-alert>
-      </div>
-    </n-card>
+    <AndroidModuleConfigPanel
+      :visible="!!scanResult && selectedPlatforms.includes('android')"
+      :android-module-config-loading="androidModuleConfigLoading"
+      :latest-manifest-info="latestManifestInfo"
+      :manifest-read-warning="manifestReadWarning"
+      :android-configurable-modules="androidConfigurableModules"
+      :selected-manifest-module-count="selectedManifestModules.length"
+      :android-missing-required-count="androidMissingRequired.length"
+      :active-android-config-module-key="activeAndroidConfigModuleKey"
+      :active-android-config-module="activeAndroidConfigModule"
+      :is-build-locked="isBuildLocked"
+      :android-config-module-status-type="androidConfigModuleStatusType"
+      :config-module-status-label="configModuleStatusLabel"
+      :android-field-value="androidFieldValue"
+      :field-status-type="fieldStatusType"
+      :field-status-label="fieldStatusLabel"
+      :format-file-size="formatFileSize"
+      @open-module="openAndroidConfigModule"
+      @update-field="updateActiveAndroidField"
+      @pick-file-field="pickAndroidFileField"
+      @clear-file-field="clearAndroidFileField"
+    />
 
-    <n-card v-if="scanResult && selectedPlatforms.includes('ios')" title="iOS 离线 SDK 工程" class="build-section-card">
-      <n-space vertical :size="14">
-        <n-alert :type="iosMissingRequired.length ? 'warning' : 'success'">
-          <n-space vertical :size="6">
-            <n-text v-if="iosMissingRequired.length">
-              缺少 {{ iosMissingRequired.join('、') }}，补齐后才能生成 iOS 工程或 IPA。
-            </n-text>
-            <n-text v-else>iOS 基础配置已就绪，将使用 SDK 管理中配置的 HBuilder-Hello* 工程副本。</n-text>
-          </n-space>
-        </n-alert>
-        <n-grid :cols="4" :x-gap="12" :y-gap="12" responsive="screen" class="insight-grid">
-          <n-gi>
-            <div class="summary-tile">
-              <n-text depth="3">Bundle ID</n-text>
-              <n-text strong class="summary-text">{{ currentProject?.ios.bundleId || '-' }}</n-text>
-            </div>
-          </n-gi>
-          <n-gi>
-            <div class="summary-tile">
-              <n-text depth="3">Team ID</n-text>
-              <n-text strong class="summary-text">{{ currentProject?.ios.teamId || '-' }}</n-text>
-            </div>
-          </n-gi>
-          <n-gi>
-            <div class="summary-tile">
-              <n-text depth="3">iOS 图标</n-text>
-              <n-text strong class="summary-value">{{ iosIconCount }}</n-text>
-            </div>
-          </n-gi>
-          <n-gi>
-            <div class="summary-tile">
-              <n-text depth="3">隐私描述</n-text>
-              <n-text strong class="summary-value">{{ iosPrivacyDescriptionCount }}</n-text>
-            </div>
-          </n-gi>
-        </n-grid>
-        <div class="path-summary">
-          <n-text depth="3">工程来源</n-text>
-          <n-text code>SDK 管理 / DCloud iOS 离线 SDK / HBuilder-Hello*</n-text>
-          <n-text depth="3">App 资源</n-text>
-          <n-text code>Pandora/apps/{{ insightAppId }}</n-text>
-          <n-text depth="3">模块处理</n-text>
-          <n-text code>{{ iosModuleSummaryLabel }}</n-text>
-        </div>
-        <div class="ios-module-panel">
-          <div class="ios-module-head">
-            <n-space align="center" :size="8">
-              <n-text strong>iOS 模块配置</n-text>
-              <n-tag size="small" type="info">{{ iosConfigurableModules.length }} 个模块</n-tag>
-            </n-space>
-            <n-text v-if="selectedManifestModules.length" depth="3">{{ selectedManifestModules.length }} 个 Manifest 模块已选</n-text>
-          </div>
-          <n-alert v-if="iosModuleConfigLoading" type="info">正在从 manifest 解析 iOS 模块配置...</n-alert>
-          <n-alert v-else-if="!latestManifestInfo" type="warning">
-            {{ manifestReadWarning || '请先在项目配置中设置本地项目路径，以便读取 manifest.json' }}
-          </n-alert>
-          <n-alert v-else-if="!iosConfigurableModules.length" type="success">
-            已选模块暂无需要额外配置项的 iOS 模块。
-          </n-alert>
-          <n-alert v-else :type="iosModuleMissingRequired.length ? 'warning' : 'success'">
-            <n-space vertical :size="6">
-              <n-text>
-                已选 {{ selectedManifestModules.length }} 个 Manifest 模块，其中 {{ iosConfigurableModules.length }} 个需要 iOS 配置。
-              </n-text>
-              <n-text v-if="iosModuleMissingRequired.length">
-                还有 {{ iosModuleMissingRequired.length }} 个必填项未填写，填写完成后才能生成 iOS 工程或 IPA。
-              </n-text>
-              <n-text v-else>模块配置已就绪，可以开始 iOS 构建。</n-text>
-            </n-space>
-          </n-alert>
+    <BuildLogCard
+      :logs="currentBuild?.logs || []"
+      :progress="currentBuild?.progress || 0"
+      :status="currentBuild?.status"
+      :visible-artifacts="visibleArtifacts"
+      :current-generated-project-path="currentGeneratedProjectPath"
+      :current-generated-project-label="currentGeneratedProjectLabel"
+      @open-generated-project="openGeneratedProject"
+    />
 
-          <div v-if="iosConfigurableModules.length" class="android-config-list">
-            <n-space wrap :size="8" class="android-config-switcher">
-              <n-tag
-                v-for="mod in iosConfigurableModules"
-                :key="iosConfigModuleKey(mod)"
-                class="android-config-chip"
-                :class="{ 'android-config-chip--active': activeIosConfigModuleKey === iosConfigModuleKey(mod) }"
-                :type="iosConfigModuleStatusType(mod)"
-                :bordered="activeIosConfigModuleKey !== iosConfigModuleKey(mod)"
-                @click="openIosConfigModule(mod)"
-              >
-                {{ mod.name }} · {{ iosConfigModuleStatusLabel(mod) }}
-              </n-tag>
-            </n-space>
-
-            <div v-if="activeIosConfigModule" class="android-config-module">
-              <div class="android-config-head">
-                <n-space align="center" :size="8">
-                  <n-text strong>{{ activeIosConfigModule.name }}</n-text>
-                  <n-tag size="small" type="info">{{ activeIosConfigModule.category }}</n-tag>
-                  <n-tag v-if="formatPlatforms(activeIosConfigModule.platforms)" size="small" :type="activeIosConfigModule.platforms.includes('ios') ? 'success' : 'default'">{{ formatPlatforms(activeIosConfigModule.platforms) }}</n-tag>
-                </n-space>
-                <n-text depth="3">{{ activeIosConfigModule.fields.length }} 项配置</n-text>
-              </div>
-              <n-grid :cols="2" :x-gap="14" :y-gap="10" responsive="screen">
-                <n-gi v-for="field in activeIosConfigModule.fields" :key="activeIosConfigModule.templateKey + field.key">
-                  <n-form-item :label="field.label" :feedback="field.required && !iosFieldValue(activeIosConfigModule, field).trim() ? '必填项，未填写时不能开始打包' : undefined">
-                    <template #label>
-                      <n-space align="center" :size="6">
-                        <n-text>{{ field.label }}</n-text>
-                        <n-tag size="tiny" :type="iosFieldStatusType(activeIosConfigModule, field)">{{ iosFieldStatusLabel(activeIosConfigModule, field) }}</n-tag>
-                      </n-space>
-                    </template>
-                    <n-input
-                      v-if="iosFieldType(field) === 'textarea'"
-                      type="textarea"
-                      :autosize="{ minRows: 2, maxRows: 4 }"
-                      :value="iosFieldValue(activeIosConfigModule, field)"
-                      :placeholder="field.placeholder"
-                      :disabled="isBuildLocked"
-                      @update:value="(value: string) => updateActiveIosField(field, value)"
-                    />
-                    <n-select
-                      v-else-if="isIosSelectField(field)"
-                      :value="iosFieldValue(activeIosConfigModule, field)"
-                      :options="iosSelectFieldOptions(activeIosConfigModule, field)"
-                      :placeholder="field.placeholder"
-                      :disabled="isBuildLocked"
-                      @update:value="(value: string) => updateActiveIosField(field, value)"
-                    />
-                    <n-input
-                      v-else
-                      :value="iosFieldValue(activeIosConfigModule, field)"
-                      :placeholder="field.placeholder"
-                      :type="field.secret ? 'password' : 'text'"
-                      :show-password-on="field.secret ? 'click' : undefined"
-                      :disabled="isBuildLocked"
-                      @update:value="(value: string) => updateActiveIosField(field, value)"
-                    />
-                  </n-form-item>
-                </n-gi>
-              </n-grid>
-            </div>
-          </div>
-        </div>
-      </n-space>
-    </n-card>
-
-    <n-card v-if="scanResult && selectedPlatforms.includes('android')" title="Android 模块配置" class="build-section-card">
-      <n-space vertical :size="14">
-        <n-alert v-if="androidModuleConfigLoading" type="info">正在从 manifest 解析 Android 模块配置...</n-alert>
-        <n-alert v-else-if="!latestManifestInfo" type="warning">
-          {{ manifestReadWarning || '请先在项目配置中设置本地项目路径，以便读取 manifest.json' }}
-        </n-alert>
-        <n-alert v-else-if="!androidConfigurableModules.length" type="success">
-          已选模块暂无需要额外配置项的 Android 模块。
-        </n-alert>
-        <n-alert v-else :type="androidMissingRequired.length ? 'warning' : 'success'">
-          <n-space vertical :size="6">
-            <n-text>
-              已选 {{ selectedManifestModules.length }} 个 Manifest 模块，其中 {{ androidConfigurableModules.length }} 个需要 Android 配置。
-            </n-text>
-            <n-text v-if="androidMissingRequired.length">
-              还有 {{ androidMissingRequired.length }} 个必填项未填写，填写完成后才能开始打包。
-            </n-text>
-            <n-text v-else>模块配置已就绪，可以开始 Android 打包。</n-text>
-          </n-space>
-        </n-alert>
-
-        <div v-if="androidConfigurableModules.length" class="android-config-list">
-          <n-space wrap :size="8" class="android-config-switcher">
-            <n-tag
-              v-for="mod in androidConfigurableModules"
-              :key="androidConfigModuleKey(mod)"
-              class="android-config-chip"
-              :class="{ 'android-config-chip--active': activeAndroidConfigModuleKey === androidConfigModuleKey(mod) }"
-              :type="androidConfigModuleStatusType(mod)"
-              :bordered="activeAndroidConfigModuleKey !== androidConfigModuleKey(mod)"
-              @click="openAndroidConfigModule(mod)"
-            >
-              {{ mod.name }} · {{ configModuleStatusLabel(mod) }}
-            </n-tag>
-          </n-space>
-
-          <div v-if="activeAndroidConfigModule" class="android-config-module">
-            <div class="android-config-head">
-              <n-space align="center" :size="8">
-                <n-text strong>{{ activeAndroidConfigModule.name }}</n-text>
-                <n-tag size="small" type="info">{{ activeAndroidConfigModule.category }}</n-tag>
-                <n-tag v-if="formatPlatforms(activeAndroidConfigModule.platforms)" size="small" :type="activeAndroidConfigModule.platforms.includes('android') ? 'success' : 'default'">{{ formatPlatforms(activeAndroidConfigModule.platforms) }}</n-tag>
-              </n-space>
-              <n-text depth="3">{{ activeAndroidConfigModule.fields.length }} 项配置</n-text>
-            </div>
-            <n-grid :cols="2" :x-gap="14" :y-gap="10" responsive="screen">
-              <n-gi v-for="field in activeAndroidConfigModule.fields" :key="activeAndroidConfigModule.templateKey + field.key">
-                <n-form-item :label="field.label" :feedback="field.required && !androidFieldValue(activeAndroidConfigModule, field).trim() ? '必填项，未填写时不能开始打包' : undefined">
-                  <template #label>
-                    <n-space align="center" :size="6">
-                      <n-text>{{ field.label }}</n-text>
-                      <n-tag size="tiny" :type="fieldStatusType(activeAndroidConfigModule, field)">{{ fieldStatusLabel(activeAndroidConfigModule, field) }}</n-tag>
-                    </n-space>
-                  </template>
-                  <template v-if="isFileField(field)">
-                    <n-space :size="8" align="center" class="file-field-row">
-                      <n-button size="small" :disabled="isBuildLocked" @click="pickAndroidFileField(activeAndroidConfigModule, field)">选择文件</n-button>
-                      <n-text v-if="androidFieldValue(activeAndroidConfigModule, field)" depth="3" class="file-field-hint">
-                        已选择 ({{ formatFileSize(androidFieldValue(activeAndroidConfigModule, field)) }})
-                      </n-text>
-                      <n-button v-if="androidFieldValue(activeAndroidConfigModule, field)" size="small" quaternary type="error" :disabled="isBuildLocked" @click="clearAndroidFileField(activeAndroidConfigModule, field)">清除</n-button>
-                      <n-text v-else depth="3" class="file-field-hint">{{ field.placeholder }}</n-text>
-                    </n-space>
-                  </template>
-                  <n-select
-                    v-else-if="isSelectField(field)"
-                    :value="androidFieldValue(activeAndroidConfigModule, field)"
-                    :options="selectFieldOptions(activeAndroidConfigModule, field)"
-                    :placeholder="field.placeholder"
-                    :disabled="isBuildLocked"
-                    @update:value="(value: string) => updateActiveAndroidField(field, value)"
-                  />
-                  <n-input
-                    v-else
-                    :value="androidFieldValue(activeAndroidConfigModule, field)"
-                    :placeholder="field.placeholder"
-                    :type="field.secret ? 'password' : 'text'"
-                    :show-password-on="field.secret ? 'click' : undefined"
-                    :disabled="isBuildLocked"
-                    @update:value="(value: string) => updateActiveAndroidField(field, value)"
-                  />
-                </n-form-item>
-              </n-gi>
-            </n-grid>
-          </div>
-        </div>
-      </n-space>
-    </n-card>
-
-    <n-card data-guide="build-log" title="构建日志" class="build-section-card log-section-card">
-      <LogPanel :logs="currentBuild?.logs || []" height="380px" />
-      <n-progress
-        class="build-progress"
-        type="line"
-        indicator-placement="inside"
-        :percentage="currentBuild?.progress || 0"
-        :processing="currentBuild?.status === 'building'"
-        :status="currentBuild?.status === 'failed' ? 'error' : currentBuild?.status === 'success' ? 'success' : 'default'"
-      />
-      <div class="alert-stack log-result-stack">
-        <n-alert v-for="artifact in visibleArtifacts" :key="artifact.path" type="success">
-          {{ artifact.platform }}: <n-text code class="path-text">{{ artifact.path }}</n-text>
-        </n-alert>
-        <n-alert v-if="currentGeneratedProjectPath" type="info">
-          <n-space align="center">
-            <span>{{ currentGeneratedProjectLabel }}:</span>
-            <n-text code class="path-text">{{ currentGeneratedProjectPath }}</n-text>
-            <n-button size="small" @click="() => { void invoke('tauri', { __tauriModule: 'shell', message: { cmd: 'open', path: currentGeneratedProjectPath } }) }">打开目录</n-button>
-          </n-space>
-        </n-alert>
-      </div>
-    </n-card>
+    <IosPrivacyDescriptionModal
+      v-model:show="iosPrivacyDialogVisible"
+      :items="iosPrivacyDescriptionItems"
+      :missing-count="iosPrivacyDescriptionMissingCount"
+      :is-build-locked="isBuildLocked"
+      @update-item="updateIosPrivacyDescription"
+    />
   </div>
 </template>
 
-<style scoped>
-.build-center {
-  max-width: 1280px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.page-header {
-  margin-bottom: 2px;
-}
-
-.build-grid {
-  align-items: start;
-}
-
-.build-step-card {
-  height: auto;
-}
-
-.import-card {
-  min-height: 220px;
-}
-
-.build-action-row {
-  margin-top: 18px;
-}
-
-.build-section-card {
-  margin-top: 0;
-}
-
-.scan-result {
-  margin-top: 16px;
-}
-
-.insight-panel {
-  padding: 16px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--surface-muted);
-}
-
-.insight-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.insight-title {
-  display: block;
-  font-size: 18px;
-  line-height: 1.35;
-}
-
-.insight-subtitle {
-  display: block;
-  margin-top: 4px;
-}
-
-.insight-grid {
-  margin-top: 14px;
-}
-
-.summary-tile {
-  min-height: 72px;
-  padding: 12px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  background: var(--surface-color);
-}
-
-.summary-value {
-  font-size: 24px;
-  line-height: 1;
-}
-
-.summary-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.module-section {
-  margin-top: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.module-grid {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
-  gap: 14px;
-  align-items: start;
-}
-
-.module-box {
-  min-height: 96px;
-  padding: 12px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--surface-color);
-}
-
-.module-box-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-
-.tag-row {
-  margin-top: 10px;
-}
-
-.module-choice-grid {
-  margin-top: 10px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 8px;
-}
-
-.module-choice {
-  --module-choice-bg: var(--surface-color);
-  --module-choice-border: var(--border-soft);
-  --module-choice-text: inherit;
-  width: 100%;
-  min-height: 34px;
-  padding: 6px 8px;
-  border: 1px solid var(--module-choice-border);
-  border-radius: 6px;
-  background: var(--module-choice-bg);
-  color: var(--module-choice-text);
-  transition: border-color 0.16s ease, background-color 0.16s ease;
-}
-
-.module-choice--success {
-  --module-choice-bg: #f0fdf4;
-  --module-choice-border: #86d7a2;
-}
-
-.module-choice--warning {
-  --module-choice-bg: #fff8e1;
-  --module-choice-border: #f3c969;
-}
-
-.module-choice--error {
-  --module-choice-bg: #fff1f0;
-  --module-choice-border: #ef9a9a;
-}
-
-.module-choice--default {
-  --module-choice-bg: #f6f7f9;
-  --module-choice-border: #d8dde6;
-  --module-choice-text: #8a929e;
-}
-
-.module-choice :deep(.n-checkbox__label) {
-  flex: 1;
-  min-width: 0;
-  padding-left: 8px;
-  color: var(--module-choice-text);
-}
-
-.module-choice-content {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-width: 0;
-}
-
-.module-choice-main,
-.module-choice-platform {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.module-choice-main {
-  font-weight: 500;
-}
-
-.module-choice-platform {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.module-empty {
-  display: block;
-  margin-top: 10px;
-}
-
-.path-summary {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  gap: 8px 12px;
-  margin-top: 14px;
-  padding: 12px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--surface-color);
-}
-
-.path-summary :deep(.n-text) {
-  word-break: break-all;
-}
-
-.android-config-list {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.android-config-switcher {
-  margin-bottom: 2px;
-}
-
-.android-config-chip {
-  cursor: pointer;
-}
-
-.android-config-chip--active {
-  box-shadow: 0 0 0 2px rgba(24, 160, 88, 0.12);
-}
-
-.android-config-module {
-  padding: 14px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--surface-muted);
-}
-
-.android-config-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.ios-module-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.ios-module-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-
-.file-field-row {
-  width: 100%;
-}
-
-.file-field-hint {
-  font-size: 12px;
-}
-
-.build-progress {
-  margin-top: 16px;
-}
-
-.log-result-stack {
-  margin-top: 12px;
-}
-
-@media (max-width: 1180px) {
-  .android-config-head,
-  .ios-module-head,
-  .insight-head {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .path-summary {
-    grid-template-columns: 1fr;
-  }
-
-  .module-grid {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
+<style src="./build-center/build-center.css"></style>

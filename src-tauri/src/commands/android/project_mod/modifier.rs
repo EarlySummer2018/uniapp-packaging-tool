@@ -327,7 +327,7 @@ impl AndroidProjectModifier {
             ctx.module_patch_groups.clone()
         };
 
-        for (_group_idx, group) in groups.iter().enumerate() {
+        for group in groups.iter() {
             eprintln!(
                 "[INFO] 正在插入模块 {} 的 Manifest 条目...",
                 group.module_name
@@ -488,7 +488,7 @@ impl AndroidProjectModifier {
                         for m in ar.find_iter(tag_slice) {
                             let c = Regex::new(pat).unwrap();
                             if let Some(cc) = c.captures(m.as_str()) {
-                                if let Some(&lp) = last_pos.get(&cc[1].to_string()) {
+                                if let Some(&lp) = last_pos.get(&cc[1]) {
                                     if m.start() != lp {
                                         removals.push(m.start() + tag_start);
                                     }

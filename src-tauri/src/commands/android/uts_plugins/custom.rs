@@ -13,6 +13,7 @@ use super::aar_unpack::{is_nonstandard_aar, unpack_nonstandard_aar};
 use super::gradle::generate_uts_plugin_build_gradle;
 
 /// 处理所有自定义 UTS 插件：复制源码、解包非标准 AAR、生成 build.gradle、收集依赖
+#[allow(clippy::too_many_arguments)]
 pub fn process_custom_uts_plugins_uniapp(
     custom_plugins: &[UtsCustomPlugin],
     workspace: &Path,

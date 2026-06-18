@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolValidationResult {
@@ -12,20 +12,20 @@ pub struct ToolValidationResult {
     pub set_env_var: Option<String>,
 }
 
-fn normalize_macos_app_path(path: &PathBuf) -> PathBuf {
-    let mut current = path.as_path();
+fn normalize_macos_app_path(path: &Path) -> PathBuf {
+    let mut current = path;
     loop {
         if current.extension().and_then(|ext| ext.to_str()) == Some("app") {
             return current.to_path_buf();
         }
         let Some(parent) = current.parent() else {
-            return path.clone();
+            return path.to_path_buf();
         };
         current = parent;
     }
 }
 
-fn is_macos_app_path(path: &PathBuf) -> bool {
+fn is_macos_app_path(path: &Path) -> bool {
     path.extension().and_then(|ext| ext.to_str()) == Some("app")
 }
 
@@ -96,7 +96,7 @@ pub async fn validate_tool_path(
             if !p.exists() {
                 errors.push(format!("目录不存在: {}", input));
             } else {
-                details.push(format!("✓ 目录存在"));
+                details.push("✓ 目录存在".to_string());
                 let platforms = p.join("platforms");
                 if platforms.is_dir() {
                     if let Ok(entries) = std::fs::read_dir(&platforms) {
@@ -180,7 +180,7 @@ pub async fn validate_tool_path(
         "xcode" => {
             set_env_var = Some("DEVELOPER_DIR".to_string());
             if is_macos_app_path(&p) && p.exists() {
-                details.push(format!("✓ Xcode.app 存在"));
+                details.push("✓ Xcode.app 存在".to_string());
                 let xcodebuild = p
                     .join("Contents")
                     .join("Developer")
@@ -265,14 +265,14 @@ pub async fn validate_tool_path(
 
         "android_studio" => {
             if is_macos_app_path(&p) && p.exists() {
-                details.push(format!("✓ Android Studio.app 存在"));
+                details.push("✓ Android Studio.app 存在".to_string());
                 let plist = p.join("Contents").join("Info.plist");
                 if plist.exists() {
                     if let Ok(content) = std::fs::read_to_string(&plist) {
                         if let Some(v) = content
                             .lines()
                             .find(|l| l.contains("CFBundleShortVersionString"))
-                            .and_then(|l| l.split('>').last()?.split('<').next())
+                            .and_then(|l| l.split('>').next_back()?.split('<').next())
                         {
                             version = Some(v.to_string());
                             details.push(format!("✓ 版本: {}", v));
@@ -345,7 +345,7 @@ pub async fn validate_tool_path(
                         if let Some(v) = content
                             .lines()
                             .find(|l| l.contains("CFBundleShortVersionString"))
-                            .and_then(|l| l.split('>').last()?.split('<').next())
+                            .and_then(|l| l.split('>').next_back()?.split('<').next())
                         {
                             version = Some(v.to_string());
                             details.push(format!("✓ HBuilderX 版本: {}", v));

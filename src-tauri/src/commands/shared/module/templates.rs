@@ -720,20 +720,33 @@ fn get_statistic_template() -> ModuleTemplate {
         },
         ios_config: IosModuleTemplate {
             required_frameworks: vec![
-                "UMCommon.framework (友盟)".to_string(),
-                "UMAnalytics.framework (友盟统计)".to_string(),
+                "UMDevice.xcframework (友盟)".to_string(),
+                "UMCommon.xcframework (友盟)".to_string(),
+                "UMAPM.framework (友盟)".to_string(),
+                "FirebaseCore.xcframework (Firebase)".to_string(),
+                "FirebaseCoreInternal.xcframework (Firebase)".to_string(),
+                "FirebaseInstallations.xcframework (Firebase)".to_string(),
+                "GoogleAppMeasurement.xcframework (Firebase)".to_string(),
+                "GoogleAppMeasurementIdentitySupport.xcframework (Firebase)".to_string(),
+                "GoogleUtilities.xcframework (Firebase)".to_string(),
+                "FBLPromises.xcframework (Firebase)".to_string(),
+                "nanopb.xcframework (Firebase)".to_string(),
             ],
             required_libraries: vec![
+                "liblibStatistic.a".to_string(),
+                "libUmengStatistic.a (友盟)".to_string(),
+                "libGoogleStatistic.a (Firebase)".to_string(),
+                "SystemConfiguration.framework (友盟)".to_string(),
+                "CoreTelephony.framework (友盟)".to_string(),
                 "libsqlite3.tbd (友盟)".to_string(),
                 "libz.tbd (友盟)".to_string(),
-                "libresolv.tbd (友盟)".to_string(),
             ],
             info_plist_keys: HashMap::from([
                 ("UMENG_APPKEY".to_string(), "(友盟AppKey)".to_string()),
                 ("UMENG_CHANNEL".to_string(), "(App Store)".to_string()),
             ]),
             url_schemes: vec![],
-            plist_entry: "iOS 统计模块：友盟需在 Podfile 添加 pod 'UMCCommon' + pod 'UMCSecurityPlugins'; 腾讯MTA 需添加 pod 'MTA'".to_string(),
+            plist_entry: "自动迁移 Statistic 模块依赖；Firebase 还需添加 GoogleService-Info.plist。".to_string(),
         },
     }
 }
@@ -763,17 +776,30 @@ fn get_speech_template() -> ModuleTemplate {
         },
         ios_config: IosModuleTemplate {
             required_frameworks: vec![
-                "Speech.framework (系统语音识别)".to_string(),
+                "AudioToolbox.framework".to_string(),
+                "AVFoundation.framework".to_string(),
+                "CFNetwork.framework".to_string(),
+                "CoreLocation.framework".to_string(),
+                "CoreTelephony.framework".to_string(),
+                "SystemConfiguration.framework".to_string(),
+                "GLKit.framework".to_string(),
+                "iflyMSC.framework (讯飞语音)".to_string(),
             ],
             required_libraries: vec![
+                "liblibSpeech.a".to_string(),
+                "libBaiduSpeechSDK.a".to_string(),
+                "libbaiduSpeech.a".to_string(),
                 "libc++.tbd".to_string(),
+                "libz.tbd".to_string(),
+                "libsqlite3.tbd".to_string(),
             ],
             info_plist_keys: HashMap::from([
                 ("NSSpeechRecognitionUsageDescription".to_string(), "需要使用语音识别功能来输入文字".to_string()),
-                ("NMicrophoneUsageDescription".to_string(), "需要麦克风权限来进行语音输入".to_string()),
+                ("NSMicrophoneUsageDescription".to_string(), "需要麦克风权限来进行语音输入".to_string()),
+                ("baiduspeech".to_string(), "{APP_ID, API_KEY, SECRET_KEY} (百度语音)".to_string()),
             ]),
             url_schemes: vec![],
-            plist_entry: "iOS 使用系统 SFSpeechRecognizer 进行语音识别；需在 Xcode 设置 Speech Recognition 能力".to_string(),
+            plist_entry: "自动迁移 Speech 模块依赖；百度语音需添加 BDSClientEASRResources 资源，讯飞语音需提供 iflyMSC.framework。".to_string(),
         },
     }
 }

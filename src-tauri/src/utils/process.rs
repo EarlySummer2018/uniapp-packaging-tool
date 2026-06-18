@@ -162,11 +162,12 @@ async fn run_command_streaming_with_env_internal(
         let reader = BufReader::new(stderr);
         let mut lines = reader.lines();
         while let Ok(Some(line)) = lines.next_line().await {
+            let level = stderr_line_level(&line);
             let payload = if let Some(meta) = &stderr_meta {
                 serde_json::json!({
                     "type": "stderr",
                     "line": line,
-                    "level": "error",
+                    "level": level,
                     "buildId": meta.build_id,
                     "platform": meta.platform,
                 })
@@ -245,4 +246,63 @@ fn parse_output_lines(stdout: &str, stderr: &str) -> Vec<String> {
         logs.push(format!("[ERR] {}", line));
     }
     logs
+}
+
+fn stderr_line_level(line: &str) -> &'static str {
+    let lower = line.to_ascii_lowercase();
+    if line.contains("IDEDistributionLogging _createLoggingBundleAtPath:")
+        || line.contains("Created bundle at path")
+    {
+        "info"
+    } else if line.contains(
+        "IDERunDestination: Supported platforms for the buildables in the current scheme is empty.",
+    ) || line.contains("Command line name \"app-store\" is deprecated")
+        || lower.contains("warning:")
+        || lower.contains("ld: warning")
+    {
+        "warn"
+    } else {
+        "error"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stderr_line_level;
+
+    #[test]
+    fn xcode_run_destination_noise_is_warning() {
+        assert_eq!(
+            stderr_line_level(
+                "2026-06-18 16:48:24.450 xcodebuild[60339:4176221] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty."
+            ),
+            "warn"
+        );
+        assert_eq!(
+            stderr_line_level("ld: framework not found DingRTC"),
+            "error"
+        );
+    }
+
+    #[test]
+    fn xcode_distribution_noise_is_not_error() {
+        assert_eq!(
+            stderr_line_level(
+                "2026-06-18 18:21:19.333 xcodebuild[68876:4849206] [MT] IDEDistribution: -[IDEDistributionLogging _createLoggingBundleAtPath:]: Created bundle at path \"/tmp/HBuilder.xcdistributionlogs\"."
+            ),
+            "info"
+        );
+        assert_eq!(
+            stderr_line_level(
+                "2026-06-18 18:21:19.582 xcodebuild[68876:4849206] [MT] IDEDistribution: Command line name \"app-store\" is deprecated. Use \"app-store-connect\" instead."
+            ),
+            "warn"
+        );
+        assert_eq!(
+            stderr_line_level(
+                "ld: warning: no platform load command found in 'lib.a', assuming: iOS"
+            ),
+            "warn"
+        );
+    }
 }
