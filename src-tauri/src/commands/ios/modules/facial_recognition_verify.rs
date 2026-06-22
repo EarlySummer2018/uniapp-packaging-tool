@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::commands::ios::build::pbxproj::{
-    register_pbx_embedded_frameworks, register_pbx_linked_files, register_pbx_resources,
-    remove_pbx_linked_or_embedded_files, IosPbxLinkedFile,
+    register_pbx_linked_files, register_pbx_resources, IosPbxLinkedFile,
 };
 use crate::commands::ios::modules::common::{
     insert_missing_plist_string, ios_manifest_info_module_enabled, IosPrivacyFieldSpec,
@@ -22,21 +21,10 @@ const IOS_FACIAL_RECOGNITION_VERIFY_BUNDLES: &[&str] = &[
     "ToygerNative.bundle",
 ];
 
-const IOS_UTS_DUPLICATE_LINKED_FILES: &[&str] = &[
-    "liblibPDRCore.a",
-    "liblibWeex.a",
-    "libcoreSupport.a",
-    "storage.framework",
-    "libSDWebImage.a",
-    "KSCrash.framework",
-];
-
 #[derive(Debug, Clone)]
 pub(crate) struct IosFacialRecognitionVerifyIntegration {
     pub(crate) linked_count: usize,
-    pub(crate) embedded_count: usize,
     pub(crate) resource_count: usize,
-    pub(crate) removed_duplicate_count: usize,
 }
 
 pub(crate) fn ios_facial_recognition_verify_enabled(
@@ -58,23 +46,12 @@ pub(crate) fn apply_ios_facial_recognition_verify_module(
     validate_ios_local_linked_files(project_root, &linked_files)?;
     validate_ios_resource_bundles(project_root)?;
 
-    let removed_duplicate_count =
-        remove_pbx_linked_or_embedded_files(project_file, IOS_UTS_DUPLICATE_LINKED_FILES)?;
     let linked_count = register_pbx_linked_files(project_file, &linked_files)?;
-    let embedded_count = register_pbx_embedded_frameworks(
-        project_file,
-        &[
-            IosPbxLinkedFile::local_framework("DCUniBase.framework"),
-            IosPbxLinkedFile::local_framework("DCloudUTSFoundation.framework"),
-        ],
-    )?;
     let resource_count = copy_ios_resource_bundles(project_root, project_file)?;
 
     Ok(Some(IosFacialRecognitionVerifyIntegration {
         linked_count,
-        embedded_count,
         resource_count,
-        removed_duplicate_count,
     }))
 }
 
@@ -86,8 +63,6 @@ pub(crate) fn apply_ios_facial_recognition_verify_privacy_defaults(dict: &mut pl
 
 fn ios_facial_recognition_verify_linked_files() -> Vec<IosPbxLinkedFile> {
     vec![
-        IosPbxLinkedFile::local_framework("DCUniBase.framework"),
-        IosPbxLinkedFile::local_framework("DCloudUTSFoundation.framework"),
         IosPbxLinkedFile::local_framework("uniFacialRecognitionVerify.framework"),
         IosPbxLinkedFile::local_framework("AliyunFaceAuthFacade.framework"),
         IosPbxLinkedFile::local_framework("AliyunMobileRPC.framework"),

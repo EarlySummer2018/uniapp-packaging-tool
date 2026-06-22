@@ -86,6 +86,14 @@ fn ios_livepusher_links_and_embeds_documented_dependencies_idempotently() {
     assert!(pbxproj.contains("libiconv.tbd in Frameworks"));
     assert!(pbxproj.contains("CodeSignOnCopy"));
     assert!(pbxproj.contains("../SDK/Libs/UPLiveSDKDll.framework"));
+    assert_frameworks_phase_order(
+        &pbxproj,
+        &[
+            "liblibLivePush.a in Frameworks",
+            "libDCUniGPUImage.a in Frameworks",
+            "UPLiveSDKDll.framework in Frameworks",
+        ],
+    );
 
     let mut custom_component_config = std::collections::HashMap::new();
     custom_component_config.insert(
@@ -104,6 +112,15 @@ fn ios_livepusher_links_and_embeds_documented_dependencies_idempotently() {
     assert_eq!(integration.embedded_count, 0);
     let pbxproj = std::fs::read_to_string(project_file.join("project.pbxproj")).unwrap();
     assert!(pbxproj.contains("libDCUniLivePush.a in Frameworks"));
+    assert_frameworks_phase_order(
+        &pbxproj,
+        &[
+            "libDCUniLivePush.a in Frameworks",
+            "liblibLivePush.a in Frameworks",
+            "libDCUniGPUImage.a in Frameworks",
+            "UPLiveSDKDll.framework in Frameworks",
+        ],
+    );
 
     let integration = apply_ios_livepusher_module(
         &project_root,
@@ -129,4 +146,27 @@ fn ios_livepusher_links_and_embeds_documented_dependencies_idempotently() {
         2
     );
     let _ = std::fs::remove_dir_all(root);
+}
+
+fn assert_frameworks_phase_order(pbxproj: &str, names: &[&str]) {
+    let phase_start = pbxproj.find("isa = PBXFrameworksBuildPhase;").unwrap();
+    let files_start = phase_start
+        + pbxproj[phase_start..]
+            .find("files = (\n")
+            .expect("framework files start");
+    let files_end = files_start
+        + pbxproj[files_start..]
+            .find("\n\t\t\t);")
+            .expect("framework files end");
+    let files = &pbxproj[files_start..files_end];
+
+    let mut previous = 0usize;
+    for name in names {
+        let index = files.find(name).unwrap_or_else(|| panic!("missing {name}"));
+        assert!(
+            index >= previous,
+            "{name} should appear after previous LivePusher dependency"
+        );
+        previous = index;
+    }
 }

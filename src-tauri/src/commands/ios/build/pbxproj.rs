@@ -148,13 +148,25 @@ impl IosPbxFileSpec {
         }
     }
 
-    pub(crate) fn project_resource(name: impl Into<String>, path: impl Into<String>) -> Self {
+    pub(crate) fn project_static_library(name: impl Into<String>, path: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path: path.into(),
+            last_known_file_type: "archive.ar",
+            source_tree: "<group>",
+        }
+    }
+
+    pub(crate) fn project_resource_source_root(
+        name: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Self {
         let name = name.into();
         Self {
             last_known_file_type: pbx_resource_file_type(&name),
             name,
             path: path.into(),
-            source_tree: "<group>",
+            source_tree: "SOURCE_ROOT",
         }
     }
 
@@ -181,6 +193,39 @@ impl IosPbxFileSpec {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct IosPbxSourceFileSpec {
+    name: String,
+    path: String,
+    last_known_file_type: &'static str,
+    source_tree: &'static str,
+}
+
+impl IosPbxSourceFileSpec {
+    pub(crate) fn project_source(name: impl Into<String>, path: impl Into<String>) -> Option<Self> {
+        let name = name.into();
+        let last_known_file_type = pbx_source_file_type(&name)?;
+        Some(Self {
+            name,
+            path: path.into(),
+            last_known_file_type,
+            source_tree: "SOURCE_ROOT",
+        })
+    }
+
+    fn file_reference_line(&self, file_ref: &str) -> String {
+        format!(
+            "\t\t{} /* {} */ = {{isa = PBXFileReference; lastKnownFileType = {}; name = {}; path = {}; sourceTree = {}; }};\n",
+            file_ref,
+            self.name,
+            self.last_known_file_type,
+            render_pbx_value(&self.name),
+            render_pbx_value(&self.path),
+            render_pbx_value(self.source_tree)
+        )
+    }
+}
+
 pub(crate) fn register_pbx_linked_files(
     project_file: &Path,
     files: &[IosPbxLinkedFile],
@@ -190,7 +235,9 @@ pub(crate) fn register_pbx_linked_files(
         .map_err(|e| format!("读取 project.pbxproj 失败: {}", e))?;
     let mut linked_count = 0usize;
 
-    for file in files {
+    // Entries are inserted at the head of the PBXFrameworksBuildPhase list.
+    // Walk backwards so the final Xcode link phase preserves dependency order.
+    for file in files.iter().rev() {
         if content.contains(&format!("/* {} in Frameworks */", file.name)) {
             if file.weak {
                 content = ensure_pbx_build_file_weak_linked(&content, file.name);
@@ -446,6 +493,65 @@ pub(crate) fn register_pbx_embedded_file_specs(
 
     std::fs::write(&pbxproj, content).map_err(|e| format!("写入 project.pbxproj 失败: {}", e))?;
     Ok(embedded_count)
+}
+
+pub(crate) fn register_pbx_source_file_specs(
+    project_file: &Path,
+    files: &[IosPbxSourceFileSpec],
+) -> Result<usize, String> {
+    if files.is_empty() {
+        return Ok(0);
+    }
+    let pbxproj = project_file.join("project.pbxproj");
+    let mut content = std::fs::read_to_string(&pbxproj)
+        .map_err(|e| format!("读取 project.pbxproj 失败: {}", e))?;
+    let mut source_count = 0usize;
+
+    for file in files {
+        let existing_file_ref = find_pbx_file_reference_id_by_path(&content, &file.path);
+        let file_ref = existing_file_ref.clone().unwrap_or_else(pbx_object_id);
+        if pbx_sources_build_file_exists(&content, &file_ref) {
+            continue;
+        }
+
+        let build_ref = pbx_object_id();
+        let build_line = format!(
+            "\t\t{} /* {} in Sources */ = {{isa = PBXBuildFile; fileRef = {} /* {} */; }};\n",
+            build_ref, file.name, file_ref, file.name
+        );
+        content = insert_after_marker(
+            &content,
+            "/* Begin PBXBuildFile section */\n",
+            &build_line,
+            "PBXBuildFile section",
+        )?;
+
+        if existing_file_ref.is_none() {
+            content = insert_after_marker(
+                &content,
+                "/* Begin PBXFileReference section */\n",
+                &file.file_reference_line(&file_ref),
+                "PBXFileReference section",
+            )?;
+            content = insert_into_pbx_list(
+                &content,
+                r"(?s)(/\* Supporting Files \*/ = \{\s*isa = PBXGroup;\s*children = \(\n)",
+                &format!("\t\t\t\t{} /* {} */,\n", file_ref, file.name),
+                "Supporting Files group",
+            )?;
+        }
+
+        content = insert_into_pbx_list(
+            &content,
+            r"(?s)(/\* Sources \*/ = \{\s*isa = PBXSourcesBuildPhase;.*?files = \(\n)",
+            &format!("\t\t\t\t{} /* {} in Sources */,\n", build_ref, file.name),
+            "PBXSourcesBuildPhase",
+        )?;
+        source_count += 1;
+    }
+
+    std::fs::write(&pbxproj, content).map_err(|e| format!("写入 project.pbxproj 失败: {}", e))?;
+    Ok(source_count)
 }
 
 pub(crate) fn remove_pbx_linked_or_embedded_files(
@@ -855,6 +961,30 @@ fn find_pbx_file_reference_id(content: &str, name: &str) -> Option<String> {
         .map(|value| value.as_str().to_string())
 }
 
+fn find_pbx_file_reference_id_by_path(content: &str, path: &str) -> Option<String> {
+    let rendered_path = render_pbx_value(path);
+    for candidate in [path, rendered_path.as_str()] {
+        let pattern = regex::Regex::new(&format!(
+            r"(?m)^\s*([A-Za-z0-9]{{24}}) /\* .*? \*/ = \{{isa = PBXFileReference;[^\n]*path = {};",
+            regex::escape(candidate)
+        ))
+        .ok()?;
+        if let Some(captures) = pattern.captures(content) {
+            return captures.get(1).map(|value| value.as_str().to_string());
+        }
+    }
+    None
+}
+
+fn pbx_sources_build_file_exists(content: &str, file_ref: &str) -> bool {
+    let pattern = regex::Regex::new(&format!(
+        r"(?m)^\s*[A-Za-z0-9]{{24}} /\* .*? in Sources \*/ = \{{isa = PBXBuildFile; fileRef = {} /\* .*? \*/;",
+        regex::escape(file_ref)
+    ))
+    .expect("valid PBXBuildFile source regex");
+    pattern.is_match(content)
+}
+
 pub(super) fn patch_pbxproj(
     project_file: &Path,
     config: &crate::commands::project::ProjectConfig,
@@ -1144,7 +1274,8 @@ pub(crate) fn register_pbx_resource_file_specs(
         if content.contains(&format!("/* {} in Resources */", resource.name)) {
             continue;
         }
-        let file_ref = pbx_object_id();
+        let existing_file_ref = find_pbx_file_reference_id_by_path(&content, resource.path());
+        let file_ref = existing_file_ref.clone().unwrap_or_else(pbx_object_id);
         let build_ref = pbx_object_id();
         let build_line = format!(
             "\t\t{} /* {} in Resources */ = {{isa = PBXBuildFile; fileRef = {} /* {} */; }};\n",
@@ -1156,18 +1287,20 @@ pub(crate) fn register_pbx_resource_file_specs(
             &build_line,
             "PBXBuildFile section",
         )?;
-        content = insert_after_marker(
-            &content,
-            "/* Begin PBXFileReference section */\n",
-            &resource.file_reference_line(&file_ref),
-            "PBXFileReference section",
-        )?;
-        content = insert_into_pbx_list(
-            &content,
-            r"(?s)(/\* Supporting Files \*/ = \{\s*isa = PBXGroup;\s*children = \(\n)",
-            &format!("\t\t\t\t{} /* {} */,\n", file_ref, resource.name),
-            "Supporting Files group",
-        )?;
+        if existing_file_ref.is_none() {
+            content = insert_after_marker(
+                &content,
+                "/* Begin PBXFileReference section */\n",
+                &resource.file_reference_line(&file_ref),
+                "PBXFileReference section",
+            )?;
+            content = insert_into_pbx_list(
+                &content,
+                r"(?s)(/\* Supporting Files \*/ = \{\s*isa = PBXGroup;\s*children = \(\n)",
+                &format!("\t\t\t\t{} /* {} */,\n", file_ref, resource.name),
+                "Supporting Files group",
+            )?;
+        }
         content = insert_into_pbx_list(
             &content,
             r"(?s)(/\* Resources \*/ = \{\s*isa = PBXResourcesBuildPhase;.*?files = \(\n)",
@@ -1257,7 +1390,26 @@ fn pbx_resource_file_type(name: &str) -> &'static str {
         Some("jpg" | "jpeg") => "image.jpeg",
         Some("pdf") => "image.pdf",
         Some("json") => "text.json",
+        Some("xcassets") => "folder.assetcatalog",
+        Some("xcprivacy") => "text.xml",
         Some("bundle") => "\"wrapper.plug-in\"",
         _ => "file",
+    }
+}
+
+fn pbx_source_file_type(name: &str) -> Option<&'static str> {
+    match Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("swift") => Some("sourcecode.swift"),
+        Some("m") => Some("sourcecode.c.objc"),
+        Some("mm") => Some("sourcecode.cpp.objcpp"),
+        Some("c") => Some("sourcecode.c.c"),
+        Some("cc" | "cpp" | "cxx") => Some("sourcecode.cpp.cpp"),
+        Some("metal") => Some("sourcecode.metal"),
+        _ => None,
     }
 }

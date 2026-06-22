@@ -548,6 +548,12 @@ fn uts_platform_dir(plugin_root: &std::path::Path, names: &[&str]) -> Option<std
             return Some(candidate);
         }
     }
+    for name in names {
+        let candidate = plugin_root.join(name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
     None
 }
 

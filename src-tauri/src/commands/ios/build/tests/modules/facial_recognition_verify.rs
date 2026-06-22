@@ -2,6 +2,7 @@ use ::plist as plist_crate;
 
 use super::super::super::plist::patch_info_plist;
 use crate::commands::ios::modules::facial_recognition_verify::apply_ios_facial_recognition_verify_module;
+use crate::commands::ios::modules::uts_plugins::apply_ios_uts_base_module;
 
 #[test]
 fn ios_facial_recognition_verify_module_patches_project_dependencies_and_resources() {
@@ -130,15 +131,19 @@ buildSettings = {
         Some(&info),
     )
     .unwrap();
+    let uts_base = apply_ios_uts_base_module(&project_root, &project_file, false).unwrap();
+    assert_eq!(uts_base.linked_count, 2);
+    assert_eq!(uts_base.embedded_count, 2);
+    assert_eq!(uts_base.ext_api_count, 0);
+    assert_eq!(uts_base.removed_duplicate_count, 1);
+
     let integration =
         apply_ios_facial_recognition_verify_module(&project_root, &project_file, Some(&info))
             .unwrap()
             .unwrap();
 
-    assert_eq!(integration.linked_count, 41);
-    assert_eq!(integration.embedded_count, 2);
+    assert_eq!(integration.linked_count, 39);
     assert_eq!(integration.resource_count, 3);
-    assert_eq!(integration.removed_duplicate_count, 1);
     let plist = plist_crate::Value::from_file(&plist_path).unwrap();
     let dict = plist.as_dictionary().unwrap();
     assert_eq!(
@@ -166,8 +171,6 @@ buildSettings = {
             .unwrap()
             .unwrap();
     assert_eq!(integration.linked_count, 0);
-    assert_eq!(integration.embedded_count, 0);
-    assert_eq!(integration.removed_duplicate_count, 0);
     let pbxproj = std::fs::read_to_string(project_file.join("project.pbxproj")).unwrap();
     assert_eq!(
         pbxproj.matches("DCUniBase.framework in Frameworks").count(),

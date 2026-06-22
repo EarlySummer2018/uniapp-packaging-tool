@@ -22,7 +22,9 @@ use super::runtime::{
 };
 use super::splashscreen::apply_ios_splashscreen;
 use crate::commands::ios::modules::bluetooth::apply_ios_bluetooth_module;
-use crate::commands::ios::modules::facial_recognition_verify::apply_ios_facial_recognition_verify_module;
+use crate::commands::ios::modules::facial_recognition_verify::{
+    apply_ios_facial_recognition_verify_module, ios_facial_recognition_verify_enabled,
+};
 use crate::commands::ios::modules::geolocation::apply_ios_geolocation_module;
 use crate::commands::ios::modules::ibeacon::apply_ios_ibeacon_module;
 use crate::commands::ios::modules::livepusher::apply_ios_livepusher_module;
@@ -34,7 +36,9 @@ use crate::commands::ios::modules::share::apply_ios_share_module;
 use crate::commands::ios::modules::speech::apply_ios_speech_module;
 use crate::commands::ios::modules::statistic::apply_ios_statistic_module;
 use crate::commands::ios::modules::ui_webview::apply_ios_ui_webview_module;
-use crate::commands::ios::modules::uts_plugins::apply_ios_uts_plugins;
+use crate::commands::ios::modules::uts_plugins::{
+    apply_ios_uts_base_module, apply_ios_uts_plugins,
+};
 use crate::commands::module::{
     manifest_push_unsupported_version, PUSH_UNSUPPORTED_VERSION_MESSAGE,
 };
@@ -311,6 +315,32 @@ pub(super) fn configure_ios_workspace(
             Some(29),
         );
     }
+    let facial_recognition_verify_enabled = ios_facial_recognition_verify_enabled(manifest_info);
+    let ios_uts_builtin_ext_api_required = scan
+        .uts
+        .builtin_modules
+        .iter()
+        .any(|module| module.ios_dir.is_some());
+    if facial_recognition_verify_enabled || scan.uts.has_ios_uts_plugins {
+        let uts_base = apply_ios_uts_base_module(
+            &project_root,
+            &project_file,
+            ios_uts_builtin_ext_api_required,
+        )?;
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已按文档接入 iOS UTS 基础模块: 新增链接 {} 项，Embed {} 项，ExtAPI {} 项，移除重复链接 {} 项",
+                uts_base.linked_count,
+                uts_base.embedded_count,
+                uts_base.ext_api_count,
+                uts_base.removed_duplicate_count
+            ),
+            Some(29),
+        );
+    }
     if let Some(facial) =
         apply_ios_facial_recognition_verify_module(&project_root, &project_file, manifest_info)?
     {
@@ -319,11 +349,8 @@ pub(super) fn configure_ios_workspace(
             build_id,
             "success",
             &format!(
-                "已自动接入 iOS 实人认证模块: 新增链接 {} 项，Embed {} 项，资源 {} 项，移除 UTS 重复链接 {} 项",
-                facial.linked_count,
-                facial.embedded_count,
-                facial.resource_count,
-                facial.removed_duplicate_count
+                "已自动接入 iOS 实人认证模块: 新增链接 {} 项，资源 {} 项",
+                facial.linked_count, facial.resource_count
             ),
             Some(29),
         );
@@ -342,6 +369,13 @@ pub(super) fn configure_ios_workspace(
                 "已自动接入 iOS LivePusher 模块: 新增链接 {} 项，Embed {} 项",
                 livepusher.linked_count, livepusher.embedded_count
             ),
+            Some(29),
+        );
+        emit_ios_log(
+            window,
+            build_id,
+            "warn",
+            "LivePusher 依赖的 UPLiveSDKDll.framework 通常只包含真机架构；如在模拟器编译出现 AudioProcessor/RtcManager/UPAVPlayer 等 Undefined symbol，请改用真机或 Archive 构建，或关闭 LivePusher 模块",
             Some(29),
         );
     }
@@ -415,14 +449,20 @@ pub(super) fn configure_ios_workspace(
             build_id,
             "success",
             &format!(
-                "已自动接入 iOS UTS 插件: 新增链接 {} 项，Embed {} 项，自定义框架 {} 项，系统库 {} 项，资源 {} 项，plist {} 项，移除重复链接 {} 项",
-                uts.linked_count,
-                uts.embedded_count,
-                uts.custom_framework_count,
+                "已按文档复制 iOS UTS 插件 app-ios 目录 {} 个，并接入源码 {} 项、本地库 {} 项、静态库 {} 项、系统库 {} 项、资源 {} 项、plist {} 项；新增链接 {} 项、Embed {} 项、搜索路径 {} 项，deploymentTarget 更新 {} 项；未执行 Podfile 修改或 pod install",
+                uts.copied_plugin_count,
+                uts.source_count,
+                uts.local_framework_count,
+                uts.static_library_count,
                 uts.system_framework_count,
                 uts.resource_count,
                 uts.plist_count,
-                uts.removed_duplicate_count
+                uts.linked_count,
+                uts.embedded_count,
+                uts.framework_search_path_count
+                    + uts.library_search_path_count
+                    + uts.header_search_path_count,
+                uts.deployment_target_update_count
             ),
             Some(31),
         );
@@ -432,7 +472,7 @@ pub(super) fn configure_ios_workspace(
                 build_id,
                 "warn",
                 &format!(
-                    "检测到 {} 项 iOS UTS CocoaPods 依赖；当前 iOS 构建方式不会执行 pod install，请确保插件已提供可直接集成的 framework/xcframework",
+                    "检测到 iOS UTS 插件声明 {} 个 Pod 依赖；按当前要求暂未执行 HBuilderX 5.13+ Pod 集成",
                     uts.pod_dependency_count
                 ),
                 Some(31),

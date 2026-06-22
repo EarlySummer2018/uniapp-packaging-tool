@@ -121,6 +121,13 @@ pub(super) fn prepare_ios_uts_project(root: &Path) -> (PathBuf, PathBuf) {
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
+/* Begin PBXSourcesBuildPhase section */
+		999999999999999999999999 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXSourcesBuildPhase section */
 /* Begin PBXGroup section */
 		BBBBBBBBBBBBBBBBBBBBBBBB /* Frameworks */ = {
 			isa = PBXGroup;
@@ -149,6 +156,7 @@ pub(super) fn prepare_ios_uts_project(root: &Path) -> (PathBuf, PathBuf) {
 		EEEEEEEEEEEEEEEEEEEEEEEE /* HBuilder-Hello */ = {
 			isa = PBXNativeTarget;
 			buildPhases = (
+				999999999999999999999999 /* Sources */,
 				AAAAAAAAAAAAAAAAAAAAAAAA /* Frameworks */,
 				DDDDDDDDDDDDDDDDDDDDDDDD /* Resources */,
 			);

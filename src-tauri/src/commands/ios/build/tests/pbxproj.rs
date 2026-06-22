@@ -1,8 +1,8 @@
 use super::super::fs_utils::find_scheme_name;
 use super::super::pbxproj::{
-    append_pbx_build_setting_paths_to_content, legacy_simulator_x86_64_required,
-    raise_pbx_ios_deployment_target, register_pbx_embedded_frameworks, register_pbx_linked_files,
-    remove_pbx_build_setting_flag, set_pbx_build_setting, IosPbxLinkedFile,
+    legacy_simulator_x86_64_required, raise_pbx_ios_deployment_target,
+    register_pbx_embedded_frameworks, register_pbx_linked_files, remove_pbx_build_setting_flag,
+    set_pbx_build_setting, IosPbxLinkedFile,
 };
 
 #[test]
@@ -191,28 +191,6 @@ fn pbx_deployment_target_raise_preserves_higher_values() {
     assert!(pbxproj.contains("IPHONEOS_DEPLOYMENT_TARGET = 14.0;"));
     assert!(!pbxproj.contains("IPHONEOS_DEPLOYMENT_TARGET = 12.0;"));
     let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn pbx_search_path_appends_to_array_and_is_idempotent() {
-    let content = r#"buildSettings = {
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)",
-				);
-};
-"#;
-    let paths = vec!["$(PROJECT_DIR)/UTSPlugins/Dingtalk-DingRTC".to_string()];
-
-    let (updated, changed) =
-        append_pbx_build_setting_paths_to_content(content, "FRAMEWORK_SEARCH_PATHS", &paths);
-    let (updated_again, changed_again) =
-        append_pbx_build_setting_paths_to_content(&updated, "FRAMEWORK_SEARCH_PATHS", &paths);
-
-    assert_eq!(changed, 1);
-    assert_eq!(changed_again, 0);
-    assert_eq!(updated, updated_again);
-    assert!(updated.contains("\"$(PROJECT_DIR)/UTSPlugins/Dingtalk-DingRTC\""));
 }
 
 #[test]
