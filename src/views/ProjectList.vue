@@ -2,10 +2,11 @@
 import { h, ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NAlert, NLayout, NLayoutSider, NLayoutContent, NMenu, NButton, NIcon, NModal, NInput, NSpace, NText, useMessage, useDialog } from 'naive-ui'
-import { AddOutline, FolderOutline, HelpCircleOutline, SettingsOutline, TimeOutline, TrashOutline, OptionsOutline } from '@vicons/ionicons5'
+import { AddOutline, FolderOutline, HelpCircleOutline, SettingsOutline, TimeOutline, TrashOutline, OptionsOutline, LogoGithub } from '@vicons/ionicons5'
 import AppGuide from '../components/AppGuide.vue'
 import { useProjectsStore } from '../stores/projects'
 import { useBuildStore } from '../stores/build'
+import brandIconUrl from '../assets/512x512.png'
 
 const router = useRouter()
 const route = useRoute()
@@ -13,6 +14,10 @@ const message = useMessage()
 const dialog = useDialog()
 const projectsStore = useProjectsStore()
 const buildStore = useBuildStore()
+
+const brandMarkStyle = computed(() => ({
+  backgroundImage: `url(${brandIconUrl})`
+}))
 
 const showModal = ref(false)
 const newProjectName = ref('')
@@ -207,10 +212,22 @@ async function handleDeleteProject(projectId: string) {
     >
       <div class="sidebar-header">
         <div class="brand-row">
-          <div class="brand-mark">UP</div>
+          <div class="brand-mark" :style="brandMarkStyle" />
           <div class="brand-copy">
-            <n-text strong class="app-title">UniPack</n-text>
-            <n-text depth="3" class="app-caption">Tool</n-text>
+            <n-text strong class="app-title">UniPack Tools</n-text>
+            <div style="display: flex;align-items: center;">
+              <n-text class="app-caption">Powered by </n-text>
+              <n-button
+                  text
+                  tag="a"
+                  href="https://github.com/EarlySummer2018/uniapp-packaging-tool"
+                  target="_blank"
+                  type="primary"
+                  style="font-size: 12px;display: flex;align-items: center;"
+                >
+                  <n-icon style="margin-right: 2px;"><LogoGithub /></n-icon>EarlySummer
+                </n-button>
+            </div>
           </div>
         </div>
         <n-button
@@ -357,23 +374,18 @@ async function handleDeleteProject(projectId: string) {
 }
 
 .brand-mark {
-  width: 36px;
-  height: 36px;
+  width: 45px;
+  height: 45px;
   border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  background: var(--primary-color);
-  font-size: 13px;
-  font-weight: 750;
+  background-size: 100%;
+  background-repeat: no-repeat;
+  background-position: center;
 }
 
 .brand-copy {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  line-height: 1.2;
 }
 
 .app-title {
@@ -382,6 +394,8 @@ async function handleDeleteProject(projectId: string) {
 
 .app-caption {
   font-size: 12px;
+  margin-right: 5px;
+  color: #959595;
 }
 
 .project-list {

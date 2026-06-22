@@ -1,3 +1,4 @@
+pub mod compat;
 pub mod fs;
 pub mod icon;
 pub mod keychain;

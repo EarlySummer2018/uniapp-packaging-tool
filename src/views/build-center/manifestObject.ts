@@ -1,7 +1,8 @@
 export function ensureObjectPath(root: Record<string, any>, keys: string[]) {
   let current = root
   for (const key of keys) {
-    if (!isPlainRecord(current[key])) current[key] = {}
+    const entry = current[key]
+    if (!isPlainRecord(entry)) current[key] = {}
     current = current[key]
   }
   return current
@@ -11,8 +12,8 @@ export function findFirstObjectEntry(root: Record<string, any>, keys: string[]) 
   for (const key of keys) {
     const direct = root[key]
     if (isPlainRecord(direct)) return { key, value: direct }
-    const normalizedKey = normalizeManifestConfigKey(key)
-    const matchedKey = Object.keys(root).find(candidate => normalizeManifestConfigKey(candidate) === normalizedKey)
+    const alias = normalizeManifestConfigKey(key)
+    const matchedKey = Object.keys(root).find(candidate => normalizeManifestConfigKey(candidate) === alias)
     if (matchedKey && isPlainRecord(root[matchedKey])) return { key: matchedKey, value: root[matchedKey] }
   }
   return null

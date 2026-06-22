@@ -13,7 +13,7 @@ UniPack Tool 是一个基于 Tauri + Vue 3 + TypeScript + Rust 的桌面应用�
 | 平台 | 工程来源 | 构建产物 | 当前状态 |
 | --- | --- | --- | --- |
 | Android | 用户配置的 DCloud Android 离线 SDK | APK | 22 个模块已完成离线构建验证 |
-| iOS | 用户配置的 DCloud iOS 离线 SDK `HBuilder-Hello*` | IPA | 12 个模块已支持自动化接入或配置处理 |
+| iOS | 用户配置的 DCloud iOS 离线 SDK `HBuilder-Hello*` | IPA | 22 个模块已完成离线构建验证 |
 | HarmonyOS | 用户配置的 Harmony 工程模板 | HAP | 已支持模板工程构建流程，模块级配置持续完善 |
 
 ## 核心能力
@@ -44,20 +44,21 @@ UniPack Tool 是一个基于 Tauri + Vue 3 + TypeScript + Rust 的桌面应用�
 | 隐私清单 | 校验 SDK 工程中的 `.xcprivacy` 是否纳入 Xcode 工程 |
 | 签名导出 | 安装 mobileprovision，导入 P12，执行 Xcode archive/export 生成 IPA |
 
-## iOS 已支持模块
+## iOS 已验证模块
 
-以下 **12 个模块**已在 iOS 端支持自动化接入或配置处理：
+以下 **22 个模块**已在 iOS 端完成离线打包验证：
 
 | 分类 | 模块 |
 | --- | --- |
-| 基础能力 | Barcode、Bluetooth、Camera、Contacts、Fingerprint（FaceID）、iBeacon、VideoPlayer、Record |
-| 位置 | Geolocation（系统/百度/高德） |
-| 认证与安全 | FacialRecognitionVerify |
-| 通信与媒体 | Push（uniPush 2.0）、LivePusher |
+| 基础能力 | Barcode、Bluetooth、Camera、Contacts、Fingerprint、iBeacon、VideoPlayer、Record、SQLite、Messaging、gcanvas |
+| 位置与地图 | Geolocation（系统/百度/高德/腾讯）、Map（高德/百度/Google） |
+| 认证与安全 | FacialRecognitionVerify（DCloud/百度/阿里云） |
+| 通信与媒体 | Push（uniPush 与厂商通道）、LivePusher |
+| 社交与账号 | Share（微信/QQ/微博）、Login（微信/QQ/苹果/一键登录/小米/Google/Facebook） |
+| 支付与统计 | Payment（支付宝/微信/PayPal/Stripe/Google Pay）、Statistic（友盟/腾讯MTA/百度/DCloud/Firebase） |
+| 语音 | Speech（讯飞/百度/阿里云） |
 
-> 其中 Geolocation、Push、FacialRecognitionVerify、LivePusher 已支持原生依赖接入；Bluetooth、iBeacon 支持 Capability / 后台模式配置；其余模块主要提供 Info.plist / ATS 等配置处理。
-
-> Share、Login、Payment、Map、Speech、Statistic、uni-AD、UIWebview 等 iOS 模块已有文档或模板参考，但尚未全部实现端到端自动接入；复杂业务场景可能仍需要按 DCloud 官方文档在 Xcode 中补充配置。
+> 广告模块（uni-AD）代码中已有模板定义，但尚未经完整实测，使用时可能存在不确定性。
 
 ## Android 已验证模块
 
@@ -162,4 +163,4 @@ npm run tauri build
 
 ## 许可证
 
-本项目基于 [MIT License](./LICENSE) 开源。
+本项目基于 [Apache License 2.0](./LICENSE) 开源。

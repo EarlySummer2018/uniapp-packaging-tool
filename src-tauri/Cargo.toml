@@ -3,7 +3,7 @@ name = "unipack-tool"
 version = "0.1.3"
 description = "A Tauri desktop tool for automating uni-app offline packaging across Android, iOS, and HarmonyOS."
 authors = ["EarlySummer2018"]
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/EarlySummer2018/uniapp-packaging-tool"
 edition = "2021"
 

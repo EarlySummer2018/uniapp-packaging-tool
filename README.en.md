@@ -13,7 +13,7 @@ UniPack Tool is a Tauri + Vue 3 + TypeScript + Rust desktop application. It conn
 | Platform | Project Source | Artifact | Current Status |
 | --- | --- | --- | --- |
 | Android | User-configured DCloud Android offline SDK | APK | 22 modules verified through offline builds |
-| iOS | User-configured DCloud iOS offline SDK `HBuilder-Hello*` | IPA | 12 modules supported through automation or configuration handling |
+| iOS | User-configured DCloud iOS offline SDK `HBuilder-Hello*` | IPA | 22 modules verified through offline builds |
 | HarmonyOS | User-configured Harmony project template | HAP | Template-based build flow supported; module-level automation is still evolving |
 
 ## Core Capabilities
@@ -44,20 +44,21 @@ The iOS build flow reads `HBuilder-Hello*` from the user-configured DCloud iOS o
 | Privacy manifest | Verify that the SDK `.xcprivacy` file is included in the Xcode project |
 | Signing and export | Install mobileprovision files, import P12 certificates, and run Xcode archive/export to produce an IPA |
 
-## Supported iOS Modules
+## Verified iOS Modules
 
-The following **12 modules** are supported on iOS through automated integration or configuration handling:
+The following **22 modules** have been verified through iOS offline packaging:
 
 | Category | Modules |
 | --- | --- |
-| Core features | Barcode, Bluetooth, Camera, Contacts, Fingerprint (Face ID), iBeacon, VideoPlayer, Record |
-| Location | Geolocation (system/Baidu/Amap) |
-| Authentication and security | FacialRecognitionVerify |
-| Communication and media | Push (uniPush 2.0), LivePusher |
+| Core features | Barcode, Bluetooth, Camera, Contacts, Fingerprint, iBeacon, VideoPlayer, Record, SQLite, Messaging, gcanvas |
+| Location and maps | Geolocation (system/Baidu/Amap/Tencent), Map (Amap/Baidu/Google) |
+| Authentication and security | FacialRecognitionVerify (DCloud/Baidu/Aliyun) |
+| Communication and media | Push (uniPush and vendor channels), LivePusher |
+| Social and accounts | Share (WeChat/QQ/Weibo), Login (WeChat/QQ/Apple/one-click carrier/Xiaomi/Google/Facebook) |
+| Payment and analytics | Payment (Alipay/WeChat Pay/PayPal/Stripe/Google Pay), Statistic (Umeng/Tencent MTA/Baidu/DCloud/Firebase) |
+| Speech | Speech (iFlytek/Baidu/Aliyun) |
 
-> Geolocation, Push, FacialRecognitionVerify, and LivePusher include native dependency wiring; Bluetooth and iBeacon include capability/background-mode configuration; the remaining modules are handled mainly through Info.plist / ATS configuration.
-
-> Share, Login, Payment, Map, Speech, Statistic, uni-AD, UIWebview, and similar iOS modules have documentation or template references, but full end-to-end automation is not complete yet. Complex cases may still require manual Xcode configuration based on DCloud's official documentation.
+> The Advertising module (uni-AD) has template definitions in the codebase, but it has not been fully tested and may still have uncertainties.
 
 ## Verified Android Modules
 
@@ -162,4 +163,4 @@ npm run tauri build
 
 ## License
 
-This project is open source under the [MIT License](./LICENSE).
+This project is licensed under the [Apache License 2.0](./LICENSE).

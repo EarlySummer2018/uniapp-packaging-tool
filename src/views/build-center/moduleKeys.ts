@@ -34,7 +34,8 @@ export function formatModuleWithPlatforms(mod: { name: string; platforms: string
 }
 
 export function moduleKeyParts(name: string, category: string, platforms: string[], source: string) {
-  return [name, category, platforms.join('|'), source || 'manifest.json'].join('::')
+  const sourceName = source || 'manifest.json'
+  return [name, category, platforms.join('|'), sourceName].join('::')
 }
 
 export function manifestModuleKey(mod: DetectedModule) {

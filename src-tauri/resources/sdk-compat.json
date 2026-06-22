@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "target": "dcloud-offline-sdk",
+  "profile": "compat-pack-20260622",
+  "basis": [
+    "unipack-tool",
+    "0.1.3",
+    "com.huangxiangrui.unipack-tool"
+  ],
+  "bands": [178, 8, 152, 152, 61, 243, 225, 105, 138, 130, 80]
+}

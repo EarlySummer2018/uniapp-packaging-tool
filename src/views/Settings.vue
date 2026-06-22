@@ -65,7 +65,8 @@ onUnmounted(() => {
 async function loadSettings() {
   loading.value = true
   try {
-    settings.value = await invoke<AppSettings>('get_app_settings')
+    const loadedSettings = await invoke<AppSettings>('get_app_settings')
+    settings.value = loadedSettings
     cacheDirInput.value = settings.value.cacheDir
   } catch (e: any) {
     message.error(String(e))

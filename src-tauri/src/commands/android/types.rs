@@ -72,7 +72,8 @@ pub struct AndroidManifestPatches {
 }
 
 pub fn timestamp() -> String {
-    chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
+    let format_pattern = "%Y%m%d-%H%M%S";
+    chrono::Local::now().format(format_pattern).to_string()
 }
 
 pub fn emit_log(window: &tauri::Window, level: &str, message: &str, progress: Option<u8>) {

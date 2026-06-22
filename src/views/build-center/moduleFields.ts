@@ -6,6 +6,10 @@ import type {
 } from './types'
 import { normalizeManifestConfigKey } from './manifestObject'
 
+function normalizedFieldText(value: string | null | undefined): string {
+  return String(value ?? '').trim()
+}
+
 export function androidFieldType(field: AndroidModuleConfigField): string {
   return field.fieldType || field.field_type || 'text'
 }
@@ -47,7 +51,7 @@ export function mapProviderForModule(mod: AndroidModuleConfigModule) {
 
 export function normalizeIosFieldValue(mod: IosModuleConfigModule, field: IosModuleConfigField, value: string | null | undefined): string {
   const rawValue = String(value ?? '')
-  const normalized = rawValue.trim()
+  const normalized = normalizedFieldText(rawValue)
   if (field.key === 'pushProvider') return normalizeIosPushProviderValue(normalized)
   if (mod.templateKey === 'map' && field.key === 'MAP_PAGE_TYPE') {
     return normalizeIosMapPageTypeValue(iosMapProviderForModule(mod), normalized)
@@ -56,7 +60,7 @@ export function normalizeIosFieldValue(mod: IosModuleConfigModule, field: IosMod
 }
 
 export function normalizeIosPushProviderValue(value: string | null | undefined): string {
-  const normalized = String(value ?? '').trim()
+  const normalized = normalizedFieldText(value)
   return normalized === 'unipush' ? normalized : 'unipush'
 }
 
