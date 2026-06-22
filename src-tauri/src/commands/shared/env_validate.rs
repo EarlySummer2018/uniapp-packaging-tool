@@ -82,7 +82,7 @@ pub async fn validate_tool_path(
     }
 
     let mut p = PathBuf::from(input);
-    if matches!(tool_name.as_str(), "xcode" | "android_studio" | "hbuilderx") {
+    if matches!(tool_name.as_str(), "xcode" | "android_studio" | "hbuilderx" | "harmony") {
         p = normalize_macos_app_path(&p);
     }
     let mut details = Vec::new();
@@ -408,8 +408,29 @@ pub async fn validate_tool_path(
             }
         }
 
+        "harmony" => {
+            if is_macos_app_path(&p) && p.exists() {
+                details.push("✓ DevEco Studio.app 存在".to_string());
+                let plist = p.join("Contents").join("Info.plist");
+                if plist.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&plist) {
+                        if let Some(v) = content
+                            .lines()
+                            .find(|l| l.contains("CFBundleShortVersionString"))
+                            .and_then(|l| l.split('>').next_back()?.split('<').next())
+                        {
+                            version = Some(v.to_string());
+                            details.push(format!("✓ 版本: {}", v));
+                        }
+                    }
+                }
+            } else {
+                errors.push(format!("DevEco Studio 路径无效（应为 .app）: {}", input));
+            }
+        }
+
         _ => {
-            return Err(format!("不支持的工具类型: {}，支持的类型: android_sdk, java, xcode, ndk, android_studio, gradle, cocoapods, hbuilderx, node, git", tool_name));
+            return Err(format!("不支持的工具类型: {}，支持的类型: android_sdk, java, xcode, ndk, android_studio, gradle, cocoapods, hbuilderx, harmony, node, git", tool_name));
         }
     }
 

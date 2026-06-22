@@ -462,3 +462,107 @@ fn parse_manifest_reads_distribute_push_unipush_small_icon_densities() {
         )
     );
 }
+
+#[test]
+fn parse_manifest_reads_app_harmony_distribute_modules() {
+    // 鸿蒙原生模块在 `app-harmony.distribute.modules` 下以 `uni-*` key 声明。
+    // 见 https://uniapp.dcloud.net.cn/collocation/manifest.html#app-harmony
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-harmony-modules-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-harmony": {
+            "distribute": {
+                "modules": {
+                    "uni-push": {},
+                    "uni-oauth": {},
+                    "uni-payment": {},
+                    "uni-facialrecognitionverify": {},
+                    "uni-map": {},
+                    "uni-share": {}
+                }
+            }
+        }
+    });
+
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    let categories: Vec<&str> = info
+        .detected_modules
+        .iter()
+        .filter(|m| m.platforms.iter().any(|p| p == "harmony"))
+        .map(|m| m.category.as_str())
+        .collect();
+    assert!(categories.contains(&"push"), "应检测到 push 模块");
+    assert!(categories.contains(&"login"), "应检测到 login/oauth 模块");
+    assert!(
+        categories.contains(&"payment"),
+        "应检测到 payment 模块"
+    );
+    assert!(
+        categories.contains(&"face_recognition"),
+        "应检测到 face_recognition 模块"
+    );
+    assert!(categories.contains(&"map"), "应检测到 map 模块");
+    // uni-share 不在本轮支持范围内，不应被检测。
+    assert!(
+        !categories.iter().any(|c| c == &"share"),
+        "uni-share 暂不支持，不应进入检测结果"
+    );
+
+    // 所有鸿蒙模块的 platforms 必须仅为 "harmony"，不能泄漏到其他平台。
+    for module in &info.detected_modules {
+        if module.source == "app-harmony" {
+            assert_eq!(
+                module.platforms,
+                vec!["harmony".to_string()],
+                "鸿蒙模块 {:?} 的 platforms 应仅为 harmony",
+                module.name
+            );
+        }
+    }
+}
+
+#[test]
+fn parse_manifest_respects_disabled_app_harmony_modules() {
+    // 显式 `enabled: false` 的模块不应被检测。
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-harmony-disabled-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-harmony": {
+            "distribute": {
+                "modules": {
+                    "uni-push": { "enabled": true },
+                    "uni-oauth": { "enabled": false }
+                }
+            }
+        }
+    });
+
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    let harmony_categories: Vec<&str> = info
+        .detected_modules
+        .iter()
+        .filter(|m| m.platforms.iter().any(|p| p == "harmony"))
+        .map(|m| m.category.as_str())
+        .collect();
+    assert!(harmony_categories.contains(&"push"));
+    assert!(
+        !harmony_categories.contains(&"login"),
+        "disabled 的 uni-oauth 不应被检测"
+    );
+}

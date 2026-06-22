@@ -532,3 +532,64 @@ fn push_detected_module(detected: &mut Vec<DetectedModule>, raw_name: &str, plat
     module.platforms.push(platform);
     detected.push(module);
 }
+
+/// 将 `app-harmony.distribute.modules` 中的 `uni-*` key 映射到受支持的模块分类。
+///
+/// 鸿蒙原生模块按官方文档以 `uni-*` 形式的 key 声明（例如 `uni-push`、`uni-oauth`）。
+/// 仅返回本轮鸿蒙构建会处理的分类；`uni-share`、`uni-location` 等暂不在范围内返回 `None`。
+/// 见 https://uniapp.dcloud.net.cn/collocation/manifest.html#app-harmony
+pub(super) fn match_harmony_module_key_to_category(key: &str) -> Option<&'static str> {
+    match key {
+        "uni-push" => Some("push"),
+        "uni-oauth" => Some("login"),
+        "uni-payment" => Some("payment"),
+        "uni-facialrecognitionverify" => Some("face_recognition"),
+        "uni-map" => Some("map"),
+        _ => None,
+    }
+}
+
+/// 收集 `app-harmony.distribute.modules` 中声明的鸿蒙原生模块。
+///
+/// 与 `collect_modules_from_value` 不同，这里的 key 是 `uni-*` 形式，需要通过
+/// `match_harmony_module_key_to_category` 映射到标准分类后构造 `DetectedModule`，
+/// 并标记 `platforms = ["harmony"]`，确保不会泄漏进 Android/iOS 报表。
+pub(super) fn collect_harmony_modules(
+    modules: &serde_json::Value,
+    detected: &mut Vec<DetectedModule>,
+) {
+    let Some(map) = modules.as_object() else {
+        return;
+    };
+    for (key, value) in map {
+        let Some(category) = match_harmony_module_key_to_category(key) else {
+            continue;
+        };
+        let enabled = value
+            .as_bool()
+            .or_else(|| {
+                value
+                    .as_object()
+                    .and_then(|obj| obj.get("enabled"))
+                    .and_then(|v| v.as_bool())
+            })
+            .unwrap_or(true);
+        if !enabled {
+            continue;
+        }
+        if detected
+            .iter()
+            .any(|m| m.category == category && m.platforms.iter().any(|p| p == "harmony"))
+        {
+            continue;
+        }
+        detected.push(DetectedModule {
+            name: key.to_string(),
+            category: category.to_string(),
+            platforms: vec!["harmony".to_string()],
+            configured: false,
+            required_keys: Vec::new(),
+            source: "app-harmony".to_string(),
+        });
+    }
+}

@@ -323,7 +323,7 @@ function openPathConfig(item: EnvItem) {
 
 async function selectEnvPath() {
   if (!configuringItem.value) return
-  const selectsAppBundle = ['hbuilderx', 'xcode', 'android_studio'].includes(configuringItem.value.tool_key)
+  const selectsAppBundle = ['hbuilderx', 'xcode', 'android_studio', 'harmony'].includes(configuringItem.value.tool_key)
   const selected = await open({
     multiple: false,
     directory: !selectsAppBundle,

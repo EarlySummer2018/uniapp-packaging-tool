@@ -7,7 +7,8 @@ use super::assets::{
     find_manifest_push_icons, find_manifest_splashscreen,
 };
 use super::module_detection::{
-    check_module_configured_in_props, collect_modules_from_sdk_configs, collect_modules_from_value,
+    check_module_configured_in_props, collect_harmony_modules, collect_modules_from_sdk_configs,
+    collect_modules_from_value,
 };
 use super::types::{AndroidManifestConfig, PlatformPackages, UniappManifestInfo};
 
@@ -126,6 +127,16 @@ pub fn parse_uniapp_manifest(
                 }
             }
         }
+    }
+
+    // 鸿蒙原生模块在 `app-harmony.distribute.modules`（与 app-plus 同级）下以 `uni-*` key
+    // 声明，见 https://uniapp.dcloud.net.cn/collocation/manifest.html#app-harmony
+    if let Some(modules) = manifest
+        .get("app-harmony")
+        .and_then(|v| v.get("distribute"))
+        .and_then(|v| v.get("modules"))
+    {
+        collect_harmony_modules(modules, &mut detected_modules);
     }
 
     if let Some(props) = props_content {
