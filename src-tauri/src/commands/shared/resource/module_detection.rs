@@ -565,6 +565,14 @@ pub(super) fn collect_harmony_modules(
         let Some(category) = match_harmony_module_key_to_category(key) else {
             continue;
         };
+        if key == "uni-map" {
+            let Some(config) = value.as_object() else {
+                continue;
+            };
+            if config.is_empty() {
+                continue;
+            }
+        }
         let enabled = value
             .as_bool()
             .or_else(|| {

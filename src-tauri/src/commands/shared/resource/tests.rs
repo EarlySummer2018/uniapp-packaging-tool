@@ -467,10 +467,8 @@ fn parse_manifest_reads_distribute_push_unipush_small_icon_densities() {
 fn parse_manifest_reads_app_harmony_distribute_modules() {
     // 鸿蒙原生模块在 `app-harmony.distribute.modules` 下以 `uni-*` key 声明。
     // 见 https://uniapp.dcloud.net.cn/collocation/manifest.html#app-harmony
-    let project_root = std::env::temp_dir().join(format!(
-        "unipack-harmony-modules-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let project_root =
+        std::env::temp_dir().join(format!("unipack-harmony-modules-{}", uuid::Uuid::new_v4()));
     let manifest = serde_json::json!({
         "app-harmony": {
             "distribute": {
@@ -479,7 +477,11 @@ fn parse_manifest_reads_app_harmony_distribute_modules() {
                     "uni-oauth": {},
                     "uni-payment": {},
                     "uni-facialrecognitionverify": {},
-                    "uni-map": {},
+                    "uni-map": {
+                        "tencent": {
+                            "key": "tencent-demo"
+                        }
+                    },
                     "uni-share": {}
                 }
             }
@@ -501,10 +503,7 @@ fn parse_manifest_reads_app_harmony_distribute_modules() {
         .collect();
     assert!(categories.contains(&"push"), "应检测到 push 模块");
     assert!(categories.contains(&"login"), "应检测到 login/oauth 模块");
-    assert!(
-        categories.contains(&"payment"),
-        "应检测到 payment 模块"
-    );
+    assert!(categories.contains(&"payment"), "应检测到 payment 模块");
     assert!(
         categories.contains(&"face_recognition"),
         "应检测到 face_recognition 模块"
@@ -532,10 +531,8 @@ fn parse_manifest_reads_app_harmony_distribute_modules() {
 #[test]
 fn parse_manifest_respects_disabled_app_harmony_modules() {
     // 显式 `enabled: false` 的模块不应被检测。
-    let project_root = std::env::temp_dir().join(format!(
-        "unipack-harmony-disabled-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let project_root =
+        std::env::temp_dir().join(format!("unipack-harmony-disabled-{}", uuid::Uuid::new_v4()));
     let manifest = serde_json::json!({
         "app-harmony": {
             "distribute": {
@@ -564,5 +561,82 @@ fn parse_manifest_respects_disabled_app_harmony_modules() {
     assert!(
         !harmony_categories.contains(&"login"),
         "disabled 的 uni-oauth 不应被检测"
+    );
+}
+
+#[test]
+fn parse_manifest_requires_non_empty_app_harmony_uni_map() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-harmony-map-empty-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-harmony": {
+            "distribute": {
+                "modules": {
+                    "uni-map": {}
+                }
+            }
+        }
+    });
+
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    assert!(
+        !info
+            .detected_modules
+            .iter()
+            .any(|module| module.name == "uni-map"
+                && module
+                    .platforms
+                    .iter()
+                    .any(|platform| platform == "harmony")),
+        "空对象 uni-map 不应被检测为 Harmony 地图模块"
+    );
+}
+
+#[test]
+fn parse_manifest_respects_disabled_app_harmony_uni_map() {
+    let project_root = std::env::temp_dir().join(format!(
+        "unipack-harmony-map-disabled-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let manifest = serde_json::json!({
+        "app-harmony": {
+            "distribute": {
+                "modules": {
+                    "uni-map": {
+                        "enabled": false,
+                        "tencent": {
+                            "key": "tencent-demo"
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let info = parse_uniapp_manifest(
+        &manifest,
+        &project_root.join("manifest.json"),
+        &project_root,
+        None,
+    );
+
+    assert!(
+        !info
+            .detected_modules
+            .iter()
+            .any(|module| module.name == "uni-map"
+                && module
+                    .platforms
+                    .iter()
+                    .any(|platform| platform == "harmony")),
+        "enabled=false 的 uni-map 不应被检测为 Harmony 地图模块"
     );
 }

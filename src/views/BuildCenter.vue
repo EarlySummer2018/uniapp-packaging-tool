@@ -34,6 +34,9 @@ import type {
   BuildArtifact,
   BuildRecord,
   DetectedModule,
+  HarmonyModuleConfigField,
+  HarmonyModuleConfigModule,
+  HarmonyModuleConfigReport,
   IosModuleConfigField,
   IosModuleConfigModule,
   IosModuleConfigReport,
@@ -50,6 +53,8 @@ import {
   formatModuleWithPlatforms,
   generateProjectCommand,
   generateProjectKind,
+  harmonyConfigModuleKey,
+  harmonyModuleFieldValueKey,
   iosConfigModuleKey,
   iosModuleFieldValueKey,
   isIosPrivacyField,
@@ -101,6 +106,8 @@ const androidModuleConfigLoading = ref(false)
 const iosModuleConfigReport = ref<IosModuleConfigReport | null>(null)
 const iosModuleConfigLoading = ref(false)
 const iosModuleConfigValues = ref<Record<string, string>>({})
+const harmonyModuleConfigReport = ref<HarmonyModuleConfigReport | null>(null)
+const harmonyModuleConfigLoading = ref(false)
 const selectedManifestModuleKeys = ref<Set<string>>(new Set())
 const manifestModuleSelectionTouched = ref(false)
 const activeAndroidConfigModuleKey = ref<string | null>(null)
@@ -111,6 +118,14 @@ let androidModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 let iosModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 type IosPackagingMode = 'autoMigration' | 'localPod'
+type ManifestConfigModule =
+  | AndroidModuleConfigModule
+  | IosModuleConfigModule
+  | HarmonyModuleConfigModule
+type ManifestConfigField =
+  | AndroidModuleConfigField
+  | IosModuleConfigField
+  | HarmonyModuleConfigField
 
 function iosPackagingModeLabel(mode: IosPackagingMode) {
   if (mode === 'autoMigration') return '自动迁移打包'
@@ -119,6 +134,7 @@ function iosPackagingModeLabel(mode: IosPackagingMode) {
 
 const selectedNeedsAndroidConfig = computed(() => selectedPlatforms.value.includes('android'))
 const selectedNeedsIosConfig = computed(() => selectedPlatforms.value.includes('ios'))
+const selectedNeedsHarmonyConfig = computed(() => selectedPlatforms.value.includes('harmony'))
 const isBuildLocked = computed(() => buildStore.hasActiveBuilds)
 const activeProjectBuild = computed(() => buildStore.getActiveBuildForProject(projectId.value))
 const currentBuild = computed(() => {
@@ -161,6 +177,22 @@ const iosModuleMissingRequired = computed(() => {
       if (isIosPrivacyField(field)) continue
       if (!field.required || iosFieldValue(mod, field).trim()) continue
       const key = iosModuleFieldValueKey(mod, field)
+      if (!missing.has(key)) {
+        missing.set(key, { moduleName: mod.name, key: field.key, label: field.label })
+      }
+    }
+  }
+  return Array.from(missing.values())
+})
+const harmonyModuleMissingRequired = computed(() => {
+  const report = harmonyModuleConfigReport.value
+  if (!report) return []
+  const missing = new Map<string, { moduleName: string; key: string; label: string }>()
+  for (const mod of report.modules) {
+    if (!isHarmonyConfigModuleSelected(mod)) continue
+    for (const field of mod.fields) {
+      if (!field.required || harmonyFieldValue(mod, field).trim()) continue
+      const key = harmonyModuleFieldValueKey(mod, field)
       if (!missing.has(key)) {
         missing.set(key, { moduleName: mod.name, key: field.key, label: field.label })
       }
@@ -257,6 +289,8 @@ const canBuild = computed(() => {
   if (selectedNeedsAndroidConfig.value && !androidModulesReady.value) return false
   if (selectedNeedsIosConfig.value && iosModuleConfigLoading.value) return false
   if (selectedNeedsIosConfig.value && iosModuleMissingRequired.value.length) return false
+  if (selectedNeedsHarmonyConfig.value && harmonyModuleConfigLoading.value) return false
+  if (selectedNeedsHarmonyConfig.value && harmonyModuleMissingRequired.value.length) return false
   if (!iosBuildReady.value) return false
   return true
 })
@@ -266,7 +300,12 @@ const canGenerateAndroid = computed(() => {
   return true
 })
 const canGenerateIos = computed(() => canGenerateIosProject())
-const canGenerateHarmony = computed(() => canGenerateNativeProject('harmony'))
+const canGenerateHarmony = computed(() => {
+  if (!canGenerateNativeProject('harmony')) return false
+  if (selectedNeedsHarmonyConfig.value && harmonyModuleConfigLoading.value) return false
+  if (selectedNeedsHarmonyConfig.value && harmonyModuleMissingRequired.value.length) return false
+  return true
+})
 const currentGeneratedProjectLabel = computed(() => {
   const platform = currentBuild.value?.platform
   return platform ? `${platformProjectName(platform)}项目已生成` : '项目已生成'
@@ -289,6 +328,10 @@ const buildDisabledReason = computed(() => {
   if (selectedNeedsIosConfig.value && iosModuleConfigLoading.value) return '正在分析 iOS 模块配置'
   if (selectedNeedsIosConfig.value && iosModuleMissingRequired.value.length) {
     return `还有 ${iosModuleMissingRequired.value.length} 个 iOS 模块必填配置未填写`
+  }
+  if (selectedNeedsHarmonyConfig.value && harmonyModuleConfigLoading.value) return '正在分析 Harmony 模块配置'
+  if (selectedNeedsHarmonyConfig.value && harmonyModuleMissingRequired.value.length) {
+    return `还有 ${harmonyModuleMissingRequired.value.length} 个 Harmony 模块必填配置未填写`
   }
   if (selectedNeedsAndroidConfig.value) {
     if (!latestManifestInfo.value && !currentProject.value?.localPath) {
@@ -343,6 +386,10 @@ const activeAndroidConfigModule = computed(() => {
 const iosConfigModulesByKey = computed(() => {
   const modules = iosModuleConfigReport.value?.modules || []
   return new Map(modules.map(mod => [iosConfigModuleKey(mod), mod]))
+})
+const harmonyConfigModulesByKey = computed(() => {
+  const modules = harmonyModuleConfigReport.value?.modules || []
+  return new Map(modules.map(mod => [harmonyConfigModuleKey(mod), mod]))
 })
 const iosConfigurableModules = computed(() => {
   const modules = iosModuleConfigReport.value?.modules || []
@@ -424,6 +471,7 @@ async function importResource(path: string) {
   manifestReadWarning.value = ''
   androidModuleConfigReport.value = null
   iosModuleConfigReport.value = null
+  harmonyModuleConfigReport.value = null
   androidModuleConfigValues.value = {}
   iosModuleConfigValues.value = {}
   try {
@@ -434,6 +482,7 @@ async function importResource(path: string) {
     await refreshManifestFromLocalProject({ required: false, persist: true })
     await refreshAndroidModuleConfig()
     await refreshIosModuleConfig()
+    await refreshHarmonyModuleConfig()
     message.success(`已导入 ${insightAppId.value}`)
   } catch (e: any) {
     message.error(String(e))
@@ -527,6 +576,9 @@ async function startBuild() {
     return
   }
   if (!(await ensureIosModuleConfigReadyForBuild())) {
+    return
+  }
+  if (!(await ensureHarmonyModuleConfigReadyForBuild())) {
     return
   }
   let iosPackagingMode: IosPackagingMode | null = null
@@ -747,6 +799,9 @@ async function generateNativeProject(platform: NonIosPlatform) {
   if (platform === 'android' && !(await ensureAndroidModuleConfigReadyForBuild())) {
     return
   }
+  if (platform === 'harmony' && !(await ensureHarmonyModuleConfigReadyForBuild())) {
+    return
+  }
   const buildManifestInfo = selectedManifestInfoForBuild(manifestInfo)
   const moduleConfig = platform === 'android' ? buildAndroidModuleConfigPayload() : undefined
   await persistAndroidModuleConfigCache()
@@ -841,6 +896,10 @@ function isIosConfigModuleSelected(mod: IosModuleConfigModule) {
   return selectedManifestModuleKeys.value.has(iosConfigModuleKey(mod))
 }
 
+function isHarmonyConfigModuleSelected(mod: HarmonyModuleConfigModule) {
+  return selectedManifestModuleKeys.value.has(harmonyConfigModuleKey(mod))
+}
+
 function setManifestModuleSelected(mod: DetectedModule, checked: boolean) {
   if (isBuildLocked.value) return
   manifestModuleSelectionTouched.value = true
@@ -870,7 +929,11 @@ function setManifestModuleSelected(mod: DetectedModule, checked: boolean) {
 }
 
 function manifestConfigModule(mod: DetectedModule) {
-  return androidConfigModulesByKey.value.get(manifestModuleKey(mod)) || null
+  const key = manifestModuleKey(mod)
+  return androidConfigModulesByKey.value.get(key)
+    || iosConfigModulesByKey.value.get(key)
+    || harmonyConfigModulesByKey.value.get(key)
+    || null
 }
 
 function configFieldFilled(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
@@ -937,11 +1000,57 @@ function preferredIosConfigModule(modules: IosModuleConfigModule[]) {
     || modules[0]
 }
 
+function harmonyConfigFieldFilled(mod: HarmonyModuleConfigModule, field: HarmonyModuleConfigField) {
+  return harmonyFieldValue(mod, field).trim().length > 0
+}
+
+function harmonyConfigModuleMissingRequiredCount(mod: HarmonyModuleConfigModule) {
+  return mod.fields.filter(field => field.required && !harmonyConfigFieldFilled(mod, field)).length
+}
+
+function harmonyConfigModuleFilledCount(mod: HarmonyModuleConfigModule) {
+  return mod.fields.filter(field => harmonyConfigFieldFilled(mod, field)).length
+}
+
+function harmonyConfigModuleStatusTone(mod: HarmonyModuleConfigModule): ModuleStatusTone {
+  if (!mod.fields.length) return 'success'
+  if (harmonyConfigModuleMissingRequiredCount(mod) === 0) return 'success'
+  return harmonyConfigModuleFilledCount(mod) > 0 ? 'warning' : 'error'
+}
+
+function harmonyConfigModuleStatusLabel(mod: HarmonyModuleConfigModule) {
+  const missing = harmonyConfigModuleMissingRequiredCount(mod)
+  if (!mod.fields.length) return '已选'
+  if (missing === 0) return '已配置'
+  if (harmonyConfigModuleFilledCount(mod) > 0) return '部分配置'
+  return '需配置'
+}
+
+function manifestConfigModuleStatusTone(mod: ManifestConfigModule): ModuleStatusTone {
+  if (isHarmonyConfigModuleLike(mod)) return harmonyConfigModuleStatusTone(mod)
+  if (isIosConfigModuleLike(mod)) return iosConfigModuleStatusTone(mod)
+  return configModuleStatusTone(mod)
+}
+
+function manifestConfigModuleStatusLabel(mod: ManifestConfigModule) {
+  if (isHarmonyConfigModuleLike(mod)) return harmonyConfigModuleStatusLabel(mod)
+  if (isIosConfigModuleLike(mod)) return iosConfigModuleStatusLabel(mod)
+  return configModuleStatusLabel(mod)
+}
+
+function isHarmonyConfigModuleLike(mod: ManifestConfigModule): mod is HarmonyModuleConfigModule {
+  return mod.source === 'app-harmony' && mod.platforms.includes('harmony')
+}
+
+function isIosConfigModuleLike(mod: ManifestConfigModule): mod is IosModuleConfigModule {
+  return iosConfigModulesByKey.value.get(iosConfigModuleKey(mod as IosModuleConfigModule)) === mod
+}
+
 function manifestModuleStatusTone(mod: DetectedModule): ModuleStatusTone {
   if (!isManifestModuleSelected(mod)) return 'default'
   const configModule = manifestConfigModule(mod)
   if (!configModule) return 'success'
-  return configModuleStatusTone(configModule)
+  return manifestConfigModuleStatusTone(configModule)
 }
 
 function manifestModuleStatusType(mod: DetectedModule) {
@@ -956,7 +1065,36 @@ function manifestModuleStatusLabel(mod: DetectedModule) {
   if (!isManifestModuleSelected(mod)) return '未勾选'
   const configModule = manifestConfigModule(mod)
   if (!configModule) return '已选'
-  return configModuleStatusLabel(configModule)
+  return manifestConfigModuleStatusLabel(configModule)
+}
+
+function manifestModuleFieldSummaries(mod: DetectedModule) {
+  if (!isManifestModuleSelected(mod)) return []
+  const configModule = manifestConfigModule(mod)
+  if (!configModule?.fields.length) return []
+  if (!isHarmonyConfigModuleLike(configModule)) return []
+  return configModule.fields.map(field => {
+    const value = manifestConfigFieldValue(configModule, field).trim()
+    const state = value ? `已配置 (${maskConfigValue(value, field.secret)})` : (field.required ? '未配置' : '可选')
+    const source = value && field.valueSource === 'manifest' ? ' · manifest' : ''
+    return `${field.label}: ${state}${source}`
+  })
+}
+
+function maskConfigValue(value: string, secret: boolean) {
+  if (!secret) return value
+  if (value.length <= 6) return '******'
+  return `${value.slice(0, 3)}...${value.slice(-3)}`
+}
+
+function manifestConfigFieldValue(mod: ManifestConfigModule, field: ManifestConfigField) {
+  if (isHarmonyConfigModuleLike(mod)) {
+    return harmonyFieldValue(mod, field as HarmonyModuleConfigField)
+  }
+  if (isIosConfigModuleLike(mod)) {
+    return iosFieldValue(mod, field as IosModuleConfigField)
+  }
+  return androidFieldValue(mod, field as AndroidModuleConfigField)
 }
 
 function androidConfigModuleStatusType(mod: AndroidModuleConfigModule) {
@@ -1290,9 +1428,28 @@ async function refreshIosModuleConfig() {
   }
 }
 
+async function refreshHarmonyModuleConfig() {
+  if (!latestManifestInfo.value) {
+    harmonyModuleConfigReport.value = null
+    return
+  }
+  harmonyModuleConfigLoading.value = true
+  try {
+    harmonyModuleConfigReport.value = await invoke<HarmonyModuleConfigReport>('analyze_harmony_module_config', {
+      manifestInfo: latestManifestInfo.value
+    })
+  } catch (e: any) {
+    harmonyModuleConfigReport.value = null
+    manifestReadWarning.value = String(e)
+  } finally {
+    harmonyModuleConfigLoading.value = false
+  }
+}
+
 async function ensureManifestInfoLoaded(options: { persist: boolean } = { persist: true }): Promise<UniappManifestInfo> {
   if (latestManifestInfo.value) {
     if (!iosModuleConfigReport.value) await refreshIosModuleConfig()
+    if (!harmonyModuleConfigReport.value) await refreshHarmonyModuleConfig()
     return latestManifestInfo.value
   }
   const info = await refreshManifestFromLocalProject({ required: true, persist: options.persist })
@@ -1301,6 +1458,7 @@ async function ensureManifestInfoLoaded(options: { persist: boolean } = { persis
     throw new Error(warning)
   }
   await refreshIosModuleConfig()
+  await refreshHarmonyModuleConfig()
   return info
 }
 
@@ -1335,6 +1493,22 @@ async function ensureIosModuleConfigReadyForBuild() {
   }
   if (iosModuleMissingRequired.value.length) {
     message.error(`请先填写 iOS 模块配置: ${iosModuleMissingRequired.value.map(item => `${item.moduleName}-${item.label}`).join('、')}`)
+    return false
+  }
+  return true
+}
+
+async function ensureHarmonyModuleConfigReadyForBuild() {
+  if (!selectedNeedsHarmonyConfig.value) return true
+  if (!harmonyModuleConfigReport.value) {
+    await refreshHarmonyModuleConfig()
+  }
+  if (!harmonyModuleConfigReport.value) {
+    message.error(manifestReadWarning.value || 'Harmony 模块配置分析失败')
+    return false
+  }
+  if (harmonyModuleMissingRequired.value.length) {
+    message.error(`请先填写 Harmony 模块配置: ${harmonyModuleMissingRequired.value.map(item => `${item.moduleName}-${item.label}`).join('、')}`)
     return false
   }
   return true
@@ -1401,6 +1575,10 @@ function iosFieldValue(mod: IosModuleConfigModule, field: IosModuleConfigField) 
     ?? field.value
     ?? ''
   return normalizeIosFieldValue(mod, field, value)
+}
+
+function harmonyFieldValue(_mod: HarmonyModuleConfigModule, field: HarmonyModuleConfigField) {
+  return field.value ?? ''
 }
 
 function updateIosField(mod: IosModuleConfigModule, field: IosModuleConfigField, value: string) {
@@ -1795,6 +1973,7 @@ function goBack() {
       :manifest-module-status-type="manifestModuleStatusType"
       :manifest-module-status-class="manifestModuleStatusClass"
       :manifest-module-status-label="manifestModuleStatusLabel"
+      :manifest-module-field-summaries="manifestModuleFieldSummaries"
       @set-manifest-module-selected="setManifestModuleSelected"
     />
 

@@ -1,33 +1,29 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import {
   NAlert,
-  NButton,
   NCard,
-  NFormItem,
-  NGi,
-  NGrid,
-  NInput,
-  NSelect,
   NSpace,
-  NTag,
   NText
 } from 'naive-ui'
+import ModuleConfigWorkbench from './ModuleConfigWorkbench.vue'
 import type {
   AndroidModuleConfigField,
   AndroidModuleConfigModule,
-  UniappManifestInfo
+  UniappManifestInfo,
+  WorkbenchField,
+  WorkbenchModule
 } from './types'
 import {
   androidConfigModuleKey,
-  formatPlatforms
+  androidModuleFieldValueKey
 } from './moduleKeys'
 import {
-  isFileField,
-  isSelectField,
+  androidFieldType,
   selectFieldOptions
 } from './moduleFields'
 
-defineProps<{
+const props = defineProps<{
   visible: boolean
   androidModuleConfigLoading: boolean
   latestManifestInfo: UniappManifestInfo | null
@@ -52,6 +48,72 @@ const emit = defineEmits<{
   (e: 'pick-file-field', mod: AndroidModuleConfigModule, field: AndroidModuleConfigField): void
   (e: 'clear-file-field', mod: AndroidModuleConfigModule, field: AndroidModuleConfigField): void
 }>()
+
+type AndroidWorkbenchModule = WorkbenchModule<AndroidModuleConfigModule, AndroidModuleConfigField>
+type AndroidWorkbenchField = WorkbenchField<AndroidModuleConfigField>
+
+const workbenchModules = computed<AndroidWorkbenchModule[]>(() => {
+  return props.androidConfigurableModules.map(mod => {
+    const fields: AndroidWorkbenchField[] = mod.fields.map(field => ({
+      key: androidModuleFieldValueKey(mod, field),
+      label: field.label,
+      required: field.required,
+      secret: field.secret,
+      placeholder: field.placeholder,
+      fieldType: androidFieldType(field),
+      raw: field
+    }))
+    const filledCount = mod.fields.filter(field => props.androidFieldValue(mod, field).trim()).length
+    const missingRequiredCount = mod.fields.filter(field => {
+      return field.required && !props.androidFieldValue(mod, field).trim()
+    }).length
+    return {
+      key: androidConfigModuleKey(mod),
+      name: mod.name,
+      category: mod.category,
+      platforms: mod.platforms,
+      status: props.androidConfigModuleStatusType(mod),
+      statusLabel: props.configModuleStatusLabel(mod),
+      missingRequiredCount,
+      filledCount,
+      totalCount: mod.fields.length,
+      fields,
+      raw: mod
+    }
+  })
+})
+
+function openWorkbenchModule(mod: AndroidWorkbenchModule) {
+  emit('open-module', mod.raw)
+}
+
+function updateWorkbenchField(_mod: AndroidWorkbenchModule, field: AndroidWorkbenchField, value: string) {
+  emit('update-field', field.raw, value)
+}
+
+function pickWorkbenchFile(mod: AndroidWorkbenchModule, field: AndroidWorkbenchField) {
+  emit('pick-file-field', mod.raw, field.raw)
+}
+
+function clearWorkbenchFile(mod: AndroidWorkbenchModule, field: AndroidWorkbenchField) {
+  emit('clear-file-field', mod.raw, field.raw)
+}
+
+function workbenchFieldValue(mod: AndroidWorkbenchModule, field: AndroidWorkbenchField) {
+  return props.androidFieldValue(mod.raw, field.raw)
+}
+
+function workbenchFieldStatusType(mod: AndroidWorkbenchModule, field: AndroidWorkbenchField) {
+  return props.fieldStatusType(mod.raw, field.raw)
+}
+
+function workbenchFieldStatusLabel(mod: AndroidWorkbenchModule, field: AndroidWorkbenchField) {
+  return props.fieldStatusLabel(mod.raw, field.raw)
+}
+
+function workbenchSelectOptions(mod: AndroidWorkbenchModule, field: AndroidWorkbenchField) {
+  return selectFieldOptions(mod.raw, field.raw)
+}
 </script>
 
 <template>
@@ -76,71 +138,22 @@ const emit = defineEmits<{
         </n-space>
       </n-alert>
 
-      <div v-if="androidConfigurableModules.length" class="android-config-list">
-        <n-space wrap :size="8" class="android-config-switcher">
-          <n-tag
-            v-for="mod in androidConfigurableModules"
-            :key="androidConfigModuleKey(mod)"
-            class="android-config-chip"
-            :class="{ 'android-config-chip--active': activeAndroidConfigModuleKey === androidConfigModuleKey(mod) }"
-            :type="androidConfigModuleStatusType(mod)"
-            :bordered="activeAndroidConfigModuleKey !== androidConfigModuleKey(mod)"
-            @click="emit('open-module', mod)"
-          >
-            {{ mod.name }} · {{ configModuleStatusLabel(mod) }}
-          </n-tag>
-        </n-space>
-
-        <div v-if="activeAndroidConfigModule" class="android-config-module">
-          <div class="android-config-head">
-            <n-space align="center" :size="8">
-              <n-text strong>{{ activeAndroidConfigModule.name }}</n-text>
-              <n-tag size="small" type="info">{{ activeAndroidConfigModule.category }}</n-tag>
-              <n-tag v-if="formatPlatforms(activeAndroidConfigModule.platforms)" size="small" :type="activeAndroidConfigModule.platforms.includes('android') ? 'success' : 'default'">{{ formatPlatforms(activeAndroidConfigModule.platforms) }}</n-tag>
-            </n-space>
-            <n-text depth="3">{{ activeAndroidConfigModule.fields.length }} 项配置</n-text>
-          </div>
-          <n-grid :cols="2" :x-gap="14" :y-gap="10" responsive="screen">
-            <n-gi v-for="field in activeAndroidConfigModule.fields" :key="activeAndroidConfigModule.templateKey + field.key">
-              <n-form-item :label="field.label" :feedback="field.required && !androidFieldValue(activeAndroidConfigModule, field).trim() ? '必填项，未填写时不能开始打包' : undefined">
-                <template #label>
-                  <n-space align="center" :size="6">
-                    <n-text>{{ field.label }}</n-text>
-                    <n-tag size="tiny" :type="fieldStatusType(activeAndroidConfigModule, field)">{{ fieldStatusLabel(activeAndroidConfigModule, field) }}</n-tag>
-                  </n-space>
-                </template>
-                <template v-if="isFileField(field)">
-                  <n-space :size="8" align="center" class="file-field-row">
-                    <n-button size="small" :disabled="isBuildLocked" @click="emit('pick-file-field', activeAndroidConfigModule, field)">选择文件</n-button>
-                    <n-text v-if="androidFieldValue(activeAndroidConfigModule, field)" depth="3" class="file-field-hint">
-                      已选择 ({{ formatFileSize(androidFieldValue(activeAndroidConfigModule, field)) }})
-                    </n-text>
-                    <n-button v-if="androidFieldValue(activeAndroidConfigModule, field)" size="small" quaternary type="error" :disabled="isBuildLocked" @click="emit('clear-file-field', activeAndroidConfigModule, field)">清除</n-button>
-                    <n-text v-else depth="3" class="file-field-hint">{{ field.placeholder }}</n-text>
-                  </n-space>
-                </template>
-                <n-select
-                  v-else-if="isSelectField(field)"
-                  :value="androidFieldValue(activeAndroidConfigModule, field)"
-                  :options="selectFieldOptions(activeAndroidConfigModule, field)"
-                  :placeholder="field.placeholder"
-                  :disabled="isBuildLocked"
-                  @update:value="value => emit('update-field', field, value)"
-                />
-                <n-input
-                  v-else
-                  :value="androidFieldValue(activeAndroidConfigModule, field)"
-                  :placeholder="field.placeholder"
-                  :type="field.secret ? 'password' : 'text'"
-                  :show-password-on="field.secret ? 'click' : undefined"
-                  :disabled="isBuildLocked"
-                  @update:value="value => emit('update-field', field, value)"
-                />
-              </n-form-item>
-            </n-gi>
-          </n-grid>
-        </div>
-      </div>
+      <ModuleConfigWorkbench
+        v-if="workbenchModules.length"
+        :modules="workbenchModules"
+        :active-module-key="activeAndroidConfigModuleKey"
+        :is-build-locked="isBuildLocked"
+        empty-text="当前模块暂无需要填写的 Android 配置。"
+        :field-value="workbenchFieldValue"
+        :field-status-type="workbenchFieldStatusType"
+        :field-status-label="workbenchFieldStatusLabel"
+        :select-options="workbenchSelectOptions"
+        :format-file-size="formatFileSize"
+        @open-module="openWorkbenchModule"
+        @update-field="updateWorkbenchField"
+        @pick-file-field="pickWorkbenchFile"
+        @clear-file-field="clearWorkbenchFile"
+      />
     </n-space>
   </n-card>
 </template>

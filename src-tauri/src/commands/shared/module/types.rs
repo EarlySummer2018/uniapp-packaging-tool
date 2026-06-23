@@ -231,6 +231,37 @@ pub struct IosModuleConfigField {
     pub field_type: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HarmonyModuleConfigReport {
+    pub modules: Vec<HarmonyModuleConfigModule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HarmonyModuleConfigModule {
+    pub name: String,
+    pub template_key: String,
+    pub category: String,
+    pub platforms: Vec<String>,
+    pub source: String,
+    pub fields: Vec<HarmonyModuleConfigField>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HarmonyModuleConfigField {
+    pub key: String,
+    pub label: String,
+    pub required: bool,
+    pub secret: bool,
+    pub value: Option<String>,
+    pub value_source: Option<String>,
+    pub placeholder: String,
+    #[serde(default)]
+    pub field_type: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AndroidModuleTemplate {
     pub required_aars: Vec<String>,

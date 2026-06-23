@@ -4,29 +4,28 @@ import {
   NAlert,
   NButton,
   NCard,
-  NFormItem,
   NGi,
   NGrid,
-  NInput,
-  NSelect,
   NSpace,
   NTag,
   NText
 } from 'naive-ui'
+import ModuleConfigWorkbench from './ModuleConfigWorkbench.vue'
 import type {
   IosModuleConfigField,
   IosModuleConfigModule,
-  UniappManifestInfo
+  UniappManifestInfo,
+  WorkbenchField,
+  WorkbenchModule
 } from './types'
 import {
-  formatPlatforms,
   iosConfigModuleKey,
+  iosModuleFieldValueKey,
   isIosPrivacyField
 } from './moduleKeys'
 import {
   iosFieldType,
-  iosSelectFieldOptions,
-  isIosSelectField
+  iosSelectFieldOptions
 } from './moduleFields'
 
 const props = defineProps<{
@@ -56,15 +55,74 @@ const props = defineProps<{
   iosFieldStatusLabel: (mod: IosModuleConfigModule, field: IosModuleConfigField) => string
 }>()
 
-const activeIosConfigFields = computed(() => {
-  return props.activeIosConfigModule?.fields.filter(field => field.key !== 'LOCAL_POD' && !isIosPrivacyField(field)) || []
-})
-
 const emit = defineEmits<{
   (e: 'edit-privacy'): void
   (e: 'open-module', mod: IosModuleConfigModule): void
   (e: 'update-field', field: IosModuleConfigField, value: string): void
 }>()
+
+type IosWorkbenchModule = WorkbenchModule<IosModuleConfigModule, IosModuleConfigField>
+type IosWorkbenchField = WorkbenchField<IosModuleConfigField>
+
+function inlineConfigFields(mod: IosModuleConfigModule) {
+  return mod.fields.filter(field => field.key !== 'LOCAL_POD' && !isIosPrivacyField(field))
+}
+
+const workbenchModules = computed<IosWorkbenchModule[]>(() => {
+  return props.iosConfigurableModules.map(mod => {
+    const inlineFields = inlineConfigFields(mod)
+    const fields: IosWorkbenchField[] = inlineFields.map(field => ({
+      key: iosModuleFieldValueKey(mod, field),
+      label: field.label,
+      required: field.required,
+      secret: field.secret,
+      placeholder: field.placeholder,
+      fieldType: iosFieldType(field),
+      raw: field
+    }))
+    const filledCount = inlineFields.filter(field => props.iosFieldValue(mod, field).trim()).length
+    const missingRequiredCount = inlineFields.filter(field => {
+      return field.required && !props.iosFieldValue(mod, field).trim()
+    }).length
+    return {
+      key: iosConfigModuleKey(mod),
+      name: mod.name,
+      category: mod.category,
+      platforms: mod.platforms,
+      status: props.iosConfigModuleStatusType(mod),
+      statusLabel: props.iosConfigModuleStatusLabel(mod),
+      missingRequiredCount,
+      filledCount,
+      totalCount: inlineFields.length,
+      fields,
+      raw: mod
+    }
+  })
+})
+
+function openWorkbenchModule(mod: IosWorkbenchModule) {
+  emit('open-module', mod.raw)
+}
+
+function updateWorkbenchField(_mod: IosWorkbenchModule, field: IosWorkbenchField, value: string) {
+  emit('update-field', field.raw, value)
+}
+
+function workbenchFieldValue(mod: IosWorkbenchModule, field: IosWorkbenchField) {
+  return props.iosFieldValue(mod.raw, field.raw)
+}
+
+function workbenchFieldStatusType(mod: IosWorkbenchModule, field: IosWorkbenchField) {
+  return props.iosFieldStatusType(mod.raw, field.raw)
+}
+
+function workbenchFieldStatusLabel(mod: IosWorkbenchModule, field: IosWorkbenchField) {
+  return props.iosFieldStatusLabel(mod.raw, field.raw)
+}
+
+function workbenchSelectOptions(mod: IosWorkbenchModule, field: IosWorkbenchField) {
+  return iosSelectFieldOptions(mod.raw, field.raw)
+}
 </script>
 
 <template>
@@ -78,6 +136,7 @@ const emit = defineEmits<{
           <n-text v-else>iOS 基础配置已就绪，将使用 SDK 管理中配置的 HBuilder-Hello* 工程副本。</n-text>
         </n-space>
       </n-alert>
+
       <n-grid :cols="4" :x-gap="12" :y-gap="12" responsive="screen" class="insight-grid">
         <n-gi>
           <div class="summary-tile">
@@ -104,6 +163,7 @@ const emit = defineEmits<{
           </div>
         </n-gi>
       </n-grid>
+
       <div class="path-summary">
         <n-text depth="3">工程来源</n-text>
         <n-text code>SDK 管理 / DCloud iOS 离线 SDK / HBuilder-Hello*</n-text>
@@ -112,6 +172,7 @@ const emit = defineEmits<{
         <n-text depth="3">模块处理</n-text>
         <n-text code>{{ iosModuleSummaryLabel }}</n-text>
       </div>
+
       <div v-if="iosPrivacyDescriptionItemCount" class="ios-privacy-summary">
         <div>
           <n-space align="center" :size="8">
@@ -137,6 +198,7 @@ const emit = defineEmits<{
           编辑权限说明
         </n-button>
       </div>
+
       <div class="ios-module-panel">
         <div class="ios-module-head">
           <n-space align="center" :size="8">
@@ -145,6 +207,7 @@ const emit = defineEmits<{
           </n-space>
           <n-text v-if="selectedManifestModuleCount" depth="3">{{ selectedManifestModuleCount }} 个 Manifest 模块已选</n-text>
         </div>
+
         <n-alert v-if="iosModuleConfigLoading" type="info">正在从 manifest 解析 iOS 模块配置...</n-alert>
         <n-alert v-else-if="!latestManifestInfo" type="warning">
           {{ manifestReadWarning || '请先在项目配置中设置本地项目路径，以便读取 manifest.json' }}
@@ -164,73 +227,19 @@ const emit = defineEmits<{
           </n-space>
         </n-alert>
 
-        <div v-if="iosConfigurableModules.length" class="android-config-list">
-          <n-space wrap :size="8" class="android-config-switcher">
-            <n-tag
-              v-for="mod in iosConfigurableModules"
-              :key="iosConfigModuleKey(mod)"
-              class="android-config-chip"
-              :class="{ 'android-config-chip--active': activeIosConfigModuleKey === iosConfigModuleKey(mod) }"
-              :type="iosConfigModuleStatusType(mod)"
-              :bordered="activeIosConfigModuleKey !== iosConfigModuleKey(mod)"
-              @click="emit('open-module', mod)"
-            >
-              {{ mod.name }} · {{ iosConfigModuleStatusLabel(mod) }}
-            </n-tag>
-          </n-space>
-
-          <div v-if="activeIosConfigModule" class="android-config-module">
-            <div class="android-config-head">
-              <n-space align="center" :size="8">
-                <n-text strong>{{ activeIosConfigModule.name }}</n-text>
-                <n-tag size="small" type="info">{{ activeIosConfigModule.category }}</n-tag>
-                <n-tag v-if="formatPlatforms(activeIosConfigModule.platforms)" size="small" :type="activeIosConfigModule.platforms.includes('ios') ? 'success' : 'default'">{{ formatPlatforms(activeIosConfigModule.platforms) }}</n-tag>
-              </n-space>
-              <n-text depth="3">{{ activeIosConfigFields.length }} 项配置</n-text>
-            </div>
-            <n-alert v-if="!activeIosConfigFields.length" type="info">
-              当前模块仅包含权限说明，请使用上方“编辑权限说明”集中填写。
-            </n-alert>
-            <n-grid :cols="2" :x-gap="14" :y-gap="10" responsive="screen">
-              <n-gi v-for="field in activeIosConfigFields" :key="activeIosConfigModule.templateKey + field.key">
-                <n-form-item :label="field.label" :feedback="field.required && !iosFieldValue(activeIosConfigModule, field).trim() ? '必填项，未填写时不能开始打包' : undefined">
-                  <template #label>
-                    <n-space align="center" :size="6">
-                      <n-text>{{ field.label }}</n-text>
-                      <n-tag size="tiny" :type="iosFieldStatusType(activeIosConfigModule, field)">{{ iosFieldStatusLabel(activeIosConfigModule, field) }}</n-tag>
-                    </n-space>
-                  </template>
-                  <n-input
-                    v-if="iosFieldType(field) === 'textarea'"
-                    type="textarea"
-                    :autosize="{ minRows: 2, maxRows: 4 }"
-                    :value="iosFieldValue(activeIosConfigModule, field)"
-                    :placeholder="field.placeholder"
-                    :disabled="isBuildLocked"
-                    @update:value="value => emit('update-field', field, value)"
-                  />
-                  <n-select
-                    v-else-if="isIosSelectField(field)"
-                    :value="iosFieldValue(activeIosConfigModule, field)"
-                    :options="iosSelectFieldOptions(activeIosConfigModule, field)"
-                    :placeholder="field.placeholder"
-                    :disabled="isBuildLocked"
-                    @update:value="value => emit('update-field', field, value)"
-                  />
-                  <n-input
-                    v-else
-                    :value="iosFieldValue(activeIosConfigModule, field)"
-                    :placeholder="field.placeholder"
-                    :type="field.secret ? 'password' : 'text'"
-                    :show-password-on="field.secret ? 'click' : undefined"
-                    :disabled="isBuildLocked"
-                    @update:value="value => emit('update-field', field, value)"
-                  />
-                </n-form-item>
-              </n-gi>
-            </n-grid>
-          </div>
-        </div>
+        <ModuleConfigWorkbench
+          v-if="workbenchModules.length"
+          :modules="workbenchModules"
+          :active-module-key="activeIosConfigModuleKey"
+          :is-build-locked="isBuildLocked"
+          empty-text="当前模块仅包含权限说明，请使用上方“编辑权限说明”集中填写。"
+          :field-value="workbenchFieldValue"
+          :field-status-type="workbenchFieldStatusType"
+          :field-status-label="workbenchFieldStatusLabel"
+          :select-options="workbenchSelectOptions"
+          @open-module="openWorkbenchModule"
+          @update-field="updateWorkbenchField"
+        />
       </div>
     </n-space>
   </n-card>

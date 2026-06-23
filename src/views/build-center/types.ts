@@ -1,5 +1,6 @@
 export type Platform = 'android' | 'ios' | 'harmony'
 export type NonIosPlatform = Exclude<Platform, 'ios'>
+export type WorkbenchStatusFilter = 'all' | 'missing' | 'required' | 'configured'
 
 export interface UtsBuiltinModule {
   name: string
@@ -99,6 +100,18 @@ export interface IosModuleConfigField {
   field_type?: string
 }
 
+export interface HarmonyModuleConfigField {
+  key: string
+  label: string
+  required: boolean
+  secret: boolean
+  value?: string | null
+  valueSource?: string | null
+  placeholder: string
+  fieldType?: string
+  field_type?: string
+}
+
 export interface AndroidModuleConfigModule {
   name: string
   templateKey: string
@@ -131,6 +144,19 @@ export interface IosModuleConfigModule {
 
 export interface IosModuleConfigReport {
   modules: IosModuleConfigModule[]
+}
+
+export interface HarmonyModuleConfigModule {
+  name: string
+  templateKey: string
+  category: string
+  platforms: string[]
+  source: string
+  fields: HarmonyModuleConfigField[]
+}
+
+export interface HarmonyModuleConfigReport {
+  modules: HarmonyModuleConfigModule[]
 }
 
 export interface IosPrivacyDescriptionItem {
@@ -195,3 +221,27 @@ export interface BuildRecord {
 }
 
 export type ModuleStatusTone = 'default' | 'success' | 'warning' | 'error'
+
+export interface WorkbenchField<TField = unknown> {
+  key: string
+  label: string
+  required: boolean
+  secret: boolean
+  placeholder: string
+  fieldType: string
+  raw: TField
+}
+
+export interface WorkbenchModule<TModule = unknown, TField = unknown> {
+  key: string
+  name: string
+  category: string
+  platforms: string[]
+  status: ModuleStatusTone
+  statusLabel: string
+  missingRequiredCount: number
+  filledCount: number
+  totalCount: number
+  fields: WorkbenchField<TField>[]
+  raw: TModule
+}

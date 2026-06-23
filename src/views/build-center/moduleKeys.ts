@@ -2,6 +2,8 @@ import type {
   AndroidModuleConfigField,
   AndroidModuleConfigModule,
   DetectedModule,
+  HarmonyModuleConfigField,
+  HarmonyModuleConfigModule,
   IosModuleConfigField,
   IosModuleConfigModule,
   NonIosPlatform,
@@ -50,12 +52,20 @@ export function iosConfigModuleKey(mod: IosModuleConfigModule) {
   return moduleKeyParts(mod.name, mod.category, mod.platforms, mod.source)
 }
 
+export function harmonyConfigModuleKey(mod: HarmonyModuleConfigModule) {
+  return moduleKeyParts(mod.name, mod.category, mod.platforms, mod.source)
+}
+
 export function androidModuleFieldValueKey(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
   return `${mod.templateKey}.${field.key}`
 }
 
 export function iosModuleFieldValueKey(mod: IosModuleConfigModule, field: IosModuleConfigField) {
   if (isIosPrivacyField(field)) return field.key
+  return `${mod.templateKey}.${field.key}`
+}
+
+export function harmonyModuleFieldValueKey(mod: HarmonyModuleConfigModule, field: HarmonyModuleConfigField) {
   return `${mod.templateKey}.${field.key}`
 }
 

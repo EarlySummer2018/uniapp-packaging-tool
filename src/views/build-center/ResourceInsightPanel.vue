@@ -29,6 +29,7 @@ defineProps<{
   manifestModuleStatusType: (mod: DetectedModule) => ModuleStatusTone
   manifestModuleStatusClass: (mod: DetectedModule) => string
   manifestModuleStatusLabel: (mod: DetectedModule) => string
+  manifestModuleFieldSummaries: (mod: DetectedModule) => string[]
 }>()
 
 const emit = defineEmits<{
@@ -90,11 +91,20 @@ const emit = defineEmits<{
               @update:checked="checked => emit('set-manifest-module-selected', mod, checked)"
             >
               <span class="module-choice-content">
-                <span class="module-choice-main">{{ mod.name }}</span>
-                <span v-if="formatPlatforms(mod.platforms)" class="module-choice-platform">{{ formatPlatforms(mod.platforms) }}</span>
-                <n-tag size="tiny" :type="manifestModuleStatusType(mod)" :bordered="false">
-                  {{ manifestModuleStatusLabel(mod) }}
-                </n-tag>
+                <span class="module-choice-row">
+                  <span class="module-choice-main">{{ mod.name }}</span>
+                  <span v-if="formatPlatforms(mod.platforms)" class="module-choice-platform">{{ formatPlatforms(mod.platforms) }}</span>
+                  <n-tag size="tiny" :type="manifestModuleStatusType(mod)" :bordered="false">
+                    {{ manifestModuleStatusLabel(mod) }}
+                  </n-tag>
+                </span>
+                <span
+                  v-for="summary in manifestModuleFieldSummaries(mod)"
+                  :key="summary"
+                  class="module-choice-config"
+                >
+                  {{ summary }}
+                </span>
               </span>
             </n-checkbox>
           </div>

@@ -1,13 +1,16 @@
 mod android_manifest;
 mod android_report;
 mod common;
+mod harmony_report;
 mod ios_report;
 mod payment;
 
 use std::collections::HashMap;
 
 use crate::commands::resource::UniappManifestInfo;
-use crate::commands::shared::module::types::{AndroidModuleConfigReport, IosModuleConfigReport};
+use crate::commands::shared::module::types::{
+    AndroidModuleConfigReport, HarmonyModuleConfigReport, IosModuleConfigReport,
+};
 
 pub use android_manifest::{
     android_amap_geolocation_enabled, android_amap_map_enabled,
@@ -17,6 +20,7 @@ pub use android_manifest::{
 };
 pub use android_report::android_module_config_report_from_value;
 pub use common::manifest_value_from_info;
+pub use harmony_report::{harmony_module_config_report_from_value, harmony_uni_map_tencent_key};
 pub use ios_report::ios_module_config_report_from_value;
 pub use payment::{
     manifest_payment_provider_value, payment_provider_enabled_for_platform, PaymentProvider,
@@ -68,6 +72,23 @@ pub fn analyze_ios_module_config_sync(
         manifest_value.as_ref(),
         Some(&manifest_info.ios_privacy_descriptions),
         user_config,
+    )
+}
+
+#[tauri::command]
+pub async fn analyze_harmony_module_config(
+    manifest_info: UniappManifestInfo,
+) -> Result<HarmonyModuleConfigReport, String> {
+    Ok(analyze_harmony_module_config_sync(&manifest_info))
+}
+
+pub fn analyze_harmony_module_config_sync(
+    manifest_info: &UniappManifestInfo,
+) -> HarmonyModuleConfigReport {
+    let manifest_value = manifest_value_from_info(manifest_info);
+    harmony_module_config_report_from_value(
+        &manifest_info.detected_modules,
+        manifest_value.as_ref(),
     )
 }
 

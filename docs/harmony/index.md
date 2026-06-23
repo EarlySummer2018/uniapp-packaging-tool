@@ -1,128 +1,84 @@
-# 鸿蒙 HarmonyOS 模块配置概览
+# 鸿蒙模块配置总览
 
-> **适用版本**：HBuilderX 5.0+
-> **平台**：HarmonyOS Next (API 12+)
+> **适用版本**：HBuilderX 5.0+ / uni-app 5.0+
+> **平台**：HarmonyOS
 > **官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/harmonyModuleConfig/
-> **整理时间**：2026-05-29
 
 ---
 
-本文档为 DCloud UniApp 鸿蒙（HarmonyOS）离线 SDK 的模块配置总览页，提供各模块的一站式导航与快速参考。
+## 概述
 
-## 📋 当前支持模块一览表
+模块配置文档适用于 HBuilderX 5.0+ / uni-app 5.0+。
 
-| 序号 | 模块名称 | 功能描述 | ohpm 包名 | 版本 | 注册方式 | 配置复杂度 | 详细文档 |
-|------|---------|---------|-----------|------|---------|-----------|---------|
-| 1 | **OAuth** | 华为登录 | `@uni_modules/uni-oauth-huawei` | 1.0.1 | `registerUniProvider` | ⭐⭐ | [→ 查看详情](./modules/oauth.md) |
-| 2 | **Map** | 腾讯地图 | 内置模块 | - | metadata 配置 | ⭐ | [→ 查看详情](./modules/map.md) |
-| 3 | **Payment** | 支付宝支付 | `@uni_modules/uni-payment-alipay` | 1.0.1 | `registerUniProvider` | ⭐⭐⭐ | [→ 查看详情](./modules/payment.md) |
-| 4 | **FaceRecognition** | 实人认证 | `@uni_modules/uni-facialrecognitionverify` | 1.0.2 | uni 全局方法 | ⭐⭐⭐ | [→ 查看详情](./modules/facial-recognition-verify.md) |
+目前如下模块涉及配置依赖或参数：
 
-> 💡 **说明**：鸿蒙端目前支持的模块相对较少，后续会持续增加。暂未支持的常用模块包括：微信登录/支付、推送（Push）、统计（Statistic）、分享等。
+| 模块 | 功能 | 详细文档 |
+|------|------|----------|
+| [Map](./modules/map.md) | 腾讯地图 | [→ 查看详情](./modules/map.md) |
+| [Push](./modules/push.md) | 统一推送服务 | [→ 查看详情](./modules/push.md) |
+| [OAuth](./modules/oauth.md) | 华为登录 | [→ 查看详情](./modules/oauth.md) |
+| [FacialRecognitionVerify](./modules/facial-recognition-verify.md) | 实人认证 | [→ 查看详情](./modules/facial-recognition-verify.md) |
+| [Payment](./modules/payment.md) | 支付宝支付 | [→ 查看详情](./modules/payment.md) |
 
----
+## 自动配置说明
 
-## 📂 各模块快速链接
+如在 uni-app 项目 `manifest.json` 内已勾选对应的鸿蒙模块，则在编译产物的 `uni_modules` 目录下会生成对应的：
 
-- [🔐 OAuth 登录鉴权（华为登录）](./modules/oauth.md) — 集成华为账号登录能力
-- [🗺️ Map 地图（腾讯地图）](./modules/map.md) — 集成腾讯地图显示和交互能力
-- 💳 Payment 支付（支付宝）](./modules/payment.md) — 集成支付宝支付能力
-- 👤 FacialRecognitionVerify 实人认证](./modules/facial-recognition-verify.md) — 提供实人认证（人脸识别）能力
+- `index.generated.ets` — 模块入口文件
+- `oh-package.json5` — 依赖配置文件
 
----
+参考[集成编译产物到项目内](./integration-guide.md)文档将这两个文件集成到鸿蒙项目内即可。
 
-## 📝 配置文件修改清单
+如需手动配置模块，请参考各模块的详细文档。
 
-| 配置文件 | 修改内容 | 涉及模块 |
-|---------|---------|---------|
-| `oh-package.json5` | 添加 dependencies 依赖 | OAuth, Payment, FaceRecognition |
-| `index.generated.ets` | 注册 Provider 或扩展 API | OAuth, Payment, FaceRecognition |
-| `module.json5` | 添加 metadata 配置 | Map |
+## 关键文件路径约定
 
----
+为简化描述，本文档约定以下概念：
 
-## 🖥️ 开发环境要求
+| 文件 | 路径 | 说明 |
+|------|------|------|
+| `index.generated.ets` | `/entry/src/main/ets/uni_modules/index.generated.ets` | 鸿蒙原生工程内的 uni_modules 入口文件 |
+| `oh-package.json5` | 根目录 `/oh-package.json5` | 鸿蒙原生工程内的包管理配置文件 |
+| `module.json5` | `/entry/src/main/module.json5` | 模块配置文件（用于 metadata 配置） |
+| `build-profile.json5` | 根目录 `/build-profile.json5` | 工程级构建配置文件 |
 
-| 环境 | 要求 |
-|------|------|
-| **IDE** | DevEco Studio 4.0+ |
-| **SDK** | HarmonyOS SDK API 12+ |
-| **包管理** | ohpm（鸿蒙包管理工具） |
-| **编程语言** | ArkTS（TypeScript 扩展） |
-| **运行时** | uni-app 鸿蒙运行时（HBuilderX 5.0+） |
-| **签名** | 鸿蒙应用签名文件（发布必需） |
+## HBuilderX 4.51+ 重要配置
 
----
+> **注意**：HBuilder X 升级至 4.51 后，需要在工程级的 `build-profile.json5` 的 `products` 字段中配置 `compatibleSdkVersionStage: "beta6"`。
 
-## ⚡ 快速开始
+如果有多项 products，都需要配置：
 
-如果你需要同时配置所有模块，可参考以下模板：
-
-**oh-package.json5**:
 ```json
 {
-  "dependencies": {
-    "@uni_modules/uni-oauth-huawei": "1.0.1",
-    "@uni_modules/uni-payment-alipay": "1.0.1",
-    "@uni_modules/uni-facialrecognitionverify": "1.0.2"
-  }
-}
-```
-
-**index.generated.ets**:
-```typescript
-import { registerUniProvider, uni } from "@dcloudio/uni-app-runtime";
-import { UniOAuthHuaweiProviderImpl } from "@uni_modules/uni-oauth-huawei";
-import { UniPaymentAlipayProviderImpl } from "@uni_modules/uni-payment-alipay";
-import { 
-  startFacialRecognitionVerify, 
-  getFacialRecognitionMetaInfo 
-} from '@uni_modules/uni-facialrecognitionverify';
-
-export function initUniModules() {
-  initUniExtApi();
-}
-
-function initUniExtApi() {
-  // 注册华为登录
-  registerUniProvider("oauth", "huawei", new UniOAuthHuaweiProviderImpl());
-  
-  // 注册支付宝支付
-  registerUniProvider("payment", "alipay", new UniPaymentAlipayProviderImpl());
-  
-  // 注册实人认证 API
-  uni.startFacialRecognitionVerify = startFacialRecognitionVerify;
-  uni.getFacialRecognitionMetaInfo = getFacialRecognitionMetaInfo;
-}
-```
-
-**module.json5** (仅地图):
-```json
-{
-  "module": {
-    "metadata": [
+  "app": {
+    "products": [
       {
-        "name": "TENCENT_MAP_KEY",
-        "value": "你的腾讯地图Key"
+        "name": "default",
+        "compatibleSdkVersionStage": "beta6",
+        // ... 其他配置
       }
     ]
   }
 }
 ```
 
----
+## 快速导航
 
-## 📚 更多资源
+### 项目配置
 
-- [❓ 常见问题 FAQ](./faq.md) — 配置过程中的常见问题排查
-- [🔄 与其他平台对比](./faq.md#与其他平台对比) — Android/iOS/鸿蒙配置差异对照
-- [⚠️ 重要提示](./faq.md#重要提示) — 关键注意事项汇总
+- [配置鸿蒙原生项目](./setup-guide.md) — 初始项目配置
+- [集成编译产物到项目内](./integration-guide.md) — 编译产物集成步骤
 
----
+### 模块配置
 
-## 📎 相关文档
+- [通用模块说明](./modules/common.md) — 模块配置通用指南
+- [腾讯地图 (Map)](./modules/map.md)
+- [推送服务 (Push)](./modules/push.md)
+- [华为登录 (OAuth)](./modules/oauth.md)
+- [实人认证 (FacialRecognitionVerify)](./modules/facial-recognition-verify.md)
+- [支付宝支付 (Payment)](./modules/payment.md)
 
-- **DCloud 鸿蒙离线 SDK 文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/harmonyModuleConfig/
-- **HarmonyOS 开发指南**：https://developer.huawei.com/consumer/cn/harmonyos/doc/
-- **ohpm 使用文档**：https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/
+## 相关文档
+
+- **DCloud 官方文档**：https://nativesupport.dcloud.net.cn/AppDocs/usemodule/harmonyModuleConfig/
 - **uni-app 官方文档**：https://uniapp.dcloud.net.cn/

@@ -1,28 +1,7 @@
 //! 鸿蒙 HAP 构建模块
 
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager};
-
-use crate::commands::shared::resource::DetectedModule;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HarmonyBuildOptions {
-    pub project_path: String,
-    pub module: Option<String>,
-    pub mode: Option<String>,
-    pub clean: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BuildResult {
-    pub success: bool,
-    pub output_path: Option<String>,
-    pub logs: Vec<String>,
-    pub duration_ms: u64,
-    pub error: Option<String>,
-}
 
 fn emit_harmony_log(
     window: &tauri::Window,
@@ -42,89 +21,6 @@ fn emit_harmony_log(
 }
 
 #[tauri::command]
-pub async fn prepare_harmony_build(options: HarmonyBuildOptions) -> Result<BuildResult, String> {
-    let sdk_config = crate::commands::sdk::load_global_sdk_config_sync()?;
-    let template = require_configured_harmony_template(&sdk_config)?;
-    let project_dir = std::path::Path::new(&options.project_path);
-    if !project_dir.exists() {
-        return Err(format!(
-            "Project path does not exist: {}",
-            options.project_path
-        ));
-    }
-
-    Ok(BuildResult {
-        success: true,
-        output_path: None,
-        logs: vec![
-            "[prepare] HarmonyOS build environment checking...".to_string(),
-            format!("[prepare] Harmony 工程模板: {}", template.display()),
-            format!(
-                "[prepare] Module: {}",
-                options.module.as_deref().unwrap_or("entry")
-            ),
-            format!(
-                "[prepare] Mode: {}",
-                options.mode.as_deref().unwrap_or("debug")
-            ),
-        ],
-        duration_ms: 0,
-        error: None,
-    })
-}
-
-#[tauri::command]
-pub async fn run_harmony_build(
-    options: HarmonyBuildOptions,
-    app_handle: tauri::AppHandle,
-) -> Result<BuildResult, String> {
-    let start = std::time::Instant::now();
-
-    let module = options.module.unwrap_or_else(|| "entry".to_string());
-    let mode = options.mode.unwrap_or_else(|| "debug".to_string());
-    let sdk_config = crate::commands::sdk::load_global_sdk_config_sync()?;
-    let _template = require_configured_harmony_template(&sdk_config)?;
-
-    let hvigorw = std::path::Path::new(&options.project_path).join("hvigorw");
-    if !hvigorw.exists() {
-        return Err("hvigorw not found. Is this a valid HarmonyOS project?".to_string());
-    }
-
-    let mut args = vec![
-        format!("assemble{}", mode),
-        "-p".to_string(),
-        format!("module={}", module),
-    ];
-    if options.clean.unwrap_or(false) {
-        args.insert(0, "clean".to_string());
-    }
-
-    let output = crate::utils::process::run_command_streaming(
-        &hvigorw.to_string_lossy(),
-        &args,
-        &options.project_path,
-        app_handle,
-        "harmony-build",
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let elapsed = start.elapsed().as_millis() as u64;
-
-    Ok(BuildResult {
-        success: output.success,
-        output_path: None,
-        logs: output.logs,
-        duration_ms: elapsed,
-        error: if output.success {
-            None
-        } else {
-            Some("HarmonyOS build failed".to_string())
-        },
-    })
-}
-
-#[tauri::command]
 pub async fn generate_harmony_project(
     project_id: String,
     resource_path: String,
@@ -132,7 +28,6 @@ pub async fn generate_harmony_project(
     manifest_info: Option<crate::commands::resource::UniappManifestInfo>,
     window: tauri::Window,
 ) -> Result<String, String> {
-    let harmony_modules = harmony_detected_modules(manifest_info.as_ref());
     let build_id = build_id
         .filter(|id| !id.trim().is_empty())
         .unwrap_or_else(|| {
@@ -159,6 +54,7 @@ pub async fn generate_harmony_project(
         false,
     )?;
     let app_resource_dir = PathBuf::from(&scan.app_resource_path);
+    let resource_package_dir = PathBuf::from(&scan.imported_path);
     let workspace = crate::utils::fs::get_project_config_dir(&project_id)
         .join("workspace")
         .join(safe_file_name(&build_id));
@@ -176,10 +72,13 @@ pub async fn generate_harmony_project(
     );
 
     patch_harmony_json_files(&workspace, &config)?;
-    patch_oh_package(&workspace, &config, &harmony_modules)?;
+    patch_harmony_module_metadata(&workspace, manifest_info.as_ref())?;
+    patch_oh_package(&workspace, &config, &resource_package_dir)?;
+    patch_harmony_build_profile(&workspace, &resource_package_dir)?;
     patch_entry_ability(&workspace)?;
     patch_harmony_signing_files(&workspace, &config)?;
-    import_harmony_resource(&workspace, &app_resource_dir, &scan.app_id)?;
+    import_harmony_resource(&workspace, &app_resource_dir)?;
+    integrate_harmony_uni_modules(&workspace, &resource_package_dir)?;
     emit_harmony_log(
         &window,
         &build_id,
@@ -190,25 +89,6 @@ pub async fn generate_harmony_project(
         ),
         Some(50),
     );
-    if !harmony_modules.is_empty() {
-        let injected: Vec<&str> = harmony_modules
-            .iter()
-            .flat_map(|m| harmony_ohpm_packages_for_category(&m.category))
-            .map(|(pkg, _)| pkg)
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        emit_harmony_log(
-            &window,
-            &build_id,
-            "info",
-            &format!(
-                "已按 manifest 声明的鸿蒙原生模块注入依赖: {}",
-                injected.join(", ")
-            ),
-            None,
-        );
-    }
     emit_harmony_log(
         &window,
         &build_id,
@@ -254,7 +134,6 @@ pub async fn build_harmony_hap(
     manifest_info: Option<crate::commands::resource::UniappManifestInfo>,
     window: tauri::Window,
 ) -> Result<crate::commands::build_android::BuildArtifact, String> {
-    let harmony_modules = harmony_detected_modules(manifest_info.as_ref());
     let build_id = build_id
         .filter(|id| !id.trim().is_empty())
         .unwrap_or_else(|| format!("harmony-{}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
@@ -276,6 +155,7 @@ pub async fn build_harmony_hap(
         false,
     )?;
     let app_resource_dir = PathBuf::from(&scan.app_resource_path);
+    let resource_package_dir = PathBuf::from(&scan.imported_path);
     let workspace = crate::utils::fs::get_project_config_dir(&project_id)
         .join("workspace")
         .join(safe_file_name(&build_id));
@@ -293,10 +173,13 @@ pub async fn build_harmony_hap(
     );
 
     patch_harmony_json_files(&workspace, &config)?;
-    patch_oh_package(&workspace, &config, &harmony_modules)?;
+    patch_harmony_module_metadata(&workspace, manifest_info.as_ref())?;
+    patch_oh_package(&workspace, &config, &resource_package_dir)?;
+    patch_harmony_build_profile(&workspace, &resource_package_dir)?;
     patch_entry_ability(&workspace)?;
     patch_harmony_signing_files(&workspace, &config)?;
-    import_harmony_resource(&workspace, &app_resource_dir, &scan.app_id)?;
+    import_harmony_resource(&workspace, &app_resource_dir)?;
+    integrate_harmony_uni_modules(&workspace, &resource_package_dir)?;
     emit_harmony_log(
         &window,
         &build_id,
@@ -307,25 +190,6 @@ pub async fn build_harmony_hap(
         ),
         Some(35),
     );
-    if !harmony_modules.is_empty() {
-        let injected: Vec<&str> = harmony_modules
-            .iter()
-            .flat_map(|m| harmony_ohpm_packages_for_category(&m.category))
-            .map(|(pkg, _)| pkg)
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        emit_harmony_log(
-            &window,
-            &build_id,
-            "info",
-            &format!(
-                "已按 manifest 声明的鸿蒙原生模块注入依赖: {}",
-                injected.join(", ")
-            ),
-            None,
-        );
-    }
     emit_harmony_log(
         &window,
         &build_id,
@@ -420,8 +284,7 @@ fn validate_harmony_config(
     require_configured_harmony_template(sdk_config)?;
     if config.harmony.runtime_version.trim().is_empty() {
         return Err(
-            "请在项目配置中填写鸿蒙运行时版本（@dcloudio/uni-app-runtime 的版本号）"
-                .to_string(),
+            "请在项目配置中填写鸿蒙运行时版本（@dcloudio/uni-app-runtime 的版本号）".to_string(),
         );
     }
     if config.harmony.bundle_name.trim().is_empty() {
@@ -493,6 +356,94 @@ fn patch_harmony_json_files(
     Ok(())
 }
 
+fn patch_harmony_module_metadata(
+    workspace: &Path,
+    manifest_info: Option<&crate::commands::resource::UniappManifestInfo>,
+) -> Result<(), String> {
+    let Some(manifest_info) = manifest_info else {
+        return Ok(());
+    };
+    if !manifest_info.detected_modules.iter().any(|module| {
+        module.name == "uni-map"
+            && module.category == "map"
+            && module.source == "app-harmony"
+            && module
+                .platforms
+                .iter()
+                .any(|platform| platform == "harmony")
+    }) {
+        return Ok(());
+    }
+
+    let manifest_value =
+        crate::commands::shared::module::analysis::manifest_value_from_info(manifest_info);
+    let Some(key) = crate::commands::shared::module::analysis::harmony_uni_map_tencent_key(
+        manifest_value.as_ref(),
+    ) else {
+        return Err(
+            "Harmony 地图模块已开启，请在 manifest.json 配置 app-harmony.distribute.modules.uni-map.tencent.key"
+                .to_string(),
+        );
+    };
+
+    let module_json_path = workspace
+        .join("entry")
+        .join("src")
+        .join("main")
+        .join("module.json5");
+    let module_json_path = if module_json_path.is_file() {
+        module_json_path
+    } else {
+        find_file_named(workspace, "module.json5")
+            .ok_or_else(|| "未在模板工程中找到 entry/src/main/module.json5".to_string())?
+    };
+
+    let mut value = read_json5_file(&module_json_path, "module.json5")?;
+    upsert_harmony_module_metadata(&mut value, "TENCENT_MAP_KEY", key)?;
+    let updated = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+    std::fs::write(module_json_path, updated).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn upsert_harmony_module_metadata(
+    module_json: &mut serde_json::Value,
+    name: &str,
+    value: &str,
+) -> Result<(), String> {
+    let root = module_json
+        .as_object_mut()
+        .ok_or("module.json5 根节点不是对象")?;
+    let module = root
+        .entry("module")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
+        .as_object_mut()
+        .ok_or("module.json5 的 module 不是对象")?;
+    let metadata = module
+        .entry("metadata")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or("module.json5 的 module.metadata 不是数组")?;
+
+    for item in metadata.iter_mut() {
+        let Some(item) = item.as_object_mut() else {
+            continue;
+        };
+        if item.get("name").and_then(|value| value.as_str()) == Some(name) {
+            item.insert(
+                "value".to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+            return Ok(());
+        }
+    }
+
+    metadata.push(serde_json::json!({
+        "name": name,
+        "value": value
+    }));
+    Ok(())
+}
+
 fn patch_harmony_signing_files(
     workspace: &Path,
     config: &crate::commands::project::ProjectConfig,
@@ -522,7 +473,7 @@ fn patch_harmony_signing_files(
     std::fs::write(&signing_path, signing_text).map_err(|e| e.to_string())?;
 
     for name in ["build-profile.json5", "build-profile.json"] {
-        if let Some(path) = find_file_named(workspace, name) {
+        if let Some(path) = find_project_file_named(workspace, name) {
             let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
             let updated = content
                 .replace("\"signingConfigs\": []", &format!("\"signingConfigs\": [{{\"name\":\"release\",\"material\":{{\"storeFile\":\"{}\",\"storePassword\":\"{}\",\"keyAlias\":\"{}\",\"keyPassword\":\"{}\"}}}}]", escape_json5(&signing.store_file), escape_json5(&store_password), escape_json5(&signing.key_alias), escape_json5(&key_password)))
@@ -548,31 +499,22 @@ export default class EntryAbility extends UniEntryAbility {
 }
 "#;
 
-/// 在工程根目录 oh-package.json5 中注入 @dcloudio/uni-app-runtime 依赖，
-/// 并按 manifest 中声明的鸿蒙原生模块注入对应的 @uni_modules/* 依赖。
+/// 在工程根目录 oh-package.json5 中注入 @dcloudio/uni-app-runtime，
+/// 并按文档合并 /resource/uni_modules/oh-package.json5 里的依赖。
 fn patch_oh_package(
     workspace: &Path,
     config: &crate::commands::project::ProjectConfig,
-    modules: &[DetectedModule],
+    resource_package_dir: &Path,
 ) -> Result<(), String> {
     let runtime_version = config.harmony.runtime_version.trim();
     if runtime_version.is_empty() {
         return Err(
-            "请在项目配置中填写鸿蒙运行时版本（@dcloudio/uni-app-runtime 的版本号）"
-                .to_string(),
+            "请在项目配置中填写鸿蒙运行时版本（@dcloudio/uni-app-runtime 的版本号）".to_string(),
         );
     }
 
-    // 鸿蒙工程根目录和 entry 等模块各有 oh-package.json5，必须改根目录的。
-    // 策略：优先取 workspace 直接子层的，找不到再递归搜索。
-    let root_oh_pkg = workspace.join("oh-package.json5");
-    let oh_pkg_path = if root_oh_pkg.exists() {
-        root_oh_pkg
-    } else if let Some(found) = find_file_named(workspace, "oh-package.json5") {
-        found
-    } else {
-        return Err("未在模板工程中找到 oh-package.json5".to_string());
-    };
+    let oh_pkg_path = find_project_file_named(workspace, "oh-package.json5")
+        .ok_or_else(|| "未在模板工程中找到 oh-package.json5".to_string())?;
 
     let content = std::fs::read_to_string(&oh_pkg_path).map_err(|e| e.to_string())?;
     let mut value: serde_json::Value =
@@ -586,28 +528,29 @@ fn patch_oh_package(
         .as_object_mut()
         .ok_or("oh-package.json5 的 dependencies 不是对象")?;
 
+    let generated_oh_pkg = resource_package_dir
+        .join("uni_modules")
+        .join("oh-package.json5");
+    if generated_oh_pkg.is_file() {
+        let generated = read_json5_file(&generated_oh_pkg, "编译产物 oh-package.json5")?;
+        let generated_deps = generated
+            .get("dependencies")
+            .and_then(|deps| deps.as_object())
+            .ok_or_else(|| {
+                format!(
+                    "编译产物 {} 缺少 dependencies 对象",
+                    generated_oh_pkg.display()
+                )
+            })?;
+        for (name, dep) in generated_deps {
+            deps.insert(name.clone(), dep.clone());
+        }
+    }
+
     deps.insert(
         "@dcloudio/uni-app-runtime".to_string(),
         serde_json::Value::String(runtime_version.to_string()),
     );
-
-    // 注入鸿蒙原生模块依赖。使用 BTreeMap 按包名天然去重——例如支付模块需要
-    // uni-facialrecognitionverify，而实人认证模块也依赖同一个包，合并后只写入一次。
-    let mut ohpm_packages: BTreeMap<&str, &str> = BTreeMap::new();
-    for module in modules {
-        if !module.platforms.iter().any(|p| p == "harmony") {
-            continue;
-        }
-        for (package, version) in harmony_ohpm_packages_for_category(&module.category) {
-            ohpm_packages.insert(package, version);
-        }
-    }
-    for (package, version) in &ohpm_packages {
-        deps.insert(
-            package.to_string(),
-            serde_json::Value::String(version.to_string()),
-        );
-    }
 
     let updated = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
     std::fs::write(&oh_pkg_path, updated).map_err(|e| e.to_string())?;
@@ -615,45 +558,95 @@ fn patch_oh_package(
     Ok(())
 }
 
-/// 将模块分类映射到鸿蒙端需要注入的 ohpm 包列表（包名、版本）。
-///
-/// 版本号与包名取自官方鸿蒙模块文档：
-/// - push:    https://nativesupport.dcloud.net.cn/AppDocs/usemodule/harmonyModuleConfig/push.html
-/// - oauth:   https://nativesupport.dcloud.net.cn/AppDocs/usemodule/harmonyModuleConfig/oauth.html
-/// - pay:     https://nativesupport.dcloud.net.cn/AppDocs/usemodule/harmonyModuleConfig/pay.html
-/// - 实人认证: https://nativesupport.dcloud.net.cn/AppDocs/usemodule/harmonyModuleConfig/facialRecognitionVerify.html
-///
-/// 注意：
-/// - 地图（map）在鸿蒙端为内置 web 方案，官方文档明确「无需配置模块依赖」，本轮返回空。
-/// - 支付（payment）按用户要求同时注入 uni-payment-alipay 与 uni-facialrecognitionverify，
-///   去重由 `patch_oh_package` 中的 BTreeMap 负责。
-fn harmony_ohpm_packages_for_category(category: &str) -> Vec<(&'static str, &'static str)> {
-    match category {
-        "push" => vec![("@uni_modules/uni-push", "1.0.1")],
-        "login" => vec![("@uni_modules/uni-oauth-huawei", "1.0.1")],
-        "payment" => vec![
-            ("@uni_modules/uni-payment-alipay", "1.0.1"),
-            ("@uni_modules/uni-facialrecognitionverify", "1.0.2"),
-        ],
-        "face_recognition" => vec![("@uni_modules/uni-facialrecognitionverify", "1.0.2")],
-        // 地图鸿蒙端为内置 web 方案，无需模块依赖。
-        "map" => Vec::new(),
-        _ => Vec::new(),
+/// 按文档合并 /resource/uni_modules/build-profile.json5 的 modules，
+/// 并确保 HBuilderX 4.51+ 所需 compatibleSdkVersionStage 为 beta6。
+fn patch_harmony_build_profile(
+    workspace: &Path,
+    resource_package_dir: &Path,
+) -> Result<(), String> {
+    let build_profile_path = find_project_file_named(workspace, "build-profile.json5")
+        .or_else(|| find_project_file_named(workspace, "build-profile.json"))
+        .ok_or_else(|| "未在模板工程中找到 build-profile.json5".to_string())?;
+    let mut value = read_json5_file(&build_profile_path, "build-profile.json5")?;
+
+    let generated_build_profile = resource_package_dir
+        .join("uni_modules")
+        .join("build-profile.json5");
+    if generated_build_profile.is_file() {
+        let generated = read_json5_file(&generated_build_profile, "编译产物 build-profile.json5")?;
+        if let Some(generated_modules) = generated.get("modules").and_then(|m| m.as_array()) {
+            merge_modules_array(&mut value, generated_modules)?;
+        }
     }
+    ensure_compatible_sdk_beta6(&mut value)?;
+
+    let updated = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+    std::fs::write(&build_profile_path, updated).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
-/// 从 manifest 解析结果中提取需要参与鸿蒙构建的模块（platforms 含 "harmony"）。
-fn harmony_detected_modules(
-    manifest_info: Option<&crate::commands::resource::UniappManifestInfo>,
-) -> Vec<DetectedModule> {
-    let Some(info) = manifest_info else {
-        return Vec::new();
-    };
-    info.detected_modules
-        .iter()
-        .filter(|m| m.platforms.iter().any(|p| p == "harmony"))
-        .cloned()
-        .collect()
+fn merge_modules_array(
+    build_profile: &mut serde_json::Value,
+    generated_modules: &[serde_json::Value],
+) -> Result<(), String> {
+    let root = build_profile
+        .as_object_mut()
+        .ok_or("build-profile.json5 根节点不是对象")?;
+    let modules = root
+        .entry("modules")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or("build-profile.json5 的 modules 不是数组")?;
+
+    for generated_module in generated_modules {
+        let generated_name = generated_module.get("name").and_then(|name| name.as_str());
+        if let Some(name) = generated_name {
+            if let Some(existing) = modules
+                .iter_mut()
+                .find(|module| module.get("name").and_then(|value| value.as_str()) == Some(name))
+            {
+                *existing = generated_module.clone();
+                continue;
+            }
+        }
+        modules.push(generated_module.clone());
+    }
+    Ok(())
+}
+
+fn ensure_compatible_sdk_beta6(build_profile: &mut serde_json::Value) -> Result<(), String> {
+    let root = build_profile
+        .as_object_mut()
+        .ok_or("build-profile.json5 根节点不是对象")?;
+    let app = root
+        .entry("app")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
+        .as_object_mut()
+        .ok_or("build-profile.json5 的 app 不是对象")?;
+    let products = app
+        .entry("products")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or("build-profile.json5 的 app.products 不是数组")?;
+
+    if products.is_empty() {
+        products.push(serde_json::json!({
+            "name": "default",
+            "compatibleSdkVersionStage": "beta6"
+        }));
+        return Ok(());
+    }
+
+    for product in products {
+        let product = product
+            .as_object_mut()
+            .ok_or("build-profile.json5 的 app.products 项不是对象")?;
+        product.insert(
+            "compatibleSdkVersionStage".to_string(),
+            serde_json::Value::String("beta6".to_string()),
+        );
+    }
+    Ok(())
 }
 
 /// 用官方 UniEntryAbility 模板覆盖 EntryAbility.ets
@@ -687,16 +680,69 @@ fn patch_entry_ability(workspace: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn import_harmony_resource(
+fn import_harmony_resource(workspace: &Path, resource_dir: &Path) -> Result<(), String> {
+    let dest = workspace.join("entry/src/main/resources/resfile/apps/HBuilder");
+    copy_directory_replace(resource_dir, &dest).map_err(|e| format!("复制 Harmony 资源失败: {}", e))
+}
+
+fn integrate_harmony_uni_modules(
     workspace: &Path,
-    resource_dir: &Path,
-    app_id: &str,
+    resource_package_dir: &Path,
 ) -> Result<(), String> {
-    let rawfile = find_dir_named(workspace, "rawfile")
-        .unwrap_or_else(|| workspace.join("entry/src/main/resources/rawfile"));
-    let dest = rawfile.join("apps").join(app_id);
-    crate::utils::fs::copy_recursive(resource_dir, &dest)
-        .map_err(|e| format!("复制 Harmony 资源失败: {}", e))
+    let source_uni_modules = resource_package_dir.join("uni_modules");
+    let target_ets_dir = workspace.join("entry/src/main/ets/uni_modules");
+    std::fs::create_dir_all(&target_ets_dir).map_err(|e| e.to_string())?;
+
+    let source_index = source_uni_modules.join("index.generated.ets");
+    let target_index = target_ets_dir.join("index.generated.ets");
+    if source_index.is_file() {
+        crate::utils::fs::copy_file(&source_index, &target_index)
+            .map_err(|e| format!("复制 index.generated.ets 失败: {}", e))?;
+    } else {
+        std::fs::write(&target_index, "export function initUniModules() {\n}\n")
+            .map_err(|e| format!("创建默认 index.generated.ets 失败: {}", e))?;
+    }
+
+    if !source_uni_modules.is_dir() {
+        return Ok(());
+    }
+
+    let target_uni_modules = workspace.join("uni_modules");
+    std::fs::create_dir_all(&target_uni_modules).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(&source_uni_modules).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let source_path = entry.path();
+        if !source_path.is_dir() {
+            continue;
+        }
+        let target_path = target_uni_modules.join(entry.file_name());
+        copy_directory_replace(&source_path, &target_path)
+            .map_err(|e| format!("复制 uni_modules 模块失败: {}", e))?;
+    }
+
+    Ok(())
+}
+
+fn copy_directory_replace(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    if dst.exists() {
+        std::fs::remove_dir_all(dst)?;
+    }
+    crate::utils::fs::copy_recursive(src, dst)
+}
+
+fn read_json5_file(path: &Path, label: &str) -> Result<serde_json::Value, String> {
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("读取 {} 失败: {}", label, e))?;
+    json5::from_str(&content).map_err(|e| format!("解析 {} 失败: {}", label, e))
+}
+
+fn find_project_file_named(workspace: &Path, name: &str) -> Option<PathBuf> {
+    let direct = workspace.join(name);
+    if direct.is_file() {
+        Some(direct)
+    } else {
+        find_file_named(workspace, name)
+    }
 }
 
 fn find_file_named(dir: &Path, name: &str) -> Option<PathBuf> {
@@ -708,21 +754,6 @@ fn find_file_named(dir: &Path, name: &str) -> Option<PathBuf> {
             }
         } else if path.file_name().and_then(|n| n.to_str()) == Some(name) {
             return Some(path);
-        }
-    }
-    None
-}
-
-fn find_dir_named(dir: &Path, name: &str) -> Option<PathBuf> {
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if path.file_name().and_then(|n| n.to_str()) == Some(name) {
-                return Some(path);
-            }
-            if let Some(found) = find_dir_named(&path, name) {
-                return Some(found);
-            }
         }
     }
     None
@@ -788,15 +819,47 @@ mod tests {
         config
     }
 
-    /// 构造一个标记为鸿蒙平台的 `DetectedModule`。
-    fn harmony_module(category: &str) -> DetectedModule {
-        DetectedModule {
-            name: format!("uni-{}", category),
-            category: category.to_string(),
-            platforms: vec!["harmony".to_string()],
-            configured: false,
-            required_keys: Vec::new(),
-            source: "app-harmony".to_string(),
+    fn make_harmony_map_manifest_info(
+        manifest_value: serde_json::Value,
+    ) -> crate::commands::resource::UniappManifestInfo {
+        crate::commands::resource::UniappManifestInfo {
+            app_name: None,
+            app_id: None,
+            version_name: None,
+            version_code: None,
+            hbuilderx_version: None,
+            android_icons: None,
+            ios_icons: None,
+            push_icons: None,
+            splashscreen: None,
+            ios_privacy_descriptions: Default::default(),
+            manifest_value: Some(manifest_value),
+            manifest_path: String::new(),
+            project_root: String::new(),
+            android: crate::commands::shared::resource::AndroidManifestConfig {
+                package_name: None,
+                min_sdk_version: None,
+                target_sdk_version: None,
+                compile_sdk_version: None,
+                permissions: Vec::new(),
+                exclude_permissions: Vec::new(),
+                schemes: Vec::new(),
+                abi_filters: Vec::new(),
+            },
+            package_names: crate::commands::shared::resource::PlatformPackages {
+                android_package: None,
+                ios_bundle_id: None,
+                harmony_bundle: None,
+            },
+            detected_modules: vec![crate::commands::resource::DetectedModule {
+                name: "uni-map".to_string(),
+                category: "map".to_string(),
+                platforms: vec!["harmony".to_string()],
+                configured: false,
+                required_keys: Vec::new(),
+                source: "app-harmony".to_string(),
+            }],
+            warnings: Vec::new(),
         }
     }
 
@@ -821,14 +884,11 @@ mod tests {
         .unwrap();
 
         let config = make_test_config("1.0.2");
-        patch_oh_package(&dir, &config, &[]).unwrap();
+        patch_oh_package(&dir, &config, &dir).unwrap();
 
         let content = std::fs::read_to_string(dir.join("oh-package.json5")).unwrap();
         let value: serde_json::Value = json5::from_str(&content).unwrap();
-        assert_eq!(
-            value["dependencies"]["@dcloudio/uni-app-runtime"],
-            "1.0.2"
-        );
+        assert_eq!(value["dependencies"]["@dcloudio/uni-app-runtime"], "1.0.2");
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -844,15 +904,12 @@ mod tests {
         .unwrap();
 
         let config = make_test_config("1.0.3");
-        patch_oh_package(&dir, &config, &[]).unwrap();
+        patch_oh_package(&dir, &config, &dir).unwrap();
 
         let content = std::fs::read_to_string(dir.join("oh-package.json5")).unwrap();
         let value: serde_json::Value = json5::from_str(&content).unwrap();
         assert_eq!(value["dependencies"]["some-lib"], "2.0.0");
-        assert_eq!(
-            value["dependencies"]["@dcloudio/uni-app-runtime"],
-            "1.0.3"
-        );
+        assert_eq!(value["dependencies"]["@dcloudio/uni-app-runtime"], "1.0.3");
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -863,7 +920,7 @@ mod tests {
         std::fs::write(dir.join("oh-package.json5"), r#"{ "name": "MyApp" }"#).unwrap();
 
         let config = make_test_config("");
-        let result = patch_oh_package(&dir, &config, &[]);
+        let result = patch_oh_package(&dir, &config, &dir);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("运行时版本"));
 
@@ -871,101 +928,255 @@ mod tests {
     }
 
     #[test]
-    fn patch_oh_package_injects_module_dependencies() {
+    fn patch_oh_package_merges_generated_dependencies() {
         let dir = unique_temp_dir("unipack-test-oh-pkg-modules");
         std::fs::create_dir_all(&dir).unwrap();
+        let resource = dir.join("resource");
+        std::fs::create_dir_all(resource.join("uni_modules")).unwrap();
         std::fs::write(
             dir.join("oh-package.json5"),
-            r#"{ "name": "MyApp", "dependencies": {} }"#,
+            r#"{ "name": "MyApp", "dependencies": { "existing": "1.0.0" } }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            resource.join("uni_modules/oh-package.json5"),
+            r#"{
+              "dependencies": {
+                "@uni_modules/uni-getbatteryinfo": "./uni_modules/uni-getBatteryInfo",
+                "@uni_modules/uni-push": "1.0.1"
+              }
+            }"#,
         )
         .unwrap();
 
         let config = make_test_config("1.0.2");
-        let modules = vec![
-            harmony_module("push"),
-            harmony_module("login"),
-            harmony_module("payment"),
-            harmony_module("face_recognition"),
-        ];
-        patch_oh_package(&dir, &config, &modules).unwrap();
+        patch_oh_package(&dir, &config, &resource).unwrap();
 
         let content = std::fs::read_to_string(dir.join("oh-package.json5")).unwrap();
         let value: serde_json::Value = json5::from_str(&content).unwrap();
         let deps = &value["dependencies"];
-        assert_eq!(deps["@uni_modules/uni-push"], "1.0.1");
-        assert_eq!(deps["@uni_modules/uni-oauth-huawei"], "1.0.1");
-        assert_eq!(deps["@uni_modules/uni-payment-alipay"], "1.0.1");
-        assert_eq!(deps["@uni_modules/uni-facialrecognitionverify"], "1.0.2");
-        // 运行时依赖依然注入。
+        assert_eq!(deps["existing"], "1.0.0");
         assert_eq!(deps["@dcloudio/uni-app-runtime"], "1.0.2");
+        assert_eq!(
+            deps["@uni_modules/uni-getbatteryinfo"],
+            "./uni_modules/uni-getBatteryInfo"
+        );
+        assert_eq!(deps["@uni_modules/uni-push"], "1.0.1");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn patch_harmony_build_profile_merges_modules_and_beta6() {
+        let dir = unique_temp_dir("unipack-test-build-profile");
+        std::fs::create_dir_all(&dir).unwrap();
+        let resource = dir.join("resource");
+        std::fs::create_dir_all(resource.join("uni_modules")).unwrap();
+        std::fs::write(
+            dir.join("build-profile.json5"),
+            r#"{
+              "app": { "products": [{ "name": "default" }] },
+              "modules": [{ "name": "entry", "srcPath": "./entry" }]
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            resource.join("uni_modules/build-profile.json5"),
+            r#"{
+              "modules": [
+                { "name": "uni_modules__uni_getbatteryinfo", "srcPath": "./uni_modules/uni-getBatteryInfo" }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        patch_harmony_build_profile(&dir, &resource).unwrap();
+
+        let content = std::fs::read_to_string(dir.join("build-profile.json5")).unwrap();
+        let value: serde_json::Value = json5::from_str(&content).unwrap();
+        assert_eq!(
+            value["app"]["products"][0]["compatibleSdkVersionStage"],
+            "beta6"
+        );
+        assert!(value["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|module| module["name"] == "uni_modules__uni_getbatteryinfo"));
 
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn patch_oh_package_dedups_facialrecognitionverify() {
-        // 支付与实人认证模块同时开启：uni-facialrecognitionverify 只应出现一次。
-        let dir = unique_temp_dir("unipack-test-oh-pkg-dedup");
-        std::fs::create_dir_all(&dir).unwrap();
+    fn import_harmony_resource_uses_documented_resfile_hbuilder_path() {
+        let dir = unique_temp_dir("unipack-test-harmony-resource");
+        let workspace = dir.join("workspace");
+        let resource = dir.join("__UNI__DEMO");
+        std::fs::create_dir_all(&resource).unwrap();
+        std::fs::write(resource.join("manifest.json"), "{}").unwrap();
+
+        import_harmony_resource(&workspace, &resource).unwrap();
+
+        assert!(workspace
+            .join("entry/src/main/resources/resfile/apps/HBuilder/manifest.json")
+            .is_file());
+        assert!(!workspace
+            .join("entry/src/main/resources/rawfile/apps/__UNI__DEMO")
+            .exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn patch_harmony_module_metadata_injects_tencent_map_key() {
+        let dir = unique_temp_dir("unipack-test-harmony-map-metadata");
+        let module_dir = dir.join("entry/src/main");
+        std::fs::create_dir_all(&module_dir).unwrap();
         std::fs::write(
-            dir.join("oh-package.json5"),
-            r#"{ "name": "MyApp", "dependencies": {} }"#,
+            module_dir.join("module.json5"),
+            r#"{
+              "module": {
+                "name": "entry",
+                "metadata": [
+                  { "name": "EXISTING_KEY", "value": "old" }
+                ]
+              }
+            }"#,
         )
         .unwrap();
+        let manifest_info = make_harmony_map_manifest_info(serde_json::json!({
+            "app-harmony": {
+                "distribute": {
+                    "modules": {
+                        "uni-map": {
+                            "tencent": {
+                                "key": "312312"
+                            }
+                        }
+                    }
+                }
+            }
+        }));
 
-        let config = make_test_config("1.0.2");
-        let modules = vec![harmony_module("payment"), harmony_module("face_recognition")];
-        patch_oh_package(&dir, &config, &modules).unwrap();
+        patch_harmony_module_metadata(&dir, Some(&manifest_info)).unwrap();
 
-        let content = std::fs::read_to_string(dir.join("oh-package.json5")).unwrap();
-        // 用文本计数确保 key 只出现一次。
-        let occurrences = content.matches("@uni_modules/uni-facialrecognitionverify").count();
-        assert_eq!(occurrences, 1, "uni-facialrecognitionverify 应去重后只出现一次");
-
+        let content = std::fs::read_to_string(module_dir.join("module.json5")).unwrap();
         let value: serde_json::Value = json5::from_str(&content).unwrap();
-        assert_eq!(
-            value["dependencies"]["@uni_modules/uni-facialrecognitionverify"],
-            "1.0.2"
-        );
-        assert_eq!(
-            value["dependencies"]["@uni_modules/uni-payment-alipay"],
-            "1.0.1"
-        );
+        let metadata = value["module"]["metadata"].as_array().unwrap();
+        assert!(metadata
+            .iter()
+            .any(|item| item["name"] == "TENCENT_MAP_KEY" && item["value"] == "312312"));
+        assert!(metadata
+            .iter()
+            .any(|item| item["name"] == "EXISTING_KEY" && item["value"] == "old"));
 
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn patch_oh_package_ignores_non_harmony_modules() {
-        // platforms 不含 harmony 的模块（如来自 app-plus 的 Android/iOS 模块）应被忽略。
-        let dir = unique_temp_dir("unipack-test-oh-pkg-ignore");
-        std::fs::create_dir_all(&dir).unwrap();
+    fn patch_harmony_module_metadata_updates_existing_tencent_map_key() {
+        let dir = unique_temp_dir("unipack-test-harmony-map-metadata-update");
+        let module_dir = dir.join("entry/src/main");
+        std::fs::create_dir_all(&module_dir).unwrap();
         std::fs::write(
-            dir.join("oh-package.json5"),
-            r#"{ "name": "MyApp", "dependencies": {} }"#,
+            module_dir.join("module.json5"),
+            r#"{
+              "module": {
+                "metadata": [
+                  { "name": "TENCENT_MAP_KEY", "value": "old-key" }
+                ]
+              }
+            }"#,
+        )
+        .unwrap();
+        let manifest_info = make_harmony_map_manifest_info(serde_json::json!({
+            "app-harmony": {
+                "distribute": {
+                    "modules": {
+                        "uni-map": {
+                            "tencent": {
+                                "key": "new-key"
+                            }
+                        }
+                    }
+                }
+            }
+        }));
+
+        patch_harmony_module_metadata(&dir, Some(&manifest_info)).unwrap();
+
+        let content = std::fs::read_to_string(module_dir.join("module.json5")).unwrap();
+        let value: serde_json::Value = json5::from_str(&content).unwrap();
+        let metadata = value["module"]["metadata"].as_array().unwrap();
+        assert_eq!(
+            metadata
+                .iter()
+                .filter(|item| item["name"] == "TENCENT_MAP_KEY")
+                .count(),
+            1
+        );
+        assert!(metadata
+            .iter()
+            .any(|item| item["name"] == "TENCENT_MAP_KEY" && item["value"] == "new-key"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn patch_harmony_module_metadata_requires_tencent_map_key_when_map_enabled() {
+        let dir = unique_temp_dir("unipack-test-harmony-map-metadata-missing");
+        let module_dir = dir.join("entry/src/main");
+        std::fs::create_dir_all(&module_dir).unwrap();
+        std::fs::write(
+            module_dir.join("module.json5"),
+            r#"{ "module": { "metadata": [] } }"#,
+        )
+        .unwrap();
+        let manifest_info = make_harmony_map_manifest_info(serde_json::json!({
+            "app-harmony": {
+                "distribute": {
+                    "modules": {
+                        "uni-map": {
+                            "tencent": {}
+                        }
+                    }
+                }
+            }
+        }));
+
+        let result = patch_harmony_module_metadata(&dir, Some(&manifest_info));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("uni-map.tencent.key"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn integrate_harmony_uni_modules_copies_generated_entry_and_modules() {
+        let dir = unique_temp_dir("unipack-test-harmony-uni-modules");
+        let workspace = dir.join("workspace");
+        let resource = dir.join("resource");
+        let source_uni_modules = resource.join("uni_modules");
+        std::fs::create_dir_all(source_uni_modules.join("uni-getBatteryInfo")).unwrap();
+        std::fs::write(
+            source_uni_modules.join("index.generated.ets"),
+            "export function initUniModules() { return 'generated' }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source_uni_modules.join("uni-getBatteryInfo/oh-package.json5"),
+            "{ name: 'uni-getBatteryInfo' }",
         )
         .unwrap();
 
-        let config = make_test_config("1.0.2");
-        let android_push = DetectedModule {
-            name: "Push".to_string(),
-            category: "push".to_string(),
-            platforms: vec!["android".to_string()],
-            configured: false,
-            required_keys: Vec::new(),
-            source: "manifest.json".to_string(),
-        };
-        patch_oh_package(&dir, &config, &[android_push]).unwrap();
+        integrate_harmony_uni_modules(&workspace, &resource).unwrap();
 
-        let content = std::fs::read_to_string(dir.join("oh-package.json5")).unwrap();
-        let value: serde_json::Value = json5::from_str(&content).unwrap();
-        // 仅运行时依赖，模块依赖不应被注入。
-        assert_eq!(
-            value["dependencies"]["@dcloudio/uni-app-runtime"],
-            "1.0.2"
-        );
-        assert!(value["dependencies"].get("@uni_modules/uni-push").is_none());
-
+        let index = std::fs::read_to_string(
+            workspace.join("entry/src/main/ets/uni_modules/index.generated.ets"),
+        )
+        .unwrap();
+        assert!(index.contains("generated"));
+        assert!(workspace
+            .join("uni_modules/uni-getBatteryInfo/oh-package.json5")
+            .is_file());
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -985,8 +1196,7 @@ mod tests {
 
         patch_entry_ability(&dir).unwrap();
 
-        let content =
-            std::fs::read_to_string(ability_dir.join("EntryAbility.ets")).unwrap();
+        let content = std::fs::read_to_string(ability_dir.join("EntryAbility.ets")).unwrap();
         assert!(content.contains("UniEntryAbility"));
         assert!(content.contains("initUniModules"));
         assert!(content.contains("@dcloudio/uni-app-runtime"));
