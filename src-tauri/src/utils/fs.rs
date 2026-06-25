@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -120,10 +121,24 @@ pub fn ensure_writable_tree(root: &Path) -> Result<()> {
     collect_dirs(root, &mut dirs_to_fix)?;
 
     for dir in &dirs_to_fix {
-        let writable = std::fs::Permissions::from_mode(0o755);
-        let _ = std::fs::set_permissions(dir, writable);
+        let _ = make_directory_writable(dir);
     }
 
+    Ok(())
+}
+
+#[cfg(unix)]
+fn make_directory_writable(dir: &Path) -> std::io::Result<()> {
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))
+}
+
+#[cfg(not(unix))]
+fn make_directory_writable(dir: &Path) -> std::io::Result<()> {
+    let mut permissions = std::fs::metadata(dir)?.permissions();
+    if permissions.readonly() {
+        permissions.set_readonly(false);
+        std::fs::set_permissions(dir, permissions)?;
+    }
     Ok(())
 }
 

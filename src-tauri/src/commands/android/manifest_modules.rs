@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use std::collections::{BTreeSet, HashMap};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
@@ -149,10 +150,9 @@ pub fn copy_module_activity_sources(
                 let parent_info = dest_file
                     .parent()
                     .and_then(|p| {
-                        std::fs::metadata(p).ok().map(|m| {
-                            let mode = m.permissions().mode();
-                            format!("writable={} mode={:o}", mode & 0o200 != 0, mode)
-                        })
+                        std::fs::metadata(p)
+                            .ok()
+                            .map(|m| format_permissions_info(&m))
                     })
                     .unwrap_or_else(|| "父目录不存在".to_string());
                 return Err(format!(
@@ -187,6 +187,18 @@ pub fn copy_module_activity_sources(
         );
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn format_permissions_info(metadata: &std::fs::Metadata) -> String {
+    let mode = metadata.permissions().mode();
+    format!("writable={} mode={:o}", mode & 0o200 != 0, mode)
+}
+
+#[cfg(not(unix))]
+fn format_permissions_info(metadata: &std::fs::Metadata) -> String {
+    let permissions = metadata.permissions();
+    format!("readonly={}", permissions.readonly())
 }
 
 fn should_copy_activity_source(template_key: &str, class_name: &str) -> bool {
