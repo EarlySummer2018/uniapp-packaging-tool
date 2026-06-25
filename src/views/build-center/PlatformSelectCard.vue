@@ -44,8 +44,8 @@ const emit = defineEmits<{
       :disabled="isBuildLocked"
       @toggle="platform => emit('toggle-platform', platform)"
     />
+    <!-- <n-text v-if="buildDisabledReason && !canBuild" depth="3">{{ buildDisabledReason }}</n-text> -->
     <n-space justify="end" class="build-action-row">
-      <n-text v-if="buildDisabledReason && !canBuild" depth="3">{{ buildDisabledReason }}</n-text>
       <n-button v-if="singleSelectedPlatform === 'android'" type="primary" :disabled="!canGenerateAndroid" :loading="androidGenerateLoading" @click="emit('generate-android')">
         <template #icon><n-icon><LogoAndroid /></n-icon></template>
         生成安卓项目

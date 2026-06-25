@@ -58,6 +58,8 @@ temp
 .claude/
 .cursor/
 .DS_Store
+.history/
+.agents/
 *.suo
 *.ntvs*
 *.njsproj

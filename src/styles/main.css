@@ -218,6 +218,36 @@ select {
   box-shadow: 0 20px 48px rgba(31, 41, 55, 0.18);
 }
 
+/* 全局滚动条样式：更细、使用主题色 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary-color) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--primary-color);
+  border-radius: 3px;
+  opacity: 0.6;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-strong);
+  opacity: 0.9;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 .dark-theme {
   --bg-color: #1e1e1e;
   --text-color: #e0e0e0;

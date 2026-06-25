@@ -40,9 +40,9 @@ const emit = defineEmits<{
           <n-space vertical :size="8">
             <n-text>AppId: <n-text code class="path-text">{{ insightAppId }}</n-text></n-text>
             <n-text>版本: {{ insightVersionName }} / {{ insightVersionCode }}</n-text>
-            <n-text>资源包根目录: <n-text code class="path-text">{{ scanResult.importedPath }}</n-text></n-text>
+            <!-- <n-text>资源包根目录: <n-text code class="path-text">{{ scanResult.importedPath }}</n-text></n-text>
             <n-text>应用资源目录: <n-text code class="path-text">{{ scanResult.appResourcePath }}</n-text></n-text>
-            <n-text>manifest 路径: <n-text code class="path-text">{{ insightManifestPath }}</n-text></n-text>
+            <n-text>manifest 路径: <n-text code class="path-text">{{ insightManifestPath }}</n-text></n-text> -->
           </n-space>
         </n-alert>
         <n-alert v-for="warning in scanResult.warnings" :key="warning" type="warning">

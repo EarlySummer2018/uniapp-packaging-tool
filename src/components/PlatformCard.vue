@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { NCard, NIcon, NText } from 'naive-ui'
-import { CheckmarkCircleOutline } from '@vicons/ionicons5'
 import type { Component } from 'vue'
 
 export type PlatformType = 'android' | 'ios' | 'harmony'
@@ -44,13 +43,14 @@ function togglePlatform(platform: PlatformType) {
       :hoverable="!disabled"
       :clickable="!disabled"
       @click="togglePlatform(platform.key)"
+      content-style="padding: 10px;"
     >
       <div class="platform-content">
         <div 
           class="platform-icon-wrapper"
           :style="{ backgroundColor: platform.bgColor }"
         >
-          <n-icon :size="32" :color="platform.color">
+          <n-icon :size="16" :color="platform.color">
             <component :is="platform.icon" />
           </n-icon>
         </div>
@@ -60,16 +60,16 @@ function togglePlatform(platform: PlatformType) {
             {{ platform.label }}
           </n-text>
           <n-text depth="3" class="platform-desc">
-            {{ platform.description }}
+            ({{ platform.description }})
           </n-text>
         </div>
         
-        <div
+        <!-- <div
           v-if="isSelected(platform.key)"
           class="platform-check"
         >
           <n-icon :size="18"><CheckmarkCircleOutline /></n-icon>
-        </div>
+        </div> -->
       </div>
     </n-card>
   </div>
@@ -84,7 +84,6 @@ function togglePlatform(platform: PlatformType) {
 }
 
 .platform-card {
-  min-height: 132px;
   border: 1px solid var(--border-soft);
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
@@ -107,15 +106,15 @@ function togglePlatform(platform: PlatformType) {
 
 .platform-content {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  /* flex-direction: column; */
+  align-items: center;
   gap: 10px;
   position: relative;
 }
 
 .platform-icon-wrapper {
-  width: 44px;
-  height: 44px;
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
   display: flex;
   align-items: center;
@@ -126,8 +125,8 @@ function togglePlatform(platform: PlatformType) {
 .platform-info {
   flex: 1;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: baseline;
+  /* gap: 4px; */
 }
 
 .platform-label {

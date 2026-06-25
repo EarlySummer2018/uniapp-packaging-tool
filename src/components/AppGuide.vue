@@ -22,12 +22,14 @@ const visible = ref(false)
 const activeIndex = ref(0)
 const targetRect = ref<DOMRect | null>(null)
 const guideCardRef = ref<HTMLElement | null>(null)
+const overrideSteps = ref<GuideStep[] | null>(null)
 
 let autoStartTimer: ReturnType<typeof setTimeout> | null = null
 let targetRefreshTimer: ReturnType<typeof setTimeout> | null = null
 
-const currentStep = computed(() => props.steps[activeIndex.value] || null)
-const isLastStep = computed(() => activeIndex.value === props.steps.length - 1)
+const resolvedSteps = computed(() => overrideSteps.value ?? props.steps)
+const currentStep = computed(() => resolvedSteps.value[activeIndex.value] || null)
+const isLastStep = computed(() => activeIndex.value === resolvedSteps.value.length - 1)
 const storageKey = computed(() => `unipack:guide:${props.guideKey}:v1`)
 
 const highlightStyle = computed(() => {
@@ -100,7 +102,8 @@ function clearTimers() {
 
 function scheduleAutoStart() {
   clearTimers()
-  if (!props.steps.length || hasCompletedGuide()) return
+  const steps = resolvedSteps.value
+  if (!steps.length || hasCompletedGuide()) return
   autoStartTimer = setTimeout(() => {
     void start()
   }, 650)
@@ -130,8 +133,10 @@ function updateTargetRect() {
   targetRect.value = target?.getBoundingClientRect() || null
 }
 
-async function start() {
-  if (!props.steps.length) return
+async function start(steps?: GuideStep[]) {
+  const targetSteps = steps ?? resolvedSteps.value
+  if (!targetSteps.length) return
+  overrideSteps.value = steps ?? null
   clearTimers()
   activeIndex.value = 0
   visible.value = true
@@ -157,6 +162,7 @@ function finish() {
   markGuideCompleted()
   visible.value = false
   targetRect.value = null
+  overrideSteps.value = null
   clearTimers()
 }
 

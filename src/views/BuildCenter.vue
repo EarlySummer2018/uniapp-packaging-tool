@@ -1919,8 +1919,8 @@ function goBack() {
         </div>
       </n-space>
     </div>
-    <n-grid cols="1 s:1 m:2" :x-gap="18" :y-gap="18" responsive="screen" class="build-grid">
-      <n-gi>
+    <n-grid cols="1 s:1 m:3" :x-gap="18" :y-gap="18" responsive="screen" class="build-grid">
+      <n-gi span="1 m:1">
         <ResourceImportCard
           :importing="importing"
           :is-build-locked="isBuildLocked"
@@ -1933,7 +1933,7 @@ function goBack() {
           @choose-resource="chooseResource"
         />
       </n-gi>
-      <n-gi>
+      <n-gi span="2 m:2">
         <PlatformSelectCard
           :platforms="platforms"
           :selected-platforms="selectedPlatforms"
@@ -1956,7 +1956,7 @@ function goBack() {
         />
       </n-gi>
     </n-grid>
-    <ResourceInsightPanel
+    <!-- <ResourceInsightPanel
       :scan-result="scanResult"
       :insight-app-name="insightAppName"
       :insight-app-id="insightAppId"
@@ -1975,7 +1975,7 @@ function goBack() {
       :manifest-module-status-label="manifestModuleStatusLabel"
       :manifest-module-field-summaries="manifestModuleFieldSummaries"
       @set-manifest-module-selected="setManifestModuleSelected"
-    />
+    /> -->
 
     <IosOfflineSdkPanel
       :visible="!!scanResult && selectedPlatforms.includes('ios')"

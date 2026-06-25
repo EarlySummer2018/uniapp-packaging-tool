@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { h, ref, computed, onMounted } from 'vue'
+import { h, ref, computed, nextTick, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NAlert, NLayout, NLayoutSider, NLayoutContent, NMenu, NButton, NIcon, NModal, NInput, NSpace, NText, useMessage, useDialog } from 'naive-ui'
+import { NAlert, NLayout, NLayoutSider, NLayoutContent, NButton, NIcon, NModal, NInput, NSpace, NText, useMessage, useDialog } from 'naive-ui'
 import { AddOutline, FolderOutline, HelpCircleOutline, SettingsOutline, TimeOutline, TrashOutline, OptionsOutline, LogoGithub } from '@vicons/ionicons5'
 import AppGuide from '../components/AppGuide.vue'
 import { useProjectsStore } from '../stores/projects'
@@ -23,124 +23,163 @@ const showModal = ref(false)
 const newProjectName = ref('')
 const newProjectDesc = ref('')
 const deletingProjectId = ref<string | null>(null)
-const appGuide = ref<{ start: () => void } | null>(null)
+const appGuide = ref<{ start: (steps?: Array<{ target: string; title: string; description: string }>) => void } | null>(null)
 
-const menuOptions = [
+interface GuideStep {
+  target: string
+  title: string
+  description: string
+}
+
+const stepsByRoute: Record<string, GuideStep[]> = {
+  Home: [
+    {
+      target: '[data-guide="sidebar-navigation"]',
+      title: '从这里切换工作区',
+      description: '侧边栏集中放置项目列表、SDK 环境、打包历史和设置。'
+    },
+    {
+      target: '[data-guide="create-project"]',
+      title: '先创建一个项目',
+      description: '新项目会进入配置页，设置本地项目路径和各平台签名信息。'
+    },
+    {
+      target: '[data-guide="project-overview"]',
+      title: '快速查看项目概况',
+      description: '这里汇总项目数量，以及已启用 Android、iOS 和鸿蒙的平台数量。'
+    },
+    {
+      target: '[data-guide="recent-projects"]',
+      title: '继续配置或开始构建',
+      description: '在最近项目中可以直接进入配置页，或跳转到构建中心。'
+    }
+  ],
+  ProjectConfig: [
+    {
+      target: '[data-guide="project-path"]',
+      title: '关联本地 UniApp 项目',
+      description: '选择包含 manifest.json 的项目目录，构建中心会读取应用信息和模块配置。'
+    },
+    {
+      target: '[data-guide="config-tabs"]',
+      title: '配置目标平台',
+      description: '按需启用 Android、iOS 或鸿蒙，并补充包名、证书与签名信息。'
+    },
+    {
+      target: '[data-guide="config-actions"]',
+      title: '保存后开始打包',
+      description: '先保存配置，再进入构建中心导入资源并生成安装包。'
+    }
+  ],
+  BuildCenter: [
+    {
+      target: '[data-guide="resource-import"]',
+      title: '导入 UniApp 资源',
+      description: '选择 HBuilderX 导出的 resources 目录，工具会扫描应用信息和依赖模块。'
+    },
+    {
+      target: '[data-guide="platform-select"]',
+      title: '选择平台并开始构建',
+      description: '选择一个或多个目标平台；单选时还可以先生成对应的原生项目。'
+    },
+    {
+      target: '[data-guide="build-log"]',
+      title: '查看构建进度和结果',
+      description: '构建日志会实时更新，成功后可在这里查看产物路径或生成的原生项目。'
+    }
+  ],
+  SdkManager: [
+    {
+      target: '[data-guide="sdk-tabs"]',
+      title: '管理 SDK 与构建环境',
+      description: '在离线 SDK 配置和环境检测之间切换，逐项确认构建依赖。'
+    },
+    {
+      target: '[data-guide="sdk-list"]',
+      title: '配置离线 SDK 路径',
+      description: '为 Android、iOS 和鸿蒙设置已下载并解压的 SDK 或工程模板目录。'
+    },
+    {
+      target: '[data-guide="sdk-refresh"]',
+      title: '重新检测环境',
+      description: '路径或工具安装完成后刷新检测，确认所有必要环境已就绪。'
+    }
+  ]
+}
+
+interface SidebarMenuOption {
+  label: string
+  key: string
+  routeName: string
+  routePath: string
+  icon: () => any
+}
+
+const menuOptions: SidebarMenuOption[] = [
   {
     label: '项目列表',
-    key: 'Home' as string,
+    key: 'Home',
+    routeName: 'Home',
+    routePath: '/',
     icon: () => h(NIcon, null, { default: () => h(FolderOutline) })
   },
   {
     label: 'SDK & 环境管理',
-    key: 'SdkManager' as string,
+    key: 'SdkManager',
+    routeName: 'SdkManager',
+    routePath: '/sdk-manager',
     icon: () => h(NIcon, null, { default: () => h(OptionsOutline) })
   },
   {
     label: '打包历史',
-    key: 'BuildHistory' as string,
+    key: 'BuildHistory',
+    routeName: 'BuildHistory',
+    routePath: '/history',
     icon: () => h(NIcon, null, { default: () => h(TimeOutline) })
   },
   {
     label: '设置',
-    key: 'Settings' as string,
+    key: 'Settings',
+    routeName: 'Settings',
+    routePath: '/settings',
     icon: () => h(NIcon, null, { default: () => h(SettingsOutline) })
   }
 ]
 
+function getMenuOptionByKey(key: string): SidebarMenuOption | undefined {
+  return menuOptions.find(o => o.key === key)
+}
+
+function getGuideStepsByRoute(routeName: string): GuideStep[] {
+  return stepsByRoute[routeName] || []
+}
+
 const currentMenuKey = computed(() => (route.name as string) || 'Home')
 const guideKey = computed(() => String(route.name || ''))
-const guideSteps = computed(() => {
-  const stepsByRoute: Record<string, Array<{ target: string; title: string; description: string }>> = {
-    Home: [
-      {
-        target: '[data-guide="sidebar-navigation"]',
-        title: '从这里切换工作区',
-        description: '侧边栏集中放置项目列表、SDK 环境、打包历史和设置。'
-      },
-      {
-        target: '[data-guide="create-project"]',
-        title: '先创建一个项目',
-        description: '新项目会进入配置页，设置本地项目路径和各平台签名信息。'
-      },
-      {
-        target: '[data-guide="project-overview"]',
-        title: '快速查看项目概况',
-        description: '这里汇总项目数量，以及已启用 Android、iOS 和鸿蒙的平台数量。'
-      },
-      {
-        target: '[data-guide="recent-projects"]',
-        title: '继续配置或开始构建',
-        description: '在最近项目中可以直接进入配置页，或跳转到构建中心。'
-      }
-    ],
-    ProjectConfig: [
-      {
-        target: '[data-guide="project-path"]',
-        title: '关联本地 UniApp 项目',
-        description: '选择包含 manifest.json 的项目目录，构建中心会读取应用信息和模块配置。'
-      },
-      {
-        target: '[data-guide="config-tabs"]',
-        title: '配置目标平台',
-        description: '按需启用 Android、iOS 或鸿蒙，并补充包名、证书与签名信息。'
-      },
-      {
-        target: '[data-guide="config-actions"]',
-        title: '保存后开始打包',
-        description: '先保存配置，再进入构建中心导入资源并生成安装包。'
-      }
-    ],
-    BuildCenter: [
-      {
-        target: '[data-guide="resource-import"]',
-        title: '导入 UniApp 资源',
-        description: '选择 HBuilderX 导出的 resources 目录，工具会扫描应用信息和依赖模块。'
-      },
-      {
-        target: '[data-guide="platform-select"]',
-        title: '选择平台并开始构建',
-        description: '选择一个或多个目标平台；单选时还可以先生成对应的原生项目。'
-      },
-      {
-        target: '[data-guide="build-log"]',
-        title: '查看构建进度和结果',
-        description: '构建日志会实时更新，成功后可在这里查看产物路径或生成的原生项目。'
-      }
-    ],
-    SdkManager: [
-      {
-        target: '[data-guide="sdk-tabs"]',
-        title: '管理 SDK 与构建环境',
-        description: '在离线 SDK 配置和环境检测之间切换，逐项确认构建依赖。'
-      },
-      {
-        target: '[data-guide="sdk-list"]',
-        title: '配置离线 SDK 路径',
-        description: '为 Android、iOS 和鸿蒙设置已下载并解压的 SDK 或工程模板目录。'
-      },
-      {
-        target: '[data-guide="sdk-refresh"]',
-        title: '重新检测环境',
-        description: '路径或工具安装完成后刷新检测，确认所有必要环境已就绪。'
-      }
-    ]
-  }
-  return stepsByRoute[guideKey.value] || []
-})
+const guideSteps = computed(() => getGuideStepsByRoute(guideKey.value))
+
 
 onMounted(async () => {
   await projectsStore.initStore()
 })
 
 function handleMenuSelect(key: string) {
-  const routeMap: Record<string, string> = {
-    Home: '/',
-    SdkManager: '/sdk-manager',
-    BuildHistory: '/history',
-    Settings: '/settings'
+  const option = getMenuOptionByKey(key)
+  if (!option) return
+  router.push(option.routePath || '/')
+}
+
+async function startGuideByMenuKey(key: string) {
+  const option = getMenuOptionByKey(key)
+  if (!option) return
+  const steps = getGuideStepsByRoute(option.routeName)
+  if (!steps.length) return
+
+  if ((route.name as string) !== option.routeName) {
+    await router.push(option.routePath || '/')
   }
-  router.push(routeMap[key] || '/')
+  await nextTick()
+  appGuide.value?.start(steps)
 }
 
 function handleOpenCreateProject() {
@@ -243,23 +282,32 @@ async function handleDeleteProject(projectId: string) {
         </n-button>
       </div>
 
-      <n-menu
-        data-guide="sidebar-navigation"
-        :options="menuOptions"
-        :value="currentMenuKey"
-        @update:value="handleMenuSelect"
-      />
-
-      <n-button
-        v-if="guideSteps.length"
-        class="guide-replay-button"
-        quaternary
-        @click="appGuide?.start()"
-      >
-        <template #icon><n-icon><HelpCircleOutline /></n-icon></template>
-        使用引导
-      </n-button>
-
+      <div class="sidebar-menu">
+        <div
+          v-for="item in menuOptions"
+          :key="item.key"
+          class="sidebar-menu-item"
+          :class="{ active: item.key === currentMenuKey }"
+          @click="handleMenuSelect(item.key)"
+        >
+          <div class="sidebar-menu-main">
+            <div class="sidebar-menu-icon" role="presentation">
+              <component :is="item.icon()" />
+            </div>
+            <span class="sidebar-menu-label">{{ item.label }}</span>
+          </div>
+          <n-button
+            v-if="getGuideStepsByRoute(item.routeName).length"
+            class="sidebar-menu-guide"
+            quaternary
+            circle
+            size="tiny"
+            @click.stop="startGuideByMenuKey(item.key)"
+          >
+            <template #icon><n-icon><HelpCircleOutline /></n-icon></template>
+          </n-button>
+        </div>
+      </div>
       <div class="project-list">
         <n-text depth="3" class="sidebar-section-title">我的项目</n-text>
 
@@ -404,10 +452,64 @@ async function handleDeleteProject(projectId: string) {
   overflow-y: auto;
 }
 
-.guide-replay-button {
-  justify-content: flex-start;
-  margin: 10px 14px 0;
+.sidebar-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px 8px;
+}
+
+.sidebar-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
   color: var(--text-muted);
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.sidebar-menu-item:hover {
+  background: var(--surface-muted);
+  color: var(--text-color);
+}
+
+.sidebar-menu-item.active {
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+.sidebar-menu-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sidebar-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar-menu-label {
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.2;
+}
+
+.sidebar-menu-guide {
+  color: inherit;
+  opacity: 0.9;
+}
+
+.sidebar-menu-guide:hover {
+  color: var(--primary-color);
 }
 
 .sidebar-section-title {
