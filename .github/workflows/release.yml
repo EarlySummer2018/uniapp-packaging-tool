@@ -97,6 +97,11 @@ jobs:
             ? `[${sha}](https://github.com/${repoSlug}/commit/${sha})`
             : sha;
 
+          const linkifyRefs = (text) => {
+            if (!repoSlug || !text) return text || "";
+            return String(text).replace(/#(\d+)/g, `[#$1](https://github.com/${repoSlug}/issues/$1)`);
+          };
+
           const raw = fs.readFileSync("commits.txt", "utf8");
           const chunks = raw
             .replace(/\n$/, "")
@@ -109,8 +114,8 @@ jobs:
             const sha = (head || "").trim();
             const body = rest.join("");
             const lines = body.split(/\r?\n/);
-            const subject = (lines[0] || "").trim();
-            const restBody = lines.slice(1).join("\n").trim();
+            const subject = linkifyRefs((lines[0] || "").trim());
+            const restBody = linkifyRefs(lines.slice(1).join("\n").trim());
             return { sha, subject, body: restBody };
           }).filter((c) => c.sha && c.subject);
 
@@ -173,7 +178,8 @@ jobs:
               .filter(Boolean)
               .slice(0, 4)
               .join("\n");
-            return b ? `${base}\n\n  ${b.split(/\r?\n/).join("\n  ")}` : base;
+            const indented = b.split(/\r?\n/).map((l) => `  ${l}`).join("\n");
+            return `${base}\n\n${indented}`;
           };
 
           const parts = [];
