@@ -16,6 +16,7 @@ import {
 import { ArrowBackOutline } from '@vicons/ionicons5'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
+import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { invoke } from '@tauri-apps/api/core'
 import { useBuildStore } from '../stores/build'
 import { useProjectsStore } from '../stores/projects'
@@ -1894,11 +1895,17 @@ async function appendCleanupLines(buildId: string, lines: string[]) {
 }
 
 async function openGeneratedProject() {
-  if (!currentGeneratedProjectPath.value) return
-  await invoke('tauri', {
-    __tauriModule: 'shell',
-    message: { cmd: 'open', path: currentGeneratedProjectPath.value }
-  })
+  const path = currentGeneratedProjectPath.value
+  if (!path) return
+  try {
+    await revealItemInDir(path)
+  } catch (e) {
+    try {
+      await openPath(path)
+    } catch {
+      message.error(`打开目录失败：${String(e)}`)
+    }
+  }
 }
 
 function goBack() {

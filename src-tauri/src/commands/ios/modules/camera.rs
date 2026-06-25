@@ -19,7 +19,7 @@ pub(crate) const IOS_CAMERA_PRIVACY_FIELDS: &[IosPrivacyFieldSpec] = &[
         key: "NSPhotoLibraryAddUsageDescription",
         label: "保存到相册说明",
         default_value: "用于将图片或视频保存到系统相册",
-        required: false,
+        required: true,
     },
 ];
 

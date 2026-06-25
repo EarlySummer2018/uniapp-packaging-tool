@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
   NAlert,
   NCard,
+  NIcon,
   NSpace,
+  NTag,
   NText
 } from 'naive-ui'
+import { ChevronDownOutline, ChevronUpOutline } from '@vicons/ionicons5'
 import ModuleConfigWorkbench from './ModuleConfigWorkbench.vue'
 import type {
   AndroidModuleConfigField,
@@ -49,6 +52,24 @@ const emit = defineEmits<{
   (e: 'clear-file-field', mod: AndroidModuleConfigModule, field: AndroidModuleConfigField): void
 }>()
 
+const expanded = ref(true)
+
+const cardStatus = computed(() => {
+  if (props.androidModuleConfigLoading) {
+    return { type: 'info' as const, text: '正在分析' }
+  }
+  if (!props.latestManifestInfo) {
+    return { type: 'warning' as const, text: '未关联项目' }
+  }
+  if (!props.androidConfigurableModules.length) {
+    return { type: 'success' as const, text: '无额外配置' }
+  }
+  if (props.androidMissingRequiredCount > 0) {
+    return { type: 'warning' as const, text: `缺少 ${props.androidMissingRequiredCount} 项` }
+  }
+  return { type: 'success' as const, text: '配置就绪' }
+})
+
 type AndroidWorkbenchModule = WorkbenchModule<AndroidModuleConfigModule, AndroidModuleConfigField>
 type AndroidWorkbenchField = WorkbenchField<AndroidModuleConfigField>
 
@@ -82,6 +103,10 @@ const workbenchModules = computed<AndroidWorkbenchModule[]>(() => {
     }
   })
 })
+
+function toggle() {
+  expanded.value = !expanded.value
+}
 
 function openWorkbenchModule(mod: AndroidWorkbenchModule) {
   emit('open-module', mod.raw)
@@ -117,43 +142,88 @@ function workbenchSelectOptions(mod: AndroidWorkbenchModule, field: AndroidWorkb
 </script>
 
 <template>
-  <n-card v-if="visible" title="Android 模块配置" class="build-section-card">
-    <n-space vertical :size="14">
-      <n-alert v-if="androidModuleConfigLoading" type="info">正在从 manifest 解析 Android 模块配置...</n-alert>
-      <n-alert v-else-if="!latestManifestInfo" type="warning">
-        {{ manifestReadWarning || '请先在项目配置中设置本地项目路径，以便读取 manifest.json' }}
-      </n-alert>
-      <n-alert v-else-if="!androidConfigurableModules.length" type="success">
-        已选模块暂无需要额外配置项的 Android 模块。
-      </n-alert>
-      <n-alert v-else :type="androidMissingRequiredCount ? 'warning' : 'success'">
-        <n-space vertical :size="6">
-          <n-text>
-            已选 {{ selectedManifestModuleCount }} 个 Manifest 模块，其中 {{ androidConfigurableModules.length }} 个需要 Android 配置。
-          </n-text>
-          <n-text v-if="androidMissingRequiredCount">
-            还有 {{ androidMissingRequiredCount }} 个必填项未填写，填写完成后才能开始打包。
-          </n-text>
-          <n-text v-else>模块配置已就绪，可以开始 Android 打包。</n-text>
-        </n-space>
-      </n-alert>
+  <n-card v-if="visible" class="build-section-card" :class="{ 'card-collapsed': !expanded }">
+    <template #header>
+      <div class="card-collapsible-header" @click="toggle">
+        <n-text strong>Android 模块配置</n-text>
+        <NSpace :size="8" align="center" class="card-header-actions">
+          <NTag size="small" :type="cardStatus.type" :bordered="false">{{ cardStatus.text }}</NTag>
+          <NIcon class="card-chevron" size="16">
+            <ChevronUpOutline v-if="expanded" />
+            <ChevronDownOutline v-else />
+          </NIcon>
+        </NSpace>
+      </div>
+    </template>
 
-      <ModuleConfigWorkbench
-        v-if="workbenchModules.length"
-        :modules="workbenchModules"
-        :active-module-key="activeAndroidConfigModuleKey"
-        :is-build-locked="isBuildLocked"
-        empty-text="当前模块暂无需要填写的 Android 配置。"
-        :field-value="workbenchFieldValue"
-        :field-status-type="workbenchFieldStatusType"
-        :field-status-label="workbenchFieldStatusLabel"
-        :select-options="workbenchSelectOptions"
-        :format-file-size="formatFileSize"
-        @open-module="openWorkbenchModule"
-        @update-field="updateWorkbenchField"
-        @pick-file-field="pickWorkbenchFile"
-        @clear-file-field="clearWorkbenchFile"
-      />
-    </n-space>
+    <div v-show="expanded" class="card-body">
+      <n-space vertical :size="14">
+        <n-alert v-if="androidModuleConfigLoading" type="info">正在从 manifest 解析 Android 模块配置...</n-alert>
+        <n-alert v-else-if="!latestManifestInfo" type="warning">
+          {{ manifestReadWarning || '请先在项目配置中设置本地项目路径，以便读取 manifest.json' }}
+        </n-alert>
+        <n-alert v-else-if="!androidConfigurableModules.length" type="success">
+          已选模块暂无需要额外配置项的 Android 模块。
+        </n-alert>
+        <n-alert v-else :type="androidMissingRequiredCount ? 'warning' : 'success'">
+          <n-space vertical :size="6">
+            <n-text>
+              已选 {{ selectedManifestModuleCount }} 个 Manifest 模块，其中 {{ androidConfigurableModules.length }} 个需要 Android 配置。
+            </n-text>
+            <n-text v-if="androidMissingRequiredCount">
+              还有 {{ androidMissingRequiredCount }} 个必填项未填写，填写完成后才能开始打包。
+            </n-text>
+            <n-text v-else>模块配置已就绪，可以开始 Android 打包。</n-text>
+          </n-space>
+        </n-alert>
+
+        <ModuleConfigWorkbench
+          v-if="workbenchModules.length"
+          :modules="workbenchModules"
+          :active-module-key="activeAndroidConfigModuleKey"
+          :is-build-locked="isBuildLocked"
+          empty-text="当前模块暂无需要填写的 Android 配置。"
+          :field-value="workbenchFieldValue"
+          :field-status-type="workbenchFieldStatusType"
+          :field-status-label="workbenchFieldStatusLabel"
+          :select-options="workbenchSelectOptions"
+          :format-file-size="formatFileSize"
+          @open-module="openWorkbenchModule"
+          @update-field="updateWorkbenchField"
+          @pick-file-field="pickWorkbenchFile"
+          @clear-file-field="clearWorkbenchFile"
+        />
+      </n-space>
+    </div>
   </n-card>
 </template>
+
+<style scoped>
+.card-collapsible-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  cursor: pointer;
+  user-select: none;
+}
+
+.card-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.card-body {
+  display: block;
+}
+</style>

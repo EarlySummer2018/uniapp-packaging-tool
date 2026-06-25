@@ -16,6 +16,7 @@ import { FolderOpenOutline, SaveOutline } from '@vicons/ionicons5'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
+import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import LogPanel from '../components/LogPanel.vue'
 import type { BuildLog } from '../stores/build'
 import { useProjectsStore } from '../stores/projects'
@@ -83,6 +84,20 @@ async function chooseCacheDir() {
   })
   if (typeof selected === 'string') {
     cacheDirInput.value = selected
+  }
+}
+
+async function openCurrentCacheDir() {
+  const path = settings.value.cacheDir
+  if (!path) return
+  try {
+    await revealItemInDir(path)
+  } catch (e) {
+    try {
+      await openPath(path)
+    } catch {
+      message.error(`打开目录失败：${String(e)}`)
+    }
   }
 }
 
@@ -168,6 +183,10 @@ async function saveCacheDir() {
             <n-button :disabled="loading || saving" @click="chooseCacheDir">
               <template #icon><n-icon><FolderOpenOutline /></n-icon></template>
               选择
+            </n-button>
+            <n-button :disabled="loading || saving || !settings.cacheDir" @click="openCurrentCacheDir">
+              <template #icon><n-icon><FolderOpenOutline /></n-icon></template>
+              打开目录
             </n-button>
           </n-space>
         </n-form-item>

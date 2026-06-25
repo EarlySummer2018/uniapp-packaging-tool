@@ -82,7 +82,10 @@ pub async fn validate_tool_path(
     }
 
     let mut p = PathBuf::from(input);
-    if matches!(tool_name.as_str(), "xcode" | "android_studio" | "hbuilderx" | "harmony") {
+    if matches!(
+        tool_name.as_str(),
+        "xcode" | "android_studio" | "hbuilderx" | "harmony"
+    ) {
         p = normalize_macos_app_path(&p);
     }
     let mut details = Vec::new();
