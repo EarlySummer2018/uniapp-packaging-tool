@@ -65,6 +65,139 @@ jobs:
           cp "$dmg_path" release-assets/UniPack-Tool-macOS.dmg
           (cd release-assets && shasum -a 256 UniPack-Tool-macOS.dmg > UniPack-Tool-macOS.dmg.sha256)
 
+      - name: Generate release notes (commits changelog)
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="$INPUT_TAG"
+          fi
+
+          git fetch --tags --force
+          if git rev-parse -q --verify "$release_tag^{commit}" >/dev/null; then
+            previous_tag="$(git describe --tags --abbrev=0 "$release_tag^{commit}^" 2>/dev/null || true)"
+            if [ -n "$previous_tag" ]; then
+              changelog_range="$previous_tag..$release_tag"
+            else
+              changelog_range="$release_tag"
+            fi
+            git log --no-merges --pretty=format:'%h%x1f%s%x1e%b' "$changelog_range" > commits.txt
+          else
+            git log -1 --pretty=format:'%h%x1f%s%x1e%b' "$GITHUB_SHA" > commits.txt
+          fi
+
+          node <<'NODE' > release-body.md
+          const fs = require("fs");
+          const repoSlug = process.env.GITHUB_REPOSITORY || "";
+          const linkSha = (sha) => repoSlug
+            ? `[${sha}](https://github.com/${repoSlug}/commit/${sha})`
+            : sha;
+
+          const raw = fs.readFileSync("commits.txt", "utf8");
+          const chunks = raw
+            .replace(/\n$/, "")
+            .split("\x1e")
+            .map((chunk) => chunk.replace(/\x1f/g, "\x1f"))
+            .filter((chunk) => chunk.trim().length > 0);
+
+          const commits = chunks.map((chunk) => {
+            const [head, ...rest] = chunk.split("\x1f");
+            const sha = (head || "").trim();
+            const body = rest.join("");
+            const lines = body.split(/\r?\n/);
+            const subject = (lines[0] || "").trim();
+            const restBody = lines.slice(1).join("\n").trim();
+            return { sha, subject, body: restBody };
+          }).filter((c) => c.sha && c.subject);
+
+          const categorize = (subject) => {
+            const m = /^(\w+)(\(.*\))?:/i.exec(subject);
+            if (!m) return { type: "other", scope: "" };
+            const type = (m[1] || "").trim().toLowerCase();
+            const scopeRaw = (m[2] || "").trim();
+            const scope = scopeRaw.startsWith("(") && scopeRaw.endsWith(")")
+              ? scopeRaw.slice(1, -1)
+              : "";
+            return { type, scope };
+          };
+
+          const sections = {
+            feat: { title: "## 新增功能", items: [] },
+            fix: { title: "## 问题修复", items: [] },
+            perf: { title: "## 性能优化", items: [] },
+            revert: { title: "## 回滚", items: [] },
+            docs: { title: "## 文档", items: [] },
+            style: { title: "## 样式", items: [] },
+            refactor: { title: "## 重构 / 优化", items: [] },
+            test: { title: "## 测试", items: [] },
+            build: { title: "## 构建 / 依赖", items: [] },
+            ci: { title: "## 构建脚本 / CI", items: [] },
+            chore: { title: "## 杂项", items: [] },
+            other: { title: "## 其他变更", items: [] },
+          };
+
+          const typeToSection = {
+            feat: "feat",
+            feature: "feat",
+            fix: "fix",
+            bugfix: "fix",
+            perf: "perf",
+            revert: "revert",
+            docs: "docs",
+            documentation: "docs",
+            style: "style",
+            refactor: "refactor",
+            refactorings: "refactor",
+            test: "test",
+            build: "build",
+            ci: "ci",
+            chore: "chore",
+          };
+
+          for (const c of commits) {
+            const { type } = categorize(c.subject);
+            const key = typeToSection[type] || "other";
+            sections[key].items.push(c);
+          }
+
+          const formatItem = (c) => {
+            const base = `- ${linkSha(c.sha)} ${c.subject}`;
+            if (!c.body) return base;
+            const b = c.body
+              .split(/\r?\n/)
+              .map((l) => l.trim())
+              .filter(Boolean)
+              .slice(0, 4)
+              .join("\n");
+            return b ? `${base}\n\n  ${b.split(/\r?\n/).join("\n  ")}` : base;
+          };
+
+          const parts = [];
+          for (const sec of Object.values(sections)) {
+            if (!sec.items.length) continue;
+            parts.push(sec.title);
+            parts.push("");
+            for (const c of sec.items) parts.push(formatItem(c));
+            parts.push("");
+          }
+
+          if (!parts.length) parts.push("## 其他变更\n\n（无提交）\n");
+
+          const downloadNotes = [
+            "## 下载",
+            "",
+            "- `UniPack-Tool-macOS.dmg`：macOS 安装包",
+            "- `UniPack-Tool-macOS.dmg.sha256`：安装包 SHA-256 校验文件"
+          ].join("\n");
+
+          const body = [parts.join("\n"), downloadNotes].join("\n\n");
+          process.stdout.write(body);
+          NODE
+
       - name: Publish GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -86,58 +219,10 @@ jobs:
 
           release_api="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases"
 
-          node - "$release_tag" <<'NODE' > generated-notes-payload.json
-          const tag = process.argv[2];
-          process.stdout.write(JSON.stringify({
-            tag_name: tag,
-            target_commitish: process.env.GITHUB_SHA
-          }));
-          NODE
-
-          curl -sS -f -o generated-notes.json -X POST "${headers[@]}" \
-            -d @generated-notes-payload.json \
-            "$release_api/generate-notes"
-
-          git fetch --tags --force
-          if git rev-parse -q --verify "$release_tag^{commit}" >/dev/null; then
-            previous_tag="$(git describe --tags --abbrev=0 "$release_tag^{commit}^" 2>/dev/null || true)"
-            if [ -n "$previous_tag" ]; then
-              changelog_range="$previous_tag..$release_tag"
-            else
-              changelog_range="$release_tag"
-            fi
-            git log --no-merges --format='%B%x00' "$changelog_range" > commit-messages.txt
-          else
-            git log -1 --format='%B%x00' "$GITHUB_SHA" > commit-messages.txt
-          fi
-
-          status="$(curl -sS -o release.json -w "%{http_code}" "${headers[@]}" "$release_api/tags/$release_tag")"
-
-          if [ "$status" = "404" ]; then
-            node - "$release_tag" <<'NODE' > release-payload.json
+          node - "$release_tag" <<'NODE' > release-payload.json
           const fs = require("fs");
           const tag = process.argv[2];
-          const generated = JSON.parse(fs.readFileSync("generated-notes.json", "utf8"));
-          const messages = fs.readFileSync("commit-messages.txt", "utf8")
-            .split("\0")
-            .map((message) => message.trim())
-            .filter(Boolean);
-          const importantChanges = messages.map((message) => {
-            const [subject, ...bodyLines] = message.split(/\r?\n/);
-            const body = bodyLines.map((line) => line.trim()).filter(Boolean).join("\n");
-            return body ? `### ${subject}\n\n${body}` : `### ${subject}`;
-          }).join("\n\n");
-          const downloadNotes = [
-            "## 下载",
-            "",
-            "- `UniPack-Tool-macOS.dmg`：macOS 安装包",
-            "- `UniPack-Tool-macOS.dmg.sha256`：安装包 SHA-256 校验文件"
-          ].join("\n");
-          const body = [
-            importantChanges && `## 重要变更\n\n${importantChanges}`,
-            generated.body && generated.body.trim(),
-            downloadNotes
-          ].filter(Boolean).join("\n\n");
+          const body = fs.readFileSync("release-body.md", "utf8").trim();
           process.stdout.write(JSON.stringify({
             tag_name: tag,
             target_commitish: process.env.GITHUB_SHA,
@@ -148,42 +233,14 @@ jobs:
             make_latest: "true"
           }));
           NODE
+
+          status="$(curl -sS -o release.json -w "%{http_code}" "${headers[@]}" "$release_api/tags/$release_tag")"
+
+          if [ "$status" = "404" ]; then
             curl -sS -f -o release.json -X POST "${headers[@]}" \
               -d @release-payload.json \
               "$release_api"
           elif [ "$status" = "200" ]; then
-            node - "$release_tag" <<'NODE' > release-payload.json
-          const fs = require("fs");
-          const tag = process.argv[2];
-          const generated = JSON.parse(fs.readFileSync("generated-notes.json", "utf8"));
-          const messages = fs.readFileSync("commit-messages.txt", "utf8")
-            .split("\0")
-            .map((message) => message.trim())
-            .filter(Boolean);
-          const importantChanges = messages.map((message) => {
-            const [subject, ...bodyLines] = message.split(/\r?\n/);
-            const body = bodyLines.map((line) => line.trim()).filter(Boolean).join("\n");
-            return body ? `### ${subject}\n\n${body}` : `### ${subject}`;
-          }).join("\n\n");
-          const downloadNotes = [
-            "## 下载",
-            "",
-            "- `UniPack-Tool-macOS.dmg`：macOS 安装包",
-            "- `UniPack-Tool-macOS.dmg.sha256`：安装包 SHA-256 校验文件"
-          ].join("\n");
-          const body = [
-            importantChanges && `## 重要变更\n\n${importantChanges}`,
-            generated.body && generated.body.trim(),
-            downloadNotes
-          ].filter(Boolean).join("\n\n");
-          process.stdout.write(JSON.stringify({
-            name: `UniPack Tool ${tag}`,
-            body,
-            draft: false,
-            prerelease: false,
-            make_latest: "true"
-          }));
-          NODE
             release_id="$(node -e "console.log(JSON.parse(require('fs').readFileSync('release.json', 'utf8')).id)")"
             curl -sS -f -o release.json -X PATCH "${headers[@]}" \
               -d @release-payload.json \
