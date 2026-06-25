@@ -26,7 +26,6 @@ import IosOfflineSdkPanel from './build-center/IosOfflineSdkPanel.vue'
 import IosPrivacyDescriptionModal from './build-center/IosPrivacyDescriptionModal.vue'
 import PlatformSelectCard from './build-center/PlatformSelectCard.vue'
 import ResourceImportCard from './build-center/ResourceImportCard.vue'
-import ResourceInsightPanel from './build-center/ResourceInsightPanel.vue'
 import { platforms } from './build-center/platforms'
 import type {
   AndroidModuleConfigField,
@@ -119,14 +118,6 @@ let androidModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 let iosModuleConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 type IosPackagingMode = 'autoMigration' | 'localPod'
-type ManifestConfigModule =
-  | AndroidModuleConfigModule
-  | IosModuleConfigModule
-  | HarmonyModuleConfigModule
-type ManifestConfigField =
-  | AndroidModuleConfigField
-  | IosModuleConfigField
-  | HarmonyModuleConfigField
 
 function iosPackagingModeLabel(mode: IosPackagingMode) {
   if (mode === 'autoMigration') return '自动迁移打包'
@@ -345,37 +336,12 @@ const buildDisabledReason = computed(() => {
   return ''
 })
 const currentProject = computed(() => projectsStore.projects.find(p => p.id === projectId.value) || null)
-const utsDependencyCount = computed(() => {
-  const result = scanResult.value
-  if (!result) return 0
-  const deps = new Set<string>()
-  for (const mod of result.uts.builtinModules) {
-    for (const dep of mod.onlineDeps) deps.add(dep)
-  }
-  for (const plugin of result.uts.customPlugins) {
-    for (const dep of plugin.androidDeps) deps.add(dep)
-  }
-  return deps.size
-})
 const manifestModules = computed(() => latestManifestInfo.value?.detectedModules || scanResult.value?.detectedModules || [])
 const selectedManifestModules = computed(() => manifestModules.value.filter(mod => isManifestModuleSelected(mod)))
-const insightAppName = computed(() => latestManifestInfo.value?.appName || scanResult.value?.appName || currentProject.value?.app.name || scanResult.value?.appId || '-')
 const insightAppId = computed(() => latestManifestInfo.value?.appId || scanResult.value?.appId || currentProject.value?.app.appId || '-')
 const insightVersionName = computed(() => latestManifestInfo.value?.versionName || scanResult.value?.versionName || currentProject.value?.app.version || '-')
 const insightVersionCode = computed(() => latestManifestInfo.value?.versionCode ?? scanResult.value?.versionCode ?? currentProject.value?.app.versionCode ?? '-')
 const insightManifestPath = computed(() => latestManifestInfo.value?.manifestPath || scanResult.value?.manifestPath || '-')
-const utsPluginLabels = computed(() => {
-  const result = scanResult.value
-  if (!result) return []
-  return [
-    ...result.uts.builtinModules.map(mod => mod.name),
-    ...result.uts.customPlugins.map(plugin => plugin.id)
-  ]
-})
-const androidConfigModulesByKey = computed(() => {
-  const modules = androidModuleConfigReport.value?.modules || []
-  return new Map(modules.map(mod => [androidConfigModuleKey(mod), mod]))
-})
 const androidConfigurableModules = computed(() => {
   const modules = androidModuleConfigReport.value?.modules || []
   return modules.filter(mod => mod.fields.length > 0 && isAndroidConfigModuleSelected(mod))
@@ -383,14 +349,6 @@ const androidConfigurableModules = computed(() => {
 const activeAndroidConfigModule = computed(() => {
   if (!activeAndroidConfigModuleKey.value) return null
   return androidConfigurableModules.value.find(mod => androidConfigModuleKey(mod) === activeAndroidConfigModuleKey.value) || null
-})
-const iosConfigModulesByKey = computed(() => {
-  const modules = iosModuleConfigReport.value?.modules || []
-  return new Map(modules.map(mod => [iosConfigModuleKey(mod), mod]))
-})
-const harmonyConfigModulesByKey = computed(() => {
-  const modules = harmonyModuleConfigReport.value?.modules || []
-  return new Map(modules.map(mod => [harmonyConfigModuleKey(mod), mod]))
 })
 const iosConfigurableModules = computed(() => {
   const modules = iosModuleConfigReport.value?.modules || []
@@ -901,42 +859,6 @@ function isHarmonyConfigModuleSelected(mod: HarmonyModuleConfigModule) {
   return selectedManifestModuleKeys.value.has(harmonyConfigModuleKey(mod))
 }
 
-function setManifestModuleSelected(mod: DetectedModule, checked: boolean) {
-  if (isBuildLocked.value) return
-  manifestModuleSelectionTouched.value = true
-  const key = manifestModuleKey(mod)
-  const next = new Set(selectedManifestModuleKeys.value)
-  if (checked) next.add(key)
-  else next.delete(key)
-  selectedManifestModuleKeys.value = next
-
-  const configModule = androidConfigModulesByKey.value.get(key)
-  if (checked && configModule?.fields.length) {
-    activeAndroidConfigModuleKey.value = androidConfigModuleKey(configModule)
-  } else if (!checked && activeAndroidConfigModuleKey.value === key) {
-    activeAndroidConfigModuleKey.value = androidConfigurableModules.value.length
-      ? androidConfigModuleKey(preferredAndroidConfigModule(androidConfigurableModules.value))
-      : null
-  }
-
-  const iosConfigModule = iosConfigModulesByKey.value.get(key)
-  if (checked && iosConfigModule?.fields.length) {
-    activeIosConfigModuleKey.value = iosConfigModuleKey(iosConfigModule)
-  } else if (!checked && activeIosConfigModuleKey.value === key) {
-    activeIosConfigModuleKey.value = iosConfigurableModules.value.length
-      ? iosConfigModuleKey(preferredIosConfigModule(iosConfigurableModules.value))
-      : null
-  }
-}
-
-function manifestConfigModule(mod: DetectedModule) {
-  const key = manifestModuleKey(mod)
-  return androidConfigModulesByKey.value.get(key)
-    || iosConfigModulesByKey.value.get(key)
-    || harmonyConfigModulesByKey.value.get(key)
-    || null
-}
-
 function configFieldFilled(mod: AndroidModuleConfigModule, field: AndroidModuleConfigField) {
   return androidFieldValue(mod, field).trim().length > 0
 }
@@ -999,103 +921,6 @@ function preferredIosConfigModule(modules: IosModuleConfigModule[]) {
   return modules.find(mod => iosConfigModuleStatusTone(mod) === 'error')
     || modules.find(mod => iosConfigModuleStatusTone(mod) === 'warning')
     || modules[0]
-}
-
-function harmonyConfigFieldFilled(mod: HarmonyModuleConfigModule, field: HarmonyModuleConfigField) {
-  return harmonyFieldValue(mod, field).trim().length > 0
-}
-
-function harmonyConfigModuleMissingRequiredCount(mod: HarmonyModuleConfigModule) {
-  return mod.fields.filter(field => field.required && !harmonyConfigFieldFilled(mod, field)).length
-}
-
-function harmonyConfigModuleFilledCount(mod: HarmonyModuleConfigModule) {
-  return mod.fields.filter(field => harmonyConfigFieldFilled(mod, field)).length
-}
-
-function harmonyConfigModuleStatusTone(mod: HarmonyModuleConfigModule): ModuleStatusTone {
-  if (!mod.fields.length) return 'success'
-  if (harmonyConfigModuleMissingRequiredCount(mod) === 0) return 'success'
-  return harmonyConfigModuleFilledCount(mod) > 0 ? 'warning' : 'error'
-}
-
-function harmonyConfigModuleStatusLabel(mod: HarmonyModuleConfigModule) {
-  const missing = harmonyConfigModuleMissingRequiredCount(mod)
-  if (!mod.fields.length) return '已选'
-  if (missing === 0) return '已配置'
-  if (harmonyConfigModuleFilledCount(mod) > 0) return '部分配置'
-  return '需配置'
-}
-
-function manifestConfigModuleStatusTone(mod: ManifestConfigModule): ModuleStatusTone {
-  if (isHarmonyConfigModuleLike(mod)) return harmonyConfigModuleStatusTone(mod)
-  if (isIosConfigModuleLike(mod)) return iosConfigModuleStatusTone(mod)
-  return configModuleStatusTone(mod)
-}
-
-function manifestConfigModuleStatusLabel(mod: ManifestConfigModule) {
-  if (isHarmonyConfigModuleLike(mod)) return harmonyConfigModuleStatusLabel(mod)
-  if (isIosConfigModuleLike(mod)) return iosConfigModuleStatusLabel(mod)
-  return configModuleStatusLabel(mod)
-}
-
-function isHarmonyConfigModuleLike(mod: ManifestConfigModule): mod is HarmonyModuleConfigModule {
-  return mod.source === 'app-harmony' && mod.platforms.includes('harmony')
-}
-
-function isIosConfigModuleLike(mod: ManifestConfigModule): mod is IosModuleConfigModule {
-  return iosConfigModulesByKey.value.get(iosConfigModuleKey(mod as IosModuleConfigModule)) === mod
-}
-
-function manifestModuleStatusTone(mod: DetectedModule): ModuleStatusTone {
-  if (!isManifestModuleSelected(mod)) return 'default'
-  const configModule = manifestConfigModule(mod)
-  if (!configModule) return 'success'
-  return manifestConfigModuleStatusTone(configModule)
-}
-
-function manifestModuleStatusType(mod: DetectedModule) {
-  return manifestModuleStatusTone(mod)
-}
-
-function manifestModuleStatusClass(mod: DetectedModule) {
-  return `module-choice--${manifestModuleStatusTone(mod)}`
-}
-
-function manifestModuleStatusLabel(mod: DetectedModule) {
-  if (!isManifestModuleSelected(mod)) return '未勾选'
-  const configModule = manifestConfigModule(mod)
-  if (!configModule) return '已选'
-  return manifestConfigModuleStatusLabel(configModule)
-}
-
-function manifestModuleFieldSummaries(mod: DetectedModule) {
-  if (!isManifestModuleSelected(mod)) return []
-  const configModule = manifestConfigModule(mod)
-  if (!configModule?.fields.length) return []
-  if (!isHarmonyConfigModuleLike(configModule)) return []
-  return configModule.fields.map(field => {
-    const value = manifestConfigFieldValue(configModule, field).trim()
-    const state = value ? `已配置 (${maskConfigValue(value, field.secret)})` : (field.required ? '未配置' : '可选')
-    const source = value && field.valueSource === 'manifest' ? ' · manifest' : ''
-    return `${field.label}: ${state}${source}`
-  })
-}
-
-function maskConfigValue(value: string, secret: boolean) {
-  if (!secret) return value
-  if (value.length <= 6) return '******'
-  return `${value.slice(0, 3)}...${value.slice(-3)}`
-}
-
-function manifestConfigFieldValue(mod: ManifestConfigModule, field: ManifestConfigField) {
-  if (isHarmonyConfigModuleLike(mod)) {
-    return harmonyFieldValue(mod, field as HarmonyModuleConfigField)
-  }
-  if (isIosConfigModuleLike(mod)) {
-    return iosFieldValue(mod, field as IosModuleConfigField)
-  }
-  return androidFieldValue(mod, field as AndroidModuleConfigField)
 }
 
 function androidConfigModuleStatusType(mod: AndroidModuleConfigModule) {
@@ -1963,27 +1788,6 @@ function goBack() {
         />
       </n-gi>
     </n-grid>
-    <!-- <ResourceInsightPanel
-      :scan-result="scanResult"
-      :insight-app-name="insightAppName"
-      :insight-app-id="insightAppId"
-      :insight-version-name="insightVersionName"
-      :insight-version-code="insightVersionCode"
-      :insight-manifest-path="insightManifestPath"
-      :selected-manifest-modules="selectedManifestModules"
-      :manifest-modules="manifestModules"
-      :uts-dependency-count="utsDependencyCount"
-      :uts-plugin-labels="utsPluginLabels"
-      :manifest-read-warning="manifestReadWarning"
-      :is-build-locked="isBuildLocked"
-      :is-manifest-module-selected="isManifestModuleSelected"
-      :manifest-module-status-type="manifestModuleStatusType"
-      :manifest-module-status-class="manifestModuleStatusClass"
-      :manifest-module-status-label="manifestModuleStatusLabel"
-      :manifest-module-field-summaries="manifestModuleFieldSummaries"
-      @set-manifest-module-selected="setManifestModuleSelected"
-    /> -->
-
     <IosOfflineSdkPanel
       :visible="!!scanResult && selectedPlatforms.includes('ios')"
       :ios-missing-required="iosMissingRequired"

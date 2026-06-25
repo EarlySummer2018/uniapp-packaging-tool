@@ -3,8 +3,7 @@ import {
   NButton,
   NCard,
   NIcon,
-  NSpace,
-  NText
+  NSpace
 } from 'naive-ui'
 import { LogoAndroid, LogoApple, PhonePortraitOutline, PlayOutline } from '@vicons/ionicons5'
 import PlatformCard from '../../components/PlatformCard.vue'
