@@ -19,7 +19,8 @@ use super::pbxproj::{enable_pbx_system_capability, patch_pbxproj};
 use super::plist::patch_info_plist;
 use super::pod::{integrate_ios_pods, IosPodContext};
 use super::runtime::{
-    import_app_resource, patch_control_xml, resolve_ios_runtime_layout, verify_privacy_manifest,
+    import_app_resource, patch_control_xml, resolve_ios_runtime_layout,
+    verify_pod_privacy_manifest, verify_privacy_manifest,
 };
 use super::splashscreen::apply_ios_splashscreen;
 use super::IosPackagingMode;
@@ -550,7 +551,11 @@ pub(super) async fn configure_ios_workspace(
     import_app_resource(&runtime_layout.apps_dir, &app_resource_dir, &scan.app_id)?;
     patch_control_xml(&runtime_layout.control_xml, &scan.app_id)?;
     generate_app_icons(&project_root, &config, manifest_info)?;
-    verify_privacy_manifest(&workspace, &project_file)?;
+    if packaging_mode == IosPackagingMode::LocalPod {
+        verify_pod_privacy_manifest(&workspace, &project_root)?;
+    } else {
+        verify_privacy_manifest(&workspace, &project_file)?;
+    }
     if let Some(support) =
         repair_ios_sdk_support_alignment_for_project(&sdk_project, &workspace, &project_file)?
     {

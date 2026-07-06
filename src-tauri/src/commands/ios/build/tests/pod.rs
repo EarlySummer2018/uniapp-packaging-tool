@@ -54,6 +54,81 @@ fn podfile_renders_local_uniapp_subspecs() {
 }
 
 #[test]
+fn podspec_copy_includes_license_file_when_present() {
+    let root = std::env::temp_dir().join(format!("unipack-ios-pod-copy-{}", uuid::Uuid::new_v4()));
+    let sdk = root.join("sdk");
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&sdk).unwrap();
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(sdk.join("uniapp.podspec"), "Pod::Spec.new").unwrap();
+    std::fs::write(sdk.join("license.md"), "DCloud").unwrap();
+
+    super::super::pod::copy_uniapp_podspec(&sdk, &workspace).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("uniapp.podspec")).unwrap(),
+        "Pod::Spec.new"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("license.md")).unwrap(),
+        "DCloud"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn pod_xcode_patch_adds_sdk_header_search_paths_once() {
+    let content = r#"buildSettings = {
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include,
+				);
+			};
+buildSettings = {
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+				);
+			};"#;
+
+    let (updated, patched_count) = super::super::pod_xcode::ensure_header_search_paths(
+        content,
+        &["$(SRCROOT)/../SDK/inc", "$(SRCROOT)/../SDK/inc/**"],
+    );
+    let (updated_again, patched_again) = super::super::pod_xcode::ensure_header_search_paths(
+        &updated,
+        &["$(SRCROOT)/../SDK/inc", "$(SRCROOT)/../SDK/inc/**"],
+    );
+
+    assert_eq!(patched_count, 2);
+    assert_eq!(patched_again, 0);
+    assert_eq!(updated, updated_again);
+    assert_eq!(updated.matches("$(SRCROOT)/../SDK/inc\",").count(), 2);
+    assert_eq!(updated.matches("$(SRCROOT)/../SDK/inc/**").count(), 2);
+}
+
+#[test]
+fn pod_xcode_patch_adds_core_libraries_once() {
+    let root = std::env::temp_dir().join(format!("unipack-ios-pod-xcode-{}", uuid::Uuid::new_v4()));
+    let (_project_root, project_file, _libs_dir) =
+        super::support::prepare_ios_payment_alipay_project(&root);
+
+    let linked = super::super::pod_xcode::ensure_ios_pod_core_libraries(&project_file).unwrap();
+    let linked_again =
+        super::super::pod_xcode::ensure_ios_pod_core_libraries(&project_file).unwrap();
+
+    let pbxproj = std::fs::read_to_string(project_file.join("project.pbxproj")).unwrap();
+    assert_eq!(linked, 2);
+    assert_eq!(linked_again, 0);
+    assert!(pbxproj.contains("liblibPDRCore.a in Frameworks"));
+    assert!(pbxproj.contains("libcoreSupport.a in Frameworks"));
+    assert!(pbxproj.contains("../SDK/Libs/liblibPDRCore.a"));
+    assert!(pbxproj.contains("../SDK/Libs/libcoreSupport.a"));
+    assert_eq!(pbxproj.matches("liblibPDRCore.a in Frameworks").count(), 2);
+    assert_eq!(pbxproj.matches("libcoreSupport.a in Frameworks").count(), 2);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn pod_config_renders_manifest_business_values() {
     let root =
         std::env::temp_dir().join(format!("unipack-ios-pod-config-{}", uuid::Uuid::new_v4()));

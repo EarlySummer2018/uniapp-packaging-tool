@@ -5,6 +5,7 @@ use tauri::Manager;
 use super::logging::emit_ios_log;
 use super::pod_config::write_ios_pod_config;
 use super::pod_subspecs::{resolve_ios_pod_subspecs, IosPodSubspecs};
+use super::pod_xcode::{ensure_ios_pod_core_libraries, ensure_ios_pod_header_search_paths};
 use crate::commands::ios::modules::uts_plugins::copy_ios_uts_plugins_for_pod;
 use crate::commands::shared::resource_scan::ResourceScanResult;
 
@@ -65,6 +66,26 @@ pub(super) async fn integrate_ios_pods(
     log_manual_pod_followups(&ctx);
 
     run_pod_install(ctx.project_root, ctx.window, ctx.build_id).await?;
+    let patched_header_search_paths = ensure_ios_pod_header_search_paths(ctx.project_file)?;
+    if patched_header_search_paths > 0 {
+        emit_ios_log(
+            ctx.window,
+            ctx.build_id,
+            "success",
+            "已为 Pod 模式补充 SDK/inc 头文件搜索路径",
+            Some(44),
+        );
+    }
+    let linked_core_libraries = ensure_ios_pod_core_libraries(ctx.project_file)?;
+    if linked_core_libraries > 0 {
+        emit_ios_log(
+            ctx.window,
+            ctx.build_id,
+            "success",
+            "已为 Pod 模式补充 DCloud Core 静态库链接",
+            Some(44),
+        );
+    }
     let workspace_file = find_xcworkspace(ctx.project_root, ctx.project_file)?;
     emit_ios_log(
         ctx.window,
@@ -100,7 +121,7 @@ fn ensure_pod_ready_layout(ctx: &IosPodContext<'_>) -> Result<(), String> {
     Ok(())
 }
 
-fn copy_uniapp_podspec(sdk_root: &Path, workspace: &Path) -> Result<(), String> {
+pub(super) fn copy_uniapp_podspec(sdk_root: &Path, workspace: &Path) -> Result<(), String> {
     let source = sdk_root.join("uniapp.podspec");
     let target = workspace.join("uniapp.podspec");
     std::fs::copy(&source, &target).map_err(|e| {
@@ -111,6 +132,18 @@ fn copy_uniapp_podspec(sdk_root: &Path, workspace: &Path) -> Result<(), String> 
             e
         )
     })?;
+    let license_source = sdk_root.join("license.md");
+    if license_source.is_file() {
+        let license_target = workspace.join("license.md");
+        std::fs::copy(&license_source, &license_target).map_err(|e| {
+            format!(
+                "复制 license.md 到 workspace 失败 {} -> {}: {}",
+                license_source.display(),
+                license_target.display(),
+                e
+            )
+        })?;
+    }
     Ok(())
 }
 

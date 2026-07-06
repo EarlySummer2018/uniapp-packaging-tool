@@ -1,5 +1,7 @@
 use super::super::fs_utils::link_ios_sdk_support;
-use super::super::runtime::{import_app_resource, patch_control_xml, resolve_ios_runtime_layout};
+use super::super::runtime::{
+    import_app_resource, patch_control_xml, resolve_ios_runtime_layout, verify_pod_privacy_manifest,
+};
 
 #[test]
 fn runtime_layout_supports_nested_hbuilder_source_directory() {
@@ -68,5 +70,27 @@ fn workspace_links_sibling_sdk_support_directory() {
         .is_symlink());
     std::fs::remove_dir_all(&workspace).unwrap();
     assert!(support.join("PrivacyInfo.xcprivacy").is_file());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn pod_privacy_manifest_accepts_cocoapods_resource_script() {
+    let root =
+        std::env::temp_dir().join(format!("unipack-ios-pod-privacy-{}", uuid::Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    let project_root = workspace.join("HBuilder-Hello");
+    let support = workspace.join("SDK");
+    let pod_support = project_root.join("Pods/Target Support Files/Pods-HBuilder");
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::create_dir_all(&pod_support).unwrap();
+    std::fs::write(support.join("PrivacyInfo.xcprivacy"), "privacy").unwrap();
+    std::fs::write(
+        pod_support.join("Pods-HBuilder-resources.sh"),
+        r#"install_resource "${PODS_ROOT}/../../SDK/PrivacyInfo.xcprivacy""#,
+    )
+    .unwrap();
+
+    verify_pod_privacy_manifest(&workspace, &project_root).unwrap();
+
     let _ = std::fs::remove_dir_all(root);
 }

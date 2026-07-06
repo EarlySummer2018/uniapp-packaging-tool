@@ -77,16 +77,7 @@ pub(super) fn resolve_ios_runtime_layout(project_root: &Path) -> Result<IosRunti
 }
 
 pub(super) fn verify_privacy_manifest(workspace: &Path, project_file: &Path) -> Result<(), String> {
-    let sdk_privacy = workspace.join("SDK/PrivacyInfo.xcprivacy");
-    let privacy = sdk_privacy
-        .is_file()
-        .then_some(sdk_privacy)
-        .or_else(|| find_file_named_skipping_bundles(workspace, "PrivacyInfo.xcprivacy"))
-        .or_else(|| find_file_with_ext_skipping_bundles(workspace, "xcprivacy"))
-        .ok_or_else(|| {
-            "iOS SDK 工程缺少 .xcprivacy 隐私清单，请确认使用 HBuilderX 5.0+ 对应的 iOS 离线 SDK"
-                .to_string()
-        })?;
+    let privacy = find_privacy_manifest(workspace)?;
     let name = privacy
         .file_name()
         .and_then(|n| n.to_str())
@@ -101,4 +92,46 @@ pub(super) fn verify_privacy_manifest(workspace: &Path, project_file: &Path) -> 
         ));
     }
     Ok(())
+}
+
+pub(super) fn verify_pod_privacy_manifest(
+    workspace: &Path,
+    project_root: &Path,
+) -> Result<(), String> {
+    find_privacy_manifest(workspace)?;
+    let resources_script = find_file_named_skipping_bundles(
+        project_root,
+        "Pods-HBuilder-resources.sh",
+    )
+    .ok_or_else(|| {
+        "Pod 模式未找到 CocoaPods 资源脚本 Pods-HBuilder-resources.sh，请检查 pod install 输出"
+            .to_string()
+    })?;
+    let content = std::fs::read_to_string(&resources_script).map_err(|e| {
+        format!(
+            "读取 CocoaPods 资源脚本失败 {}: {}",
+            resources_script.display(),
+            e
+        )
+    })?;
+    if !content.contains("SDK/PrivacyInfo.xcprivacy") {
+        return Err(format!(
+            "Pod 模式未将 PrivacyInfo.xcprivacy 纳入 CocoaPods 资源脚本，请检查 {}",
+            resources_script.display()
+        ));
+    }
+    Ok(())
+}
+
+fn find_privacy_manifest(workspace: &Path) -> Result<PathBuf, String> {
+    let sdk_privacy = workspace.join("SDK/PrivacyInfo.xcprivacy");
+    sdk_privacy
+        .is_file()
+        .then_some(sdk_privacy)
+        .or_else(|| find_file_named_skipping_bundles(workspace, "PrivacyInfo.xcprivacy"))
+        .or_else(|| find_file_with_ext_skipping_bundles(workspace, "xcprivacy"))
+        .ok_or_else(|| {
+            "iOS SDK 工程缺少 .xcprivacy 隐私清单，请确认使用 HBuilderX 5.0+ 对应的 iOS 离线 SDK"
+                .to_string()
+        })
 }

@@ -12,6 +12,7 @@ mod plist;
 mod pod;
 mod pod_config;
 mod pod_subspecs;
+mod pod_xcode;
 mod runtime;
 mod splashscreen;
 mod workspace;
