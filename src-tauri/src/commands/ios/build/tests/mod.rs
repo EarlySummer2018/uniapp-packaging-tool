@@ -4,6 +4,7 @@ mod info_plist;
 mod integration;
 mod modules;
 mod pbxproj;
+mod pod;
 mod runtime;
 mod splashscreen;
 mod support;

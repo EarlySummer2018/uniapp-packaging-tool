@@ -146,6 +146,24 @@ pub(crate) fn apply_ios_uts_plugins(
     }))
 }
 
+pub(crate) fn copy_ios_uts_plugins_for_pod(
+    project_root: &Path,
+    scan: &UtsPluginScanResult,
+) -> Result<usize, String> {
+    if !scan.has_ios_uts_plugins {
+        return Ok(0);
+    }
+    let ios_custom_plugins = scan
+        .custom_plugins
+        .iter()
+        .filter(|plugin| plugin.ios_dir.is_some())
+        .collect::<Vec<_>>();
+    if ios_custom_plugins.is_empty() {
+        return Ok(0);
+    }
+    copy_ios_uts_plugin_app_ios_dirs(project_root, &ios_custom_plugins).map(|plugins| plugins.len())
+}
+
 fn sdk_framework_spec(project_root: &Path, base_name: &str) -> Result<IosPbxFileSpec, String> {
     let libs_dir = project_root
         .parent()

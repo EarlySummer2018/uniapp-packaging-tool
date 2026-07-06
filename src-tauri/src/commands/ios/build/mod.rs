@@ -9,6 +9,9 @@ pub(crate) mod fs_utils;
 mod logging;
 pub(crate) mod pbxproj;
 mod plist;
+mod pod;
+mod pod_config;
+mod pod_subspecs;
 mod runtime;
 mod splashscreen;
 mod workspace;
@@ -20,12 +23,26 @@ use fs_utils::{expand_home, find_file_with_ext};
 use logging::emit_ios_log;
 use workspace::configure_ios_workspace;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum IosPackagingMode {
+    AutoMigration,
+    LocalPod,
+}
+
+impl Default for IosPackagingMode {
+    fn default() -> Self {
+        Self::AutoMigration
+    }
+}
+
 #[tauri::command]
 pub async fn generate_ios_project(
     project_id: String,
     resource_path: String,
     build_id: Option<String>,
     manifest_info: Option<crate::commands::resource::UniappManifestInfo>,
+    ios_packaging_mode: Option<IosPackagingMode>,
     window: tauri::Window,
 ) -> Result<String, String> {
     ensure_macos("iOS 工程生成")?;
@@ -41,7 +58,9 @@ pub async fn generate_ios_project(
         manifest_info.as_ref(),
         &window,
         MobileProvisionValidationMode::ProjectGeneration,
-    )?;
+        ios_packaging_mode.unwrap_or_default(),
+    )
+    .await?;
     emit_ios_log(
         &window,
         &build_id,
@@ -58,6 +77,7 @@ pub async fn build_ios_ipa(
     resource_path: String,
     build_id: Option<String>,
     manifest_info: Option<crate::commands::resource::UniappManifestInfo>,
+    ios_packaging_mode: Option<IosPackagingMode>,
     window: tauri::Window,
 ) -> Result<crate::commands::android::BuildArtifact, String> {
     ensure_macos("iOS 打包")?;
@@ -73,7 +93,9 @@ pub async fn build_ios_ipa(
         manifest_info.as_ref(),
         &window,
         MobileProvisionValidationMode::IpaExport,
-    )?;
+        ios_packaging_mode.unwrap_or_default(),
+    )
+    .await?;
     let archive_path = workspace.workspace.join("build/output.xcarchive");
     let export_options = workspace.workspace.join("ExportOptions.plist");
     let export_path = workspace.workspace.join("build/export");
@@ -86,31 +108,31 @@ pub async fn build_ios_ipa(
         "执行 xcodebuild archive",
         Some(65),
     );
+    let mut archive_args = workspace.archive_destination_args();
+    archive_args.extend([
+        "-scheme".into(),
+        workspace.scheme.clone(),
+        "-configuration".into(),
+        "Release".into(),
+        "-quiet".into(),
+        "-destination".into(),
+        "generic/platform=iOS".into(),
+        "-archivePath".into(),
+        archive_path.to_string_lossy().to_string(),
+        "archive".into(),
+        format!("DEVELOPMENT_TEAM={}", workspace.config.ios.team_id),
+        format!(
+            "PRODUCT_BUNDLE_IDENTIFIER={}",
+            workspace.config.ios.bundle_id
+        ),
+        format!(
+            "PROVISIONING_PROFILE_SPECIFIER={}",
+            workspace.profile.specifier()
+        ),
+        "CODE_SIGN_STYLE=Manual".into(),
+    ]);
     run_xcodebuild(
-        &[
-            "-project".into(),
-            workspace.project_file.to_string_lossy().to_string(),
-            "-scheme".into(),
-            workspace.scheme.clone(),
-            "-configuration".into(),
-            "Release".into(),
-            "-quiet".into(),
-            "-destination".into(),
-            "generic/platform=iOS".into(),
-            "-archivePath".into(),
-            archive_path.to_string_lossy().to_string(),
-            "archive".into(),
-            format!("DEVELOPMENT_TEAM={}", workspace.config.ios.team_id),
-            format!(
-                "PRODUCT_BUNDLE_IDENTIFIER={}",
-                workspace.config.ios.bundle_id
-            ),
-            format!(
-                "PROVISIONING_PROFILE_SPECIFIER={}",
-                workspace.profile.specifier()
-            ),
-            "CODE_SIGN_STYLE=Manual".into(),
-        ],
+        &archive_args,
         &workspace.project_root,
         &window,
         &env,

@@ -15,23 +15,27 @@ use super::fs_utils::{
     repair_ios_sdk_support_alignment_for_project, safe_file_name,
 };
 use super::logging::{emit_ios_log, emit_version_warning_if_needed};
-use super::pbxproj::patch_pbxproj;
+use super::pbxproj::{enable_pbx_system_capability, patch_pbxproj};
 use super::plist::patch_info_plist;
+use super::pod::{integrate_ios_pods, IosPodContext};
 use super::runtime::{
     import_app_resource, patch_control_xml, resolve_ios_runtime_layout, verify_privacy_manifest,
 };
 use super::splashscreen::apply_ios_splashscreen;
+use super::IosPackagingMode;
 use crate::commands::ios::modules::bluetooth::apply_ios_bluetooth_module;
+use crate::commands::ios::modules::bluetooth::ios_bluetooth_background_enabled;
 use crate::commands::ios::modules::facial_recognition_verify::{
     apply_ios_facial_recognition_verify_module, ios_facial_recognition_verify_enabled,
 };
 use crate::commands::ios::modules::geolocation::apply_ios_geolocation_module;
 use crate::commands::ios::modules::ibeacon::apply_ios_ibeacon_module;
+use crate::commands::ios::modules::ibeacon::ios_ibeacon_enabled;
 use crate::commands::ios::modules::livepusher::apply_ios_livepusher_module;
 use crate::commands::ios::modules::map::apply_ios_map_module;
 use crate::commands::ios::modules::oauth::apply_ios_oauth_module;
 use crate::commands::ios::modules::payment::apply_ios_payment_module;
-use crate::commands::ios::modules::push::apply_ios_push_module;
+use crate::commands::ios::modules::push::{apply_ios_push_module, ios_push_enabled};
 use crate::commands::ios::modules::share::apply_ios_share_module;
 use crate::commands::ios::modules::speech::apply_ios_speech_module;
 use crate::commands::ios::modules::statistic::apply_ios_statistic_module;
@@ -50,17 +54,35 @@ pub(super) struct IosWorkspace {
     pub(super) workspace: PathBuf,
     pub(super) project_root: PathBuf,
     pub(super) project_file: PathBuf,
+    pub(super) workspace_file: Option<PathBuf>,
     pub(super) scheme: String,
     pub(super) profile: MobileProvisionInfo,
 }
 
-pub(super) fn configure_ios_workspace(
+impl IosWorkspace {
+    pub(super) fn archive_destination_args(&self) -> Vec<String> {
+        if let Some(workspace_file) = &self.workspace_file {
+            vec![
+                "-workspace".into(),
+                workspace_file.to_string_lossy().to_string(),
+            ]
+        } else {
+            vec![
+                "-project".into(),
+                self.project_file.to_string_lossy().to_string(),
+            ]
+        }
+    }
+}
+
+pub(super) async fn configure_ios_workspace(
     project_id: &str,
     resource_path: &str,
     build_id: &str,
     supplied_manifest_info: Option<&crate::commands::resource::UniappManifestInfo>,
     window: &tauri::Window,
     signing_validation_mode: MobileProvisionValidationMode,
+    packaging_mode: IosPackagingMode,
 ) -> Result<IosWorkspace, String> {
     let config = crate::commands::project::load_project_config_sync(project_id)?;
     let manifest_info = resolve_ios_manifest_info(&config, supplied_manifest_info)?;
@@ -214,120 +236,126 @@ pub(super) fn configure_ios_workspace(
         &scan.app_id,
         manifest_info,
     )?;
-    if let Some(geolocation) =
-        apply_ios_geolocation_module(&project_root, &project_file, manifest_info)?
-    {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已自动接入 iOS 定位模块: {}，新增链接 {} 项",
-                geolocation.provider_summary(),
-                geolocation.linked_count
-            ),
-            Some(29),
-        );
-    }
-    if let Some(map) = apply_ios_map_module(&project_root, &project_file, manifest_info)? {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已自动接入 iOS 地图模块: {}，新增链接 {} 项，资源 {} 项",
-                map.summary(),
-                map.linked_count,
-                map.resource_count
-            ),
-            Some(29),
-        );
-    }
-    if let Some(oauth) = apply_ios_oauth_module(&project_root, &project_file, manifest_info)? {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已自动接入 iOS Oauth 模块: {}，新增链接 {} 项，资源 {} 项",
-                oauth.summary(),
-                oauth.linked_count,
-                oauth.resource_count
-            ),
-            Some(29),
-        );
-    }
-    if let Some(share) = apply_ios_share_module(&project_root, &project_file, manifest_info)? {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已自动接入 iOS 分享模块: {}，新增链接 {} 项，资源 {} 项",
-                share.summary(),
-                share.linked_count,
-                share.resource_count
-            ),
-            Some(29),
-        );
-    }
-    if let Some(payment) = apply_ios_payment_module(&project_root, &project_file, manifest_info)? {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已自动接入 iOS 支付模块: {}，新增链接 {} 项，资源 {} 项",
-                payment.summary(),
-                payment.linked_count,
-                payment.resource_count
-            ),
-            Some(29),
-        );
-    }
-    if let Some(speech) = apply_ios_speech_module(&project_root, &project_file, manifest_info)? {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已自动接入 iOS 语音输入模块: {}，新增链接 {} 项，资源 {} 项",
-                speech.summary(),
-                speech.linked_count,
-                speech.resource_count
-            ),
-            Some(29),
-        );
-    }
-    if let Some(statistic) =
-        apply_ios_statistic_module(&project_root, &project_file, manifest_info)?
-    {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已自动接入 iOS 统计模块: {}，新增链接 {} 项，资源 {} 项",
-                statistic.summary(),
-                statistic.linked_count,
-                statistic.resource_count
-            ),
-            Some(29),
-        );
-    }
-    let facial_recognition_verify_enabled = ios_facial_recognition_verify_enabled(manifest_info);
-    let ios_uts_builtin_ext_api_required = scan
-        .uts
-        .builtin_modules
-        .iter()
-        .any(|module| module.ios_dir.is_some());
-    if facial_recognition_verify_enabled || scan.uts.has_ios_uts_plugins {
-        let uts_base = apply_ios_uts_base_module(
-            &project_root,
-            &project_file,
-            ios_uts_builtin_ext_api_required,
-        )?;
-        emit_ios_log(
+    let mut workspace_file = None;
+    if packaging_mode == IosPackagingMode::AutoMigration {
+        if let Some(geolocation) =
+            apply_ios_geolocation_module(&project_root, &project_file, manifest_info)?
+        {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已自动接入 iOS 定位模块: {}，新增链接 {} 项",
+                    geolocation.provider_summary(),
+                    geolocation.linked_count
+                ),
+                Some(29),
+            );
+        }
+        if let Some(map) = apply_ios_map_module(&project_root, &project_file, manifest_info)? {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已自动接入 iOS 地图模块: {}，新增链接 {} 项，资源 {} 项",
+                    map.summary(),
+                    map.linked_count,
+                    map.resource_count
+                ),
+                Some(29),
+            );
+        }
+        if let Some(oauth) = apply_ios_oauth_module(&project_root, &project_file, manifest_info)? {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已自动接入 iOS Oauth 模块: {}，新增链接 {} 项，资源 {} 项",
+                    oauth.summary(),
+                    oauth.linked_count,
+                    oauth.resource_count
+                ),
+                Some(29),
+            );
+        }
+        if let Some(share) = apply_ios_share_module(&project_root, &project_file, manifest_info)? {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已自动接入 iOS 分享模块: {}，新增链接 {} 项，资源 {} 项",
+                    share.summary(),
+                    share.linked_count,
+                    share.resource_count
+                ),
+                Some(29),
+            );
+        }
+        if let Some(payment) =
+            apply_ios_payment_module(&project_root, &project_file, manifest_info)?
+        {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已自动接入 iOS 支付模块: {}，新增链接 {} 项，资源 {} 项",
+                    payment.summary(),
+                    payment.linked_count,
+                    payment.resource_count
+                ),
+                Some(29),
+            );
+        }
+        if let Some(speech) = apply_ios_speech_module(&project_root, &project_file, manifest_info)?
+        {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已自动接入 iOS 语音输入模块: {}，新增链接 {} 项，资源 {} 项",
+                    speech.summary(),
+                    speech.linked_count,
+                    speech.resource_count
+                ),
+                Some(29),
+            );
+        }
+        if let Some(statistic) =
+            apply_ios_statistic_module(&project_root, &project_file, manifest_info)?
+        {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已自动接入 iOS 统计模块: {}，新增链接 {} 项，资源 {} 项",
+                    statistic.summary(),
+                    statistic.linked_count,
+                    statistic.resource_count
+                ),
+                Some(29),
+            );
+        }
+        let facial_recognition_verify_enabled =
+            ios_facial_recognition_verify_enabled(manifest_info);
+        let ios_uts_builtin_ext_api_required = scan
+            .uts
+            .builtin_modules
+            .iter()
+            .any(|module| module.ios_dir.is_some());
+        if facial_recognition_verify_enabled || scan.uts.has_ios_uts_plugins {
+            let uts_base = apply_ios_uts_base_module(
+                &project_root,
+                &project_file,
+                ios_uts_builtin_ext_api_required,
+            )?;
+            emit_ios_log(
             window,
             build_id,
             "success",
@@ -340,111 +368,111 @@ pub(super) fn configure_ios_workspace(
             ),
             Some(29),
         );
-    }
-    if let Some(facial) =
-        apply_ios_facial_recognition_verify_module(&project_root, &project_file, manifest_info)?
-    {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已自动接入 iOS 实人认证模块: 新增链接 {} 项，资源 {} 项",
-                facial.linked_count, facial.resource_count
-            ),
-            Some(29),
-        );
-    }
-    if let Some(livepusher) = apply_ios_livepusher_module(
-        &project_root,
-        &project_file,
-        manifest_info,
-        &config.ios_module_config,
-    )? {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已自动接入 iOS LivePusher 模块: 新增链接 {} 项，Embed {} 项",
-                livepusher.linked_count, livepusher.embedded_count
-            ),
-            Some(29),
-        );
-        emit_ios_log(
+        }
+        if let Some(facial) =
+            apply_ios_facial_recognition_verify_module(&project_root, &project_file, manifest_info)?
+        {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已自动接入 iOS 实人认证模块: 新增链接 {} 项，资源 {} 项",
+                    facial.linked_count, facial.resource_count
+                ),
+                Some(29),
+            );
+        }
+        if let Some(livepusher) = apply_ios_livepusher_module(
+            &project_root,
+            &project_file,
+            manifest_info,
+            &config.ios_module_config,
+        )? {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已自动接入 iOS LivePusher 模块: 新增链接 {} 项，Embed {} 项",
+                    livepusher.linked_count, livepusher.embedded_count
+                ),
+                Some(29),
+            );
+            emit_ios_log(
             window,
             build_id,
             "warn",
             "LivePusher 依赖的 UPLiveSDKDll.framework 通常只包含真机架构；如在模拟器编译出现 AudioProcessor/RtcManager/UPAVPlayer 等 Undefined symbol，请改用真机或 Archive 构建，或关闭 LivePusher 模块",
             Some(29),
         );
-    }
-    if let Some(ui_webview) =
-        apply_ios_ui_webview_module(&project_root, &project_file, manifest_info)?
-    {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已自动接入 iOS UIWebview 模块: 新增链接 {} 项",
-                ui_webview.linked_count
-            ),
-            Some(29),
-        );
-    }
-    if let Some(bluetooth) = apply_ios_bluetooth_module(&project_file, manifest_info)? {
-        if bluetooth.background_enabled {
+        }
+        if let Some(ui_webview) =
+            apply_ios_ui_webview_module(&project_root, &project_file, manifest_info)?
+        {
             emit_ios_log(
                 window,
                 build_id,
                 "success",
-                "已开启 iOS 蓝牙后台模式能力",
+                &format!(
+                    "已自动接入 iOS UIWebview 模块: 新增链接 {} 项",
+                    ui_webview.linked_count
+                ),
+                Some(29),
+            );
+        }
+        if let Some(bluetooth) = apply_ios_bluetooth_module(&project_file, manifest_info)? {
+            if bluetooth.background_enabled {
+                emit_ios_log(
+                    window,
+                    build_id,
+                    "success",
+                    "已开启 iOS 蓝牙后台模式能力",
+                    Some(30),
+                );
+            }
+        }
+        if let Some(push) = apply_ios_push_module(&project_root, &project_file, manifest_info)? {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已自动接入 iOS Push 模块: 后台模式 {}，新增链接 {} 项",
+                    push.background_modes.join("、"),
+                    push.linked_count
+                ),
                 Some(30),
             );
         }
-    }
-    if let Some(push) = apply_ios_push_module(&project_root, &project_file, manifest_info)? {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已自动接入 iOS Push 模块: 后台模式 {}，新增链接 {} 项",
-                push.background_modes.join("、"),
-                push.linked_count
-            ),
-            Some(30),
-        );
-    }
-    if let Some(ibeacon) = apply_ios_ibeacon_module(&project_file, manifest_info)? {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已开启 iOS iBeacon 后台模式能力: {}",
-                ibeacon.background_modes.join("、")
-            ),
-            Some(30),
-        );
-    }
-    let associated_domain_count =
-        patch_ios_entitlements(&project_root, &project_file, manifest_info)?;
-    if associated_domain_count > 0 {
-        emit_ios_log(
-            window,
-            build_id,
-            "success",
-            &format!(
-                "已从 manifest 配置 {} 个 iOS Associated Domains",
-                associated_domain_count
-            ),
-            Some(30),
-        );
-    }
-    if let Some(uts) = apply_ios_uts_plugins(&project_root, &project_file, &scan.uts)? {
-        emit_ios_log(
+        if let Some(ibeacon) = apply_ios_ibeacon_module(&project_file, manifest_info)? {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已开启 iOS iBeacon 后台模式能力: {}",
+                    ibeacon.background_modes.join("、")
+                ),
+                Some(30),
+            );
+        }
+        let associated_domain_count =
+            patch_ios_entitlements(&project_root, &project_file, manifest_info)?;
+        if associated_domain_count > 0 {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已从 manifest 配置 {} 个 iOS Associated Domains",
+                    associated_domain_count
+                ),
+                Some(30),
+            );
+        }
+        if let Some(uts) = apply_ios_uts_plugins(&project_root, &project_file, &scan.uts)? {
+            emit_ios_log(
             window,
             build_id,
             "success",
@@ -466,8 +494,8 @@ pub(super) fn configure_ios_workspace(
             ),
             Some(31),
         );
-        if uts.pod_dependency_count > 0 {
-            emit_ios_log(
+            if uts.pod_dependency_count > 0 {
+                emit_ios_log(
                 window,
                 build_id,
                 "warn",
@@ -476,6 +504,45 @@ pub(super) fn configure_ios_workspace(
                     uts.pod_dependency_count
                 ),
                 Some(31),
+            );
+            }
+        }
+    } else {
+        apply_ios_pod_capabilities(&project_file, manifest_info)?;
+        let pod = integrate_ios_pods(IosPodContext {
+            workspace: &workspace,
+            project_root: &project_root,
+            project_file: &project_file,
+            sdk_root: &sdk_root,
+            manifest_info,
+            scan: &scan,
+            window,
+            build_id,
+        })
+        .await?;
+        emit_ios_log(
+            window,
+            build_id,
+            "success",
+            &format!(
+                "已按 HBuilderX 5.13+ 本地 Pod 流程接入 {} 个 subspec",
+                pod.subspecs.len()
+            ),
+            Some(45),
+        );
+        workspace_file = Some(pod.workspace_file);
+        let associated_domain_count =
+            patch_ios_entitlements(&project_root, &project_file, manifest_info)?;
+        if associated_domain_count > 0 {
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已从 manifest 配置 {} 个 iOS Associated Domains",
+                    associated_domain_count
+                ),
+                Some(46),
             );
         }
     }
@@ -532,7 +599,22 @@ pub(super) fn configure_ios_workspace(
         workspace,
         project_root,
         project_file,
+        workspace_file,
         scheme,
         profile,
     })
+}
+
+fn apply_ios_pod_capabilities(
+    project_file: &std::path::Path,
+    manifest_info: Option<&crate::commands::resource::UniappManifestInfo>,
+) -> Result<(), String> {
+    if ios_bluetooth_background_enabled(manifest_info) || ios_ibeacon_enabled(manifest_info) {
+        enable_pbx_system_capability(project_file, "com.apple.BackgroundModes")?;
+    }
+    if ios_push_enabled(manifest_info) {
+        enable_pbx_system_capability(project_file, "com.apple.BackgroundModes")?;
+        enable_pbx_system_capability(project_file, "com.apple.Push")?;
+    }
+    Ok(())
 }
