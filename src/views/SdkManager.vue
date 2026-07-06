@@ -59,9 +59,38 @@ interface GlobalSdkItem {
   download_url: string
 }
 
+type BuildExecutionMode = 'auto' | 'local' | 'github'
+
+interface GithubCloudBuildConfig {
+  owner: string
+  repo: string
+  ref: string
+  workflowFile: string
+  androidDefaultMode: BuildExecutionMode
+  iosDefaultMode: BuildExecutionMode
+  androidSdkUrl: string
+  iosSdkUrl: string
+  hasToken?: boolean
+}
+
 const activeTab = ref('dcloud-sdk')
 const loading = ref(false)
 const globalSdkLoading = ref(false)
+const cloudBuildLoading = ref(false)
+const cloudBuildSaving = ref(false)
+const cloudBuildTesting = ref(false)
+const githubTokenInput = ref('')
+const cloudBuildConfig = ref<GithubCloudBuildConfig>({
+  owner: '',
+  repo: '',
+  ref: 'main',
+  workflowFile: 'cloud-build.yml',
+  androidDefaultMode: 'auto',
+  iosDefaultMode: 'auto',
+  androidSdkUrl: '',
+  iosSdkUrl: '',
+  hasToken: false,
+})
 
 const globalSdkConfig = ref<GlobalSdkConfig>({
   dcloudAndroidSdkPath: '',
@@ -70,6 +99,12 @@ const globalSdkConfig = ref<GlobalSdkConfig>({
 })
 const envGroups = ref<EnvGroup[]>([])
 const recentBuilds = ref<BuildRecordSummary[]>([])
+
+const buildModeOptions = [
+  { label: '自动选择', value: 'auto' },
+  { label: '本地打包', value: 'local' },
+  { label: 'GitHub 云端打包', value: 'github' },
+]
 
 const globalSdkItems = computed<GlobalSdkItem[]>(() => [
   {
@@ -107,6 +142,7 @@ onMounted(() => {
   loadGlobalSdkConfig()
   loadEnvReport()
   loadRecentBuilds()
+  loadGithubCloudBuildConfig()
 })
 
 async function loadGlobalSdkConfig() {
@@ -246,6 +282,69 @@ async function loadRecentBuilds() {
       started_at: r.started_at,
     }))
   } catch (e) { /* ignore */ }
+}
+
+async function loadGithubCloudBuildConfig() {
+  cloudBuildLoading.value = true
+  try {
+    cloudBuildConfig.value = await invoke<GithubCloudBuildConfig>('get_github_cloud_build_config')
+  } catch (e) {
+    console.error('Failed to load GitHub cloud build config:', e)
+    message.error('无法读取 GitHub 云端打包配置')
+  } finally {
+    cloudBuildLoading.value = false
+  }
+}
+
+async function saveGithubCloudBuildConfig() {
+  cloudBuildSaving.value = true
+  try {
+    const config = {
+      owner: cloudBuildConfig.value.owner,
+      repo: cloudBuildConfig.value.repo,
+      ref: cloudBuildConfig.value.ref,
+      workflowFile: cloudBuildConfig.value.workflowFile,
+      androidDefaultMode: cloudBuildConfig.value.androidDefaultMode,
+      iosDefaultMode: cloudBuildConfig.value.iosDefaultMode,
+      androidSdkUrl: cloudBuildConfig.value.androidSdkUrl,
+      iosSdkUrl: cloudBuildConfig.value.iosSdkUrl,
+    }
+    await invoke('save_github_cloud_build_config', { config })
+    if (githubTokenInput.value.trim()) {
+      await invoke('save_github_cloud_build_secret', { token: githubTokenInput.value.trim() })
+      githubTokenInput.value = ''
+    }
+    await loadGithubCloudBuildConfig()
+    message.success('GitHub 云端打包配置已保存')
+  } catch (e: any) {
+    message.error(String(e))
+  } finally {
+    cloudBuildSaving.value = false
+  }
+}
+
+async function clearGithubToken() {
+  try {
+    await invoke('save_github_cloud_build_secret', { token: '' })
+    await loadGithubCloudBuildConfig()
+    message.success('GitHub Token 已清除')
+  } catch (e: any) {
+    message.error(String(e))
+  }
+}
+
+async function testGithubCloudBuildConfig() {
+  cloudBuildTesting.value = true
+  try {
+    await saveGithubCloudBuildConfig()
+    const result = await invoke<{ ok: boolean; message: string; htmlUrl?: string | null }>('test_github_cloud_build_config')
+    if (result.ok) message.success(result.message)
+    else message.error(result.message)
+  } catch (e: any) {
+    message.error(String(e))
+  } finally {
+    cloudBuildTesting.value = false
+  }
 }
 
 function refreshAll() {
@@ -551,6 +650,82 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
           </n-card>
         </div>
       </n-tab-pane>
+
+      <n-tab-pane name="github-cloud" tab="GitHub 云端打包">
+        <div class="tab-content">
+          <n-spin v-if="cloudBuildLoading" />
+          <n-card v-else class="settings-card">
+            <template #header>
+              <n-space align="center">
+                <n-icon :size="18"><SettingsOutline /></n-icon>
+                <n-text strong>GitHub Actions 云端打包</n-text>
+                <n-tag :type="cloudBuildConfig.hasToken ? 'success' : 'warning'" size="small" round>
+                  {{ cloudBuildConfig.hasToken ? 'Token 已保存' : '未保存 Token' }}
+                </n-tag>
+              </n-space>
+            </template>
+
+            <n-alert type="info" class="cloud-build-alert">
+              云端打包会上传临时构建包到私有 GitHub Release，并触发指定 workflow。请使用私有仓库和具备 Actions / Contents 权限的 Token。
+            </n-alert>
+
+            <n-space vertical :size="16">
+              <div class="cloud-build-grid">
+                <n-form-item label="Owner">
+                  <n-input v-model:value="cloudBuildConfig.owner" placeholder="GitHub 用户或组织名" />
+                </n-form-item>
+                <n-form-item label="Repo">
+                  <n-input v-model:value="cloudBuildConfig.repo" placeholder="私有仓库名" />
+                </n-form-item>
+                <n-form-item label="Ref">
+                  <n-input v-model:value="cloudBuildConfig.ref" placeholder="main" />
+                </n-form-item>
+                <n-form-item label="Workflow 文件">
+                  <n-input v-model:value="cloudBuildConfig.workflowFile" placeholder="cloud-build.yml" />
+                </n-form-item>
+              </div>
+
+              <div class="cloud-build-grid">
+                <n-form-item label="Android 默认方式">
+                  <n-select v-model:value="cloudBuildConfig.androidDefaultMode" :options="buildModeOptions" />
+                </n-form-item>
+                <n-form-item label="iOS 默认方式">
+                  <n-select v-model:value="cloudBuildConfig.iosDefaultMode" :options="buildModeOptions" />
+                </n-form-item>
+              </div>
+
+              <n-form-item label="Android 离线 SDK 下载 URL">
+                <n-input v-model:value="cloudBuildConfig.androidSdkUrl" placeholder="https://.../dcloud-android-sdk.zip" />
+              </n-form-item>
+              <n-form-item label="iOS 离线 SDK 下载 URL">
+                <n-input v-model:value="cloudBuildConfig.iosSdkUrl" placeholder="https://.../dcloud-ios-sdk.zip" />
+              </n-form-item>
+              <n-form-item label="GitHub Token">
+                <n-input
+                  v-model:value="githubTokenInput"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="cloudBuildConfig.hasToken ? '已保存，留空不变' : '请输入 fine-grained PAT'"
+                />
+              </n-form-item>
+            </n-space>
+
+            <template #action>
+              <n-space justify="end">
+                <n-button v-if="cloudBuildConfig.hasToken" quaternary type="warning" @click="clearGithubToken">
+                  清除 Token
+                </n-button>
+                <n-button @click="testGithubCloudBuildConfig" :loading="cloudBuildTesting">
+                  测试连接
+                </n-button>
+                <n-button type="primary" @click="saveGithubCloudBuildConfig" :loading="cloudBuildSaving">
+                  保存配置
+                </n-button>
+              </n-space>
+            </template>
+          </n-card>
+        </div>
+      </n-tab-pane>
     </n-tabs>
 
     <!-- 路径配置弹窗 -->
@@ -660,6 +835,16 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
   overflow: hidden;
 }
 
+.cloud-build-alert {
+  margin-bottom: 16px;
+}
+
+.cloud-build-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .env-summary-card {
   margin-top: 16px;
 }
@@ -670,5 +855,11 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
 
 .validation-state {
   padding: 8px 0;
+}
+
+@media (max-width: 720px) {
+  .cloud-build-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

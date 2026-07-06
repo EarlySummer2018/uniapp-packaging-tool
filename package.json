@@ -27,6 +27,7 @@
     "build": "vite build",
     "typecheck": "vue-tsc --noEmit",
     "preview": "vite preview",
+    "ci:cloud-build": "cargo run --manifest-path src-tauri/Cargo.toml --bin unipack-cloud-build --",
     "tauri": "tauri"
   },
   "dependencies": {

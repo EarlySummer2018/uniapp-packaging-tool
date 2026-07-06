@@ -199,7 +199,10 @@ export interface BuildArtifact {
   fileName: string
   sizeBytes: number
   buildId: string
+  cloudRunUrl?: string | null
 }
+
+export type BuildExecutionMode = 'auto' | 'local' | 'github'
 
 export interface BuildRecord {
   id: string
@@ -212,6 +215,8 @@ export interface BuildRecord {
   version_name: string
   version_code: number
   build_mode: string
+  build_source?: string | null
+  cloud_run_url?: string | null
   duration_secs: number
   started_at: string
   finished_at?: string | null

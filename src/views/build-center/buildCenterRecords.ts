@@ -52,7 +52,8 @@ export function createBuildCenterRecords(ctx: any) {
     startedAt: Date,
     recordProjectId: string = ctx.projectId.value,
     recordProjectName: string = ctx.getProjectName(),
-    recordResourcePath: string | null = ctx.scanResult.value?.importedPath || null
+    recordResourcePath: string | null = ctx.scanResult.value?.importedPath || null,
+    buildSource: 'local' | 'github' = 'local'
   ) {
     const record: BuildRecord = {
       id: buildId,
@@ -65,6 +66,8 @@ export function createBuildCenterRecords(ctx: any) {
       version_name: ctx.latestManifestInfo.value?.versionName || ctx.currentProject.value?.app.version || ctx.scanResult.value?.versionName || '-',
       version_code: ctx.latestManifestInfo.value?.versionCode || ctx.currentProject.value?.app.versionCode || ctx.scanResult.value?.versionCode || 1,
       build_mode: 'release',
+      build_source: buildSource,
+      cloud_run_url: null,
       duration_secs: 0,
       started_at: startedAt.toISOString(),
       finished_at: null,
@@ -85,7 +88,8 @@ export function createBuildCenterRecords(ctx: any) {
     status: 'success' | 'failed',
     startedAt: Date,
     artifact: BuildArtifact | null,
-    errorMessage?: string
+    errorMessage?: string,
+    buildSource?: 'local' | 'github'
   ) {
     const finishedAt = new Date()
     try {
@@ -99,6 +103,8 @@ export function createBuildCenterRecords(ctx: any) {
           finished_at: finishedAt.toISOString(),
           error_message: errorMessage || null,
           log_path: build?.logPath || null,
+          build_source: buildSource || null,
+          cloud_run_url: artifact?.cloudRunUrl || null,
           duration_secs: Math.max(1, Math.round((finishedAt.getTime() - startedAt.getTime()) / 1000))
         }
       })

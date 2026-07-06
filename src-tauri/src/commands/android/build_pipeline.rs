@@ -835,6 +835,7 @@ impl BuildContext {
                 .to_string(),
             size_bytes,
             build_id: self.build_id,
+            cloud_run_url: None,
         })
     }
 

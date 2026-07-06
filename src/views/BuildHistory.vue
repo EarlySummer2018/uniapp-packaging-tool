@@ -10,7 +10,7 @@ import { RefreshOutline, TrashOutline,
   LogoAndroid, LogoApple, PhonePortraitOutline,
   CopyOutline, CheckmarkOutline, SearchOutline } from '@vicons/ionicons5'
 import { invoke } from '@tauri-apps/api/core'
-import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import LogDisplay from '../components/LogDisplay.vue'
 import type { LogLevel, LogEntry } from '../components/LogDisplay.vue'
 import { useProjectsStore } from '../stores/projects'
@@ -32,6 +32,8 @@ interface BuildRecord {
   version_name: string
   version_code: number
   build_mode: string
+  build_source?: string | null
+  cloud_run_url?: string | null
   duration_secs: number
   started_at: string
   finished_at?: string | null
@@ -330,6 +332,17 @@ const columns = [
     }, { default: () => row.build_mode })
   },
   {
+    title: '来源',
+    key: 'build_source',
+    width: 90,
+    render: (row: BuildRecord) => h(NTag, {
+      type: row.build_source === 'github' ? 'info' : 'default',
+      size: 'tiny',
+      round: true,
+      bordered: false
+    }, { default: () => row.build_source === 'github' ? 'GitHub' : '本地' })
+  },
+  {
     title: '耗时',
     key: 'duration_secs',
     width: 90,
@@ -355,6 +368,14 @@ const columns = [
           onClick: () => row.artifact_path && revealItemInDir(row.artifact_path)
         }, {
           default: () => ['打开目录']
+        }) : null,
+        row.cloud_run_url ? h(NButton, {
+          size: 'tiny',
+          quaternary: true,
+          type: 'primary',
+          onClick: () => row.cloud_run_url && openUrl(row.cloud_run_url)
+        }, {
+          default: () => ['远端 Run']
         }) : null,
         h(NButton, {
           size: 'tiny',

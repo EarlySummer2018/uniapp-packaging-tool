@@ -7,6 +7,7 @@ pub mod sdk;
 
 // 从 project.rs, settings.rs, files.rs, build_history.rs 位置搬过来的文件也在这里声明
 pub mod build_history;
+pub mod cloud_build;
 pub mod files;
 pub mod project;
 pub mod settings;

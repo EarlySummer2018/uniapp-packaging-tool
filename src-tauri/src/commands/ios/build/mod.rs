@@ -192,6 +192,7 @@ pub async fn build_ios_ipa(
             .to_string(),
         size_bytes,
         build_id,
+        cloud_run_url: None,
     })
 }
 

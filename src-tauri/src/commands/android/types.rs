@@ -28,6 +28,8 @@ pub struct BuildArtifact {
     pub file_name: String,
     pub size_bytes: u64,
     pub build_id: String,
+    #[serde(default)]
+    pub cloud_run_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

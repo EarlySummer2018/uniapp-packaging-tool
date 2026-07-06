@@ -274,6 +274,7 @@ pub async fn build_harmony_hap(
             .to_string(),
         size_bytes,
         build_id,
+        cloud_run_url: None,
     })
 }
 

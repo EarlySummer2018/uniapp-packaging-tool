@@ -3,7 +3,7 @@ mod utils;
 
 use commands::{
     android, harmony, ios,
-    shared::{build_history, files, project, sdk, settings},
+    shared::{build_history, cloud_build, files, project, sdk, settings},
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -62,6 +62,12 @@ pub fn run() {
             files::cleanup_build_temporary_files,
             settings::get_app_settings,
             settings::migrate_cache_dir,
+            cloud_build::get_github_cloud_build_config,
+            cloud_build::save_github_cloud_build_config,
+            cloud_build::save_github_cloud_build_secret,
+            cloud_build::get_github_cloud_build_secret_status,
+            cloud_build::test_github_cloud_build_config,
+            cloud_build::run_github_cloud_build,
             crate::commands::shared::module::parsing::parse_project_modules,
             crate::commands::shared::module::properties::save_module_config,
             crate::commands::shared::module::parsing::get_module_template,

@@ -15,6 +15,7 @@ const {
   insightAppId, insightVersionName, insightVersionCode, insightManifestPath, manifestReadWarning, chooseResource,
   buildDisabledReason, canBuild, canGenerateAndroid, canGenerateIos, canGenerateHarmony, packageBuildLoading,
   androidGenerateLoading, iosGenerateLoading, harmonyGenerateLoading, singleSelectedPlatform, togglePlatform,
+  buildExecutionModes, buildExecutionModeOptions, buildExecutionModeHints, updateBuildExecutionMode,
   generateAndroidProject, generateIosProject, generateHarmonyProject, startBuild, iosMissingRequired, iosIconCount,
   iosPrivacyDescriptionCount, iosPrivacyDescriptionItems, iosPrivacyDescriptionMissingCount, iosModuleSummaryLabel,
   iosConfigurableModules, selectedManifestModules, iosModuleConfigLoading, latestManifestInfo, iosModuleMissingRequired,
@@ -70,7 +71,11 @@ const {
           :ios-generate-loading="iosGenerateLoading"
           :harmony-generate-loading="harmonyGenerateLoading"
           :single-selected-platform="singleSelectedPlatform"
+          :build-execution-modes="buildExecutionModes"
+          :build-execution-mode-options="buildExecutionModeOptions"
+          :build-execution-mode-hints="buildExecutionModeHints"
           @toggle-platform="togglePlatform"
+          @update-build-mode="updateBuildExecutionMode"
           @generate-android="generateAndroidProject"
           @generate-ios="generateIosProject"
           @generate-harmony="generateHarmonyProject"

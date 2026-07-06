@@ -1,7 +1,7 @@
 import { h, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { NButton, NRadio, NRadioGroup, NSpace, NText } from 'naive-ui'
-import type { BuildArtifact, NonIosPlatform, Platform, UniappManifestInfo } from './types'
+import type { BuildArtifact, BuildExecutionMode, NonIosPlatform, Platform, UniappManifestInfo } from './types'
 import { generateProjectCommand, generateProjectKind, platformProjectName } from './moduleKeys'
 
 type IosPackagingMode = 'autoMigration' | 'localPod'
@@ -17,10 +17,10 @@ export function createBuildCenterActions(ctx: any) {
       const selectedMode = ref<IosPackagingMode>('autoMigration')
       const dialogInstance = ctx.dialog.create({
         type: 'info',
-        title: '选择 iOS 打包方式',
+        title: '选择 iOS 集成方式',
         content: () => h(NSpace, { vertical: true, size: 12 }, {
           default: () => [
-            h(NText, { depth: 3 }, { default: () => `${actionLabel}将使用本次选择的 iOS 打包方式。` }),
+            h(NText, { depth: 3 }, { default: () => `${actionLabel}将使用本次选择的 iOS 集成方式。` }),
             h(NRadioGroup, {
               value: selectedMode.value,
               'onUpdate:value': (value: IosPackagingMode) => {
@@ -100,9 +100,16 @@ export function createBuildCenterActions(ctx: any) {
     let lastBuildId: string | null = null
     const buildIds: string[] = []
     for (const platform of ctx.selectedPlatforms.value as Platform[]) {
-      const buildId = platform === 'ios'
-        ? await buildIosIpa(runProjectId, runProjectName, importedResourcePath, buildManifestInfo, iosPackagingMode!)
-        : await buildStandardPackage(platform, runProjectId, runProjectName, importedResourcePath, buildManifestInfo, androidModuleConfig)
+      const executionMode = ctx.resolveBuildExecutionMode(platform) as BuildExecutionMode
+      if (executionMode === 'auto') {
+        ctx.message.error(`${platform} 打包方式无法自动选择，请检查本地环境或 GitHub 云端打包配置`)
+        return
+      }
+      const buildId = executionMode === 'github'
+        ? await buildGithubPackage(platform, runProjectId, runProjectName, importedResourcePath, buildManifestInfo, androidModuleConfig, iosPackagingMode)
+        : platform === 'ios'
+          ? await buildIosIpa(runProjectId, runProjectName, importedResourcePath, buildManifestInfo, iosPackagingMode!)
+          : await buildStandardPackage(platform, runProjectId, runProjectName, importedResourcePath, buildManifestInfo, androidModuleConfig)
       lastBuildId = buildId
       buildIds.push(buildId)
     }
@@ -195,6 +202,55 @@ export function createBuildCenterActions(ctx: any) {
       await ctx.finalizeBuildRecord(buildId, 'failed', startedAt, null, String(e))
       ctx.buildStore.failBuild(buildId, String(e))
       ctx.message.error(`${platform} 构建失败: ${String(e)}`)
+    } finally {
+      await ctx.cleanupBuildTemporaryFiles(buildId, buildId, null)
+      await ctx.buildStore.flushBuildLogs(buildId)
+    }
+    return buildId
+  }
+
+  async function buildGithubPackage(
+    platform: Platform,
+    runProjectId: string,
+    runProjectName: string,
+    importedResourcePath: string,
+    buildManifestInfo: UniappManifestInfo,
+    androidModuleConfig: Record<string, string>,
+    iosPackagingMode: IosPackagingMode | null
+  ) {
+    const buildId = ctx.buildStore.startBuild(runProjectId, platform, 'package')
+    ctx.currentBuildId.value = buildId
+    ctx.buildStore.setActiveEventBuildId(buildId)
+    const startedAt = new Date()
+    await ctx.createBuildRecord(buildId, platform, startedAt, runProjectId, runProjectName, importedResourcePath, 'github')
+    await ctx.appendManifestLog(buildId, buildManifestInfo, platform)
+    await ctx.buildStore.appendBuildLogLines(buildId, [
+      '[info] 打包位置: GitHub 云端打包',
+      '[info] 将上传临时构建包到私有 GitHub Release 并触发 GitHub Actions'
+    ])
+    try {
+      const artifact = await invoke<BuildArtifact>('run_github_cloud_build', {
+        request: {
+          projectId: runProjectId,
+          platform,
+          resourcePath: importedResourcePath,
+          buildId,
+          manifestInfo: buildManifestInfo,
+          moduleConfig: platform === 'android' ? androidModuleConfig : undefined,
+          iosPackagingMode: platform === 'ios' ? iosPackagingMode : undefined
+        }
+      })
+      await ctx.buildStore.flushBuildLogs(buildId)
+      await ctx.appendFinalLog(buildId, 'success')
+      await ctx.finalizeBuildRecord(buildId, 'success', startedAt, artifact, undefined, 'github')
+      ctx.buildStore.stopBuild(buildId, true, { artifactPath: artifact.path, artifactSizeBytes: artifact.sizeBytes })
+      ctx.message.success(`${platform} GitHub 云端打包完成`)
+    } catch (e: any) {
+      await ctx.buildStore.flushBuildLogs(buildId)
+      await ctx.appendFinalLog(buildId, 'failed', String(e))
+      await ctx.finalizeBuildRecord(buildId, 'failed', startedAt, null, String(e), 'github')
+      ctx.buildStore.failBuild(buildId, String(e))
+      ctx.message.error(`${platform} GitHub 云端打包失败: ${String(e)}`)
     } finally {
       await ctx.cleanupBuildTemporaryFiles(buildId, buildId, null)
       await ctx.buildStore.flushBuildLogs(buildId)

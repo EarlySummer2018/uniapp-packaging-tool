@@ -1,0 +1,76 @@
+name: UniPack Cloud Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: UniPack build id
+        required: true
+      platform:
+        description: android or ios
+        required: true
+      payload_release_tag:
+        description: Temporary GitHub Release tag containing payload asset
+        required: true
+      payload_asset_name:
+        description: Payload asset name
+        required: true
+      artifact_name:
+        description: Artifact name expected by the desktop client
+        required: true
+
+run-name: UniPack ${{ inputs.platform }} ${{ inputs.build_id }}
+
+jobs:
+  cloud-build:
+    name: Build ${{ inputs.platform }}
+    runs-on: ${{ inputs.platform == 'ios' && 'macos-latest' || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Download payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.payload_release_tag }}
+          ASSET_NAME: ${{ inputs.payload_asset_name }}
+        run: |
+          set -euo pipefail
+          release_json="$(gh api "repos/${OWNER_REPO}/releases/tags/${RELEASE_TAG}")"
+          asset_id="$(printf '%s' "${release_json}" | jq -r --arg name "${ASSET_NAME}" '.assets[] | select(.name == $name) | .id')"
+          if [ -z "${asset_id}" ]; then
+            echo "payload asset not found: ${ASSET_NAME}" >&2
+            exit 1
+          fi
+          gh api "repos/${OWNER_REPO}/releases/assets/${asset_id}" \
+            -H "Accept: application/octet-stream" > payload.zip
+
+      - name: Run UniPack cloud build
+        run: cargo run --manifest-path src-tauri/Cargo.toml --bin unipack-cloud-build -- payload.zip
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: |
+            cloud-output/**/*.apk
+            cloud-output/**/*.aab
+            cloud-output/**/*.ipa
+          if-no-files-found: error

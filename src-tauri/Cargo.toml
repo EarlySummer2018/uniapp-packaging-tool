@@ -6,6 +6,7 @@ authors = ["EarlySummer2018"]
 license = "Apache-2.0"
 repository = "https://github.com/EarlySummer2018/uniapp-packaging-tool"
 edition = "2021"
+default-run = "unipack-tool"
 
 [lib]
 name = "unipack_tool_lib"

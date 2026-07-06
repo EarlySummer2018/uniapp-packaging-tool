@@ -14,6 +14,10 @@ pub struct BuildRecord {
     pub version_name: String,
     pub version_code: u32,
     pub build_mode: String,
+    #[serde(default)]
+    pub build_source: Option<String>,
+    #[serde(default)]
+    pub cloud_run_url: Option<String>,
     pub duration_secs: u64,
     pub started_at: String,
     pub finished_at: Option<String>,
@@ -103,6 +107,12 @@ pub async fn update_build_record(id: String, update: serde_json::Value) -> Resul
         }
         if let Some(resource_path) = update.get("resource_path").and_then(|v| v.as_str()) {
             record.resource_path = Some(resource_path.to_string());
+        }
+        if let Some(build_source) = update.get("build_source").and_then(|v| v.as_str()) {
+            record.build_source = Some(build_source.to_string());
+        }
+        if let Some(cloud_run_url) = update.get("cloud_run_url").and_then(|v| v.as_str()) {
+            record.cloud_run_url = Some(cloud_run_url.to_string());
         }
 
         save_history(&records)?;

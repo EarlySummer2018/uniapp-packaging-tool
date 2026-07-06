@@ -478,6 +478,32 @@
   margin-top: 16px;
 }
 
+.build-mode-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.build-mode-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 88px minmax(180px, 240px) minmax(0, 1fr);
+}
+
+.build-mode-platform {
+  font-weight: 600;
+}
+
+.build-mode-select {
+  min-width: 180px;
+}
+
+.build-mode-hint {
+  color: var(--text-color-3);
+  font-size: 12px;
+}
+
 .log-result-stack {
   margin-top: 12px;
 }
@@ -519,6 +545,11 @@
 @media (max-width: 640px) {
   .module-workbench-summary,
   .privacy-workbench-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .build-mode-row {
+    align-items: stretch;
     grid-template-columns: 1fr;
   }
 
