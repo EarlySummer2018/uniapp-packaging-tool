@@ -46,11 +46,35 @@ fn podfile_renders_local_uniapp_subspecs() {
     .unwrap();
 
     assert!(content.contains("platform :ios, '13.0'"));
+    assert!(!content.contains("source 'https://github.com/CocoaPods/Specs.git'"));
+    assert!(!content.contains("source 'https://github.com/volcengine/volcengine-specs.git'"));
     assert!(content.contains("project 'HBuilder-Hello.xcodeproj'"));
+    assert!(content.contains("use_frameworks! :linkage => :static"));
+    assert!(content.contains("require_relative 'scripts/uniapp_module_config'"));
+    assert!(content.contains("require_relative 'scripts/uniapp_uts_plugins'"));
     assert!(content.contains("pod 'uniapp', :path => '..', :subspecs => uniapp_subspecs"));
+    assert!(content.contains("UniAppUTSPlugins.prepare!("));
+    assert!(content.contains("unipack_normalize_uts_plugin_podspecs!(uts_plugins)"));
+    assert!(content.contains("s.homepage = 'https://dcloud.io/'"));
+    assert!(content.contains("s.license = { :type => 'DCloud' }"));
+    assert!(content.contains("s.authors = { 'DCloud' => 'https://dcloud.io/' }"));
+    assert!(content.contains("pod plugin[:pod_name], :path => plugin[:pod_path]"));
+    assert!(content.contains("uts_plugins: uts_plugins"));
     assert!(content.contains("'Core'"));
     assert!(content.contains("'Payment-Wechat'"));
     assert!(content.contains("'Map-Gaode'"));
+}
+
+#[test]
+fn podfile_adds_official_sources_for_uni_ad() {
+    let root = PathBuf::from("/tmp/HBuilder-Hello");
+    let project = root.join("HBuilder-Hello.xcodeproj");
+    let content =
+        super::super::pod::render_ios_podfile(&project, &["Core".into(), "UniAd-GDT".into()])
+            .unwrap();
+
+    assert!(content.contains("source 'https://github.com/CocoaPods/Specs.git'"));
+    assert!(content.contains("source 'https://github.com/volcengine/volcengine-specs.git'"));
 }
 
 #[test]
@@ -77,54 +101,55 @@ fn podspec_copy_includes_license_file_when_present() {
 }
 
 #[test]
-fn pod_xcode_patch_adds_sdk_header_search_paths_once() {
-    let content = r#"buildSettings = {
-				HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include,
-				);
-			};
-buildSettings = {
-				HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-				);
-			};"#;
+fn pod_integration_verification_accepts_cocoapods_markers() {
+    let root = std::env::temp_dir().join(format!("unipack-ios-pod-check-{}", uuid::Uuid::new_v4()));
+    let project_root = root.join("HBuilder-Hello");
+    let project_file = project_root.join("HBuilder-Hello.xcodeproj");
+    let support = project_root.join("Pods/Target Support Files/Pods-HBuilder");
+    std::fs::create_dir_all(&project_file).unwrap();
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::write(
+        project_file.join("project.pbxproj"),
+        r#"
+10C3DAEF31AC8F49429C9BF2 /* Pods_HBuilder.framework in Frameworks */ = {isa = PBXBuildFile; };
+baseConfigurationReference = CCB08588010615606572E49E /* Pods-HBuilder.release.xcconfig */;
+shellScript = ""${PODS_ROOT}/Target Support Files/Pods-HBuilder/Pods-HBuilder-frameworks.sh"\n";
+shellScript = ""${PODS_ROOT}/Target Support Files/Pods-HBuilder/Pods-HBuilder-resources.sh"\n";
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        support.join("Pods-HBuilder.release.xcconfig"),
+        r#"HEADER_SEARCH_PATHS = $(inherited) "${PODS_ROOT}/Headers/Public/uniapp"
+OTHER_LDFLAGS = $(inherited) -framework "DCUniBase"
+"#,
+    )
+    .unwrap();
 
-    let (updated, patched_count) = super::super::pod_xcode::ensure_header_search_paths(
-        content,
-        &["$(SRCROOT)/../SDK/inc", "$(SRCROOT)/../SDK/inc/**"],
-    );
-    let (updated_again, patched_again) = super::super::pod_xcode::ensure_header_search_paths(
-        &updated,
-        &["$(SRCROOT)/../SDK/inc", "$(SRCROOT)/../SDK/inc/**"],
-    );
-
-    assert_eq!(patched_count, 2);
-    assert_eq!(patched_again, 0);
-    assert_eq!(updated, updated_again);
-    assert_eq!(updated.matches("$(SRCROOT)/../SDK/inc\",").count(), 2);
-    assert_eq!(updated.matches("$(SRCROOT)/../SDK/inc/**").count(), 2);
+    super::super::pod::verify_cocoapods_project_integration(&project_root, &project_file).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
-fn pod_xcode_patch_adds_core_libraries_once() {
-    let root = std::env::temp_dir().join(format!("unipack-ios-pod-xcode-{}", uuid::Uuid::new_v4()));
-    let (_project_root, project_file, _libs_dir) =
-        super::support::prepare_ios_payment_alipay_project(&root);
+fn pod_integration_verification_rejects_missing_cocoapods_markers() {
+    let root = std::env::temp_dir().join(format!(
+        "unipack-ios-pod-check-missing-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let project_root = root.join("HBuilder-Hello");
+    let project_file = project_root.join("HBuilder-Hello.xcodeproj");
+    let support = project_root.join("Pods/Target Support Files/Pods-HBuilder");
+    std::fs::create_dir_all(&project_file).unwrap();
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::write(project_file.join("project.pbxproj"), "/* empty */").unwrap();
+    std::fs::write(support.join("Pods-HBuilder.release.xcconfig"), "").unwrap();
 
-    let linked = super::super::pod_xcode::ensure_ios_pod_core_libraries(&project_file).unwrap();
-    let linked_again =
-        super::super::pod_xcode::ensure_ios_pod_core_libraries(&project_file).unwrap();
+    let err = super::super::pod::verify_cocoapods_project_integration(&project_root, &project_file)
+        .unwrap_err();
 
-    let pbxproj = std::fs::read_to_string(project_file.join("project.pbxproj")).unwrap();
-    assert_eq!(linked, 2);
-    assert_eq!(linked_again, 0);
-    assert!(pbxproj.contains("liblibPDRCore.a in Frameworks"));
-    assert!(pbxproj.contains("libcoreSupport.a in Frameworks"));
-    assert!(pbxproj.contains("../SDK/Libs/liblibPDRCore.a"));
-    assert!(pbxproj.contains("../SDK/Libs/libcoreSupport.a"));
-    assert_eq!(pbxproj.matches("liblibPDRCore.a in Frameworks").count(), 2);
-    assert_eq!(pbxproj.matches("libcoreSupport.a in Frameworks").count(), 2);
+    assert!(err.contains("Pods_HBuilder.framework"));
+    assert!(err.contains("DCUniBase"));
+    assert!(err.contains(".xcworkspace"));
     let _ = std::fs::remove_dir_all(root);
 }
 

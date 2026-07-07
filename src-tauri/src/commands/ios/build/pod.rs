@@ -5,7 +5,6 @@ use tauri::Manager;
 use super::logging::emit_ios_log;
 use super::pod_config::write_ios_pod_config;
 use super::pod_subspecs::{resolve_ios_pod_subspecs, IosPodSubspecs};
-use super::pod_xcode::{ensure_ios_pod_core_libraries, ensure_ios_pod_header_search_paths};
 use crate::commands::ios::modules::uts_plugins::copy_ios_uts_plugins_for_pod;
 use crate::commands::shared::resource_scan::ResourceScanResult;
 
@@ -66,27 +65,8 @@ pub(super) async fn integrate_ios_pods(
     log_manual_pod_followups(&ctx);
 
     run_pod_install(ctx.project_root, ctx.window, ctx.build_id).await?;
-    let patched_header_search_paths = ensure_ios_pod_header_search_paths(ctx.project_file)?;
-    if patched_header_search_paths > 0 {
-        emit_ios_log(
-            ctx.window,
-            ctx.build_id,
-            "success",
-            "已为 Pod 模式补充 SDK/inc 头文件搜索路径",
-            Some(44),
-        );
-    }
-    let linked_core_libraries = ensure_ios_pod_core_libraries(ctx.project_file)?;
-    if linked_core_libraries > 0 {
-        emit_ios_log(
-            ctx.window,
-            ctx.build_id,
-            "success",
-            "已为 Pod 模式补充 DCloud Core 静态库链接",
-            Some(44),
-        );
-    }
     let workspace_file = find_xcworkspace(ctx.project_root, ctx.project_file)?;
+    verify_cocoapods_project_integration(ctx.project_root, ctx.project_file)?;
     emit_ios_log(
         ctx.window,
         ctx.build_id,
@@ -116,6 +96,13 @@ fn ensure_pod_ready_layout(ctx: &IosPodContext<'_>) -> Result<(), String> {
         return Err(format!(
             "iOS 本地 Pod 模式需要 HBuilderX 5.13+ 示例工程脚本，未找到 {}；请升级 iOS 离线 SDK 或改用自动迁移打包",
             script.display()
+        ));
+    }
+    let uts_script = ctx.project_root.join("scripts/uniapp_uts_plugins.rb");
+    if ctx.scan.uts.has_ios_uts_plugins && !uts_script.is_file() {
+        return Err(format!(
+            "iOS UTS 插件 Pod 模式需要 HBuilderX 5.13+ UTS 脚本，未找到 {}；请升级 iOS 离线 SDK 或改用自动迁移打包",
+            uts_script.display()
         ));
     }
     Ok(())
@@ -167,28 +154,92 @@ pub(super) fn render_ios_podfile(
         .ok_or_else(|| format!("无法识别 Xcode 工程名: {}", project_file.display()))?;
     let mut content = String::new();
     content.push_str("platform :ios, '13.0'\n");
+    if requires_explicit_cocoapods_sources(subspecs) {
+        content.push_str("source 'https://github.com/CocoaPods/Specs.git'\n");
+        content.push_str("source 'https://github.com/volcengine/volcengine-specs.git'\n");
+    }
+    content.push('\n');
     content.push_str(&format!(
         "project '{}'\n\n",
         ruby_single_quoted(project_name)
     ));
+    content.push_str("use_frameworks! :linkage => :static\n\n");
     content.push_str("require_relative 'scripts/uniapp_module_config'\n");
+    content.push_str("require_relative 'scripts/uniapp_uts_plugins' if File.exist?(File.join(__dir__, 'scripts', 'uniapp_uts_plugins.rb'))\n");
     content.push_str("require_relative 'uniapp_config' if File.exist?(File.join(__dir__, 'uniapp_config.rb'))\n\n");
     content.push_str("uniapp_subspecs = [\n");
     for subspec in subspecs {
         content.push_str(&format!("  '{}',\n", ruby_single_quoted(subspec)));
     }
     content.push_str("]\n\n");
+    content.push_str(
+        "uniapp_plist_values = defined?(UNIAPP_PLIST_VALUES) ? UNIAPP_PLIST_VALUES : {}\n",
+    );
+    content.push_str(
+        "uts_plugin_values = defined?(UNIAPP_UTS_PLUGIN_VALUES) ? UNIAPP_UTS_PLUGIN_VALUES : {}\n",
+    );
+    content.push_str("uts_plugins = if defined?(UniAppUTSPlugins)\n");
+    content.push_str("  UniAppUTSPlugins.prepare!(\n");
+    content.push_str("    File.join(__dir__, 'UTSPlugins'),\n");
+    content.push_str("    sdk_path: File.expand_path('..', __dir__),\n");
+    content.push_str("    values: uts_plugin_values\n");
+    content.push_str("  )\n");
+    content.push_str("else\n");
+    content.push_str("  []\n");
+    content.push_str("end\n");
+    content.push_str(
+        "uniapp_subspecs << 'UTS' if uts_plugins.any? && !uniapp_subspecs.include?('UTS')\n\n",
+    );
+    append_uts_podspec_metadata_normalizer(&mut content);
     content.push_str("target 'HBuilder' do\n");
     content.push_str("  pod 'uniapp', :path => '..', :subspecs => uniapp_subspecs\n");
+    content.push_str("  uts_plugins.each do |plugin|\n");
+    content.push_str("    pod plugin[:pod_name], :path => plugin[:pod_path]\n");
+    content.push_str("  end\n");
     content.push_str("end\n\n");
     content.push_str("post_install do |_installer|\n");
     content.push_str("  UniAppModuleConfig.apply(\n");
     content.push_str("    uniapp_subspecs,\n");
-    content
-        .push_str("    plist_values: defined?(UNIAPP_PLIST_VALUES) ? UNIAPP_PLIST_VALUES : {}\n");
+    content.push_str("    plist_values: uniapp_plist_values,\n");
+    content.push_str("    uts_plugins: uts_plugins\n");
     content.push_str("  )\n");
     content.push_str("end\n");
     Ok(content)
+}
+
+fn requires_explicit_cocoapods_sources(subspecs: &[String]) -> bool {
+    subspecs.iter().any(|subspec| subspec.starts_with("UniAd-"))
+}
+
+fn append_uts_podspec_metadata_normalizer(content: &mut String) {
+    content.push_str(
+        r##"def unipack_normalize_uts_plugin_podspecs!(uts_plugins)
+  uts_plugins.each do |plugin|
+    podspec = File.join(plugin[:pod_path], "#{plugin[:pod_name]}.podspec")
+    next unless File.exist?(podspec)
+
+    podspec_content = File.read(podspec)
+    unless podspec_content.include?('s.homepage =')
+      podspec_content = podspec_content.sub(/^(\s*s\.summary\s*=.*\n)/) { "#{$1}  s.homepage = 'https://dcloud.io/'\n" }
+    end
+    unless podspec_content.include?('s.license =')
+      podspec_content = podspec_content.sub(/^(\s*s\.homepage\s*=.*\n)/) { "#{$1}  s.license = { :type => 'DCloud' }\n" }
+    end
+    unless podspec_content.include?('s.authors =') || podspec_content.include?('s.author =')
+      podspec_content = podspec_content.sub(/^(\s*s\.license\s*=.*\n)/) { "#{$1}  s.authors = { 'DCloud' => 'https://dcloud.io/' }\n" }
+    end
+    podspec_content = podspec_content.gsub(
+      /^\s*s\.source\s*=\s*\{\s*:path\s*=>\s*['"]\.['"]\s*\}\s*$/,
+      "  s.source = { :git => 'https://gitee.com/dcloud/uni-app.git', :tag => s.version.to_s }"
+    )
+    File.write(podspec, podspec_content)
+  end
+end
+
+unipack_normalize_uts_plugin_podspecs!(uts_plugins)
+
+"##,
+    );
 }
 
 fn log_pod_selection(ctx: &IosPodContext<'_>, subspecs: &IosPodSubspecs) {
@@ -274,6 +325,66 @@ fn find_xcworkspace(project_root: &Path, project_file: &Path) -> Result<PathBuf,
                 project_root.display()
             )
         })
+}
+
+pub(super) fn verify_cocoapods_project_integration(
+    project_root: &Path,
+    project_file: &Path,
+) -> Result<(), String> {
+    let pbxproj = project_file.join("project.pbxproj");
+    let content = std::fs::read_to_string(&pbxproj)
+        .map_err(|e| format!("读取 project.pbxproj 失败: {}", e))?;
+    let xcconfig =
+        project_root.join("Pods/Target Support Files/Pods-HBuilder/Pods-HBuilder.release.xcconfig");
+    let xcconfig_content = std::fs::read_to_string(&xcconfig).map_err(|e| {
+        format!(
+            "Pod 模式未找到 CocoaPods 生成的 Pods-HBuilder.release.xcconfig，请检查 pod install 输出 {}: {}",
+            xcconfig.display(),
+            e
+        )
+    })?;
+
+    let mut missing = Vec::new();
+    for (label, exists) in [
+        (
+            "主工程 Frameworks 阶段缺少 Pods_HBuilder.framework",
+            content.contains("Pods_HBuilder.framework in Frameworks"),
+        ),
+        (
+            "主工程缺少 Pods-HBuilder-frameworks.sh 构建脚本",
+            content.contains("Pods-HBuilder-frameworks.sh"),
+        ),
+        (
+            "主工程缺少 Pods-HBuilder-resources.sh 资源脚本",
+            content.contains("Pods-HBuilder-resources.sh"),
+        ),
+        (
+            "主工程未引用 Pods-HBuilder xcconfig",
+            content.contains("baseConfigurationReference")
+                && content.contains("Pods-HBuilder.release.xcconfig"),
+        ),
+        (
+            "Pods-HBuilder.release.xcconfig 缺少 DCUniBase 链接参数",
+            xcconfig_content.contains("-framework \"DCUniBase\""),
+        ),
+        (
+            "Pods-HBuilder.release.xcconfig 缺少 uniapp 公开头文件搜索路径",
+            xcconfig_content.contains("${PODS_ROOT}/Headers/Public/uniapp"),
+        ),
+    ] {
+        if !exists {
+            missing.push(label);
+        }
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "CocoaPods 未按 HBuilderX 5.13+ Pod 文档完整接入主工程: {}。请确认已执行 pod install --no-repo-update，并使用生成的 .xcworkspace 构建。",
+            missing.join("；")
+        ))
+    }
 }
 
 fn ios_uts_plugin_pod_dependency_count(scan: &ResourceScanResult) -> usize {

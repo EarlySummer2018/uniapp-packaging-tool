@@ -10,14 +10,31 @@
 
 1. 在 `Podfile` 的 `uniapp_subspecs` 中启用 `UTS`。
 2. 将导出资源中的 `uni_modules/<插件名称>/app-ios` 复制到 `HBuilder-Hello/UTSPlugins/<插件名称>/app-ios`。
-3. 执行 `pod install --no-repo-update`。
-4. 使用 `.xcworkspace` 打开工程。
+3. 通过示例工程 `scripts/uniapp_uts_plugins` 生成插件本地 Pod，并在 `target 'HBuilder'` 中追加插件 Pod。
+4. 执行 `pod install --no-repo-update`。
+5. 使用 `.xcworkspace` 打开工程。
 
 ```ruby
 uniapp_subspecs = [
   'Core',
   'UTS',
 ]
+
+uts_plugins = UniAppUTSPlugins.prepare!(
+  File.join(__dir__, 'UTSPlugins'),
+  sdk_path: File.expand_path('..', __dir__),
+  values: defined?(UNIAPP_UTS_PLUGIN_VALUES) ? UNIAPP_UTS_PLUGIN_VALUES : {}
+)
+
+# 当前 CocoaPods 会校验本地插件 podspec 的 homepage、license、authors 等元数据；
+# 如官方脚本生成的 podspec 缺少这些字段，需要在声明插件 Pod 前补齐。
+
+target 'HBuilder' do
+  pod 'uniapp', :path => '..', :subspecs => uniapp_subspecs
+  uts_plugins.each do |plugin|
+    pod plugin[:pod_name], :path => plugin[:pod_path]
+  end
+end
 ```
 
 ## 自动处理范围

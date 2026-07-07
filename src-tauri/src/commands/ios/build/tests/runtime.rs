@@ -1,7 +1,7 @@
-use super::super::fs_utils::link_ios_sdk_support;
 use super::super::runtime::{
     import_app_resource, patch_control_xml, resolve_ios_runtime_layout, verify_pod_privacy_manifest,
 };
+use super::super::sdk_support::{link_ios_sdk_support, materialize_ios_sdk_support_for_pod};
 
 #[test]
 fn runtime_layout_supports_nested_hbuilder_source_directory() {
@@ -65,6 +65,34 @@ fn workspace_links_sibling_sdk_support_directory() {
     assert_eq!(linked, workspace.join("SDK"));
     assert!(linked.join("PrivacyInfo.xcprivacy").is_file());
     assert!(std::fs::symlink_metadata(&linked)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    std::fs::remove_dir_all(&workspace).unwrap();
+    assert!(support.join("PrivacyInfo.xcprivacy").is_file());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn pod_workspace_materializes_sibling_sdk_support_directory() {
+    let root =
+        std::env::temp_dir().join(format!("unipack-ios-pod-support-{}", uuid::Uuid::new_v4()));
+    let sdk_project = root.join("package/HBuilder-Hello");
+    let support = root.join("package/SDK");
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&sdk_project).unwrap();
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(support.join("PrivacyInfo.xcprivacy"), "privacy").unwrap();
+
+    let prepared = materialize_ios_sdk_support_for_pod(&sdk_project, &workspace)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(prepared.path, workspace.join("SDK"));
+    assert!(prepared.path.join("PrivacyInfo.xcprivacy").is_file());
+    #[cfg(unix)]
+    assert!(!std::fs::symlink_metadata(&prepared.path)
         .unwrap()
         .file_type()
         .is_symlink());

@@ -10,10 +10,7 @@ use super::config::{
     resolve_ios_manifest_info, validate_ios_app_id, validate_ios_config,
 };
 use super::entitlements::patch_ios_entitlements;
-use super::fs_utils::{
-    clean_copied_project, find_scheme_name, find_xcodeproj, prepare_ios_sdk_support,
-    repair_ios_sdk_support_alignment_for_project, safe_file_name,
-};
+use super::fs_utils::{clean_copied_project, find_scheme_name, find_xcodeproj, safe_file_name};
 use super::logging::{emit_ios_log, emit_version_warning_if_needed};
 use super::pbxproj::{enable_pbx_system_capability, patch_pbxproj};
 use super::plist::patch_info_plist;
@@ -21,6 +18,10 @@ use super::pod::{integrate_ios_pods, IosPodContext};
 use super::runtime::{
     import_app_resource, patch_control_xml, resolve_ios_runtime_layout,
     verify_pod_privacy_manifest, verify_privacy_manifest,
+};
+use super::sdk_support::{
+    materialize_ios_sdk_support_for_pod, prepare_ios_sdk_support,
+    repair_ios_sdk_support_alignment_for_project,
 };
 use super::splashscreen::apply_ios_splashscreen;
 use super::IosPackagingMode;
@@ -509,6 +510,21 @@ pub(super) async fn configure_ios_workspace(
             }
         }
     } else {
+        if let Some(support) = materialize_ios_sdk_support_for_pod(&sdk_project, &workspace)? {
+            for log in &support.logs {
+                emit_ios_log(window, build_id, log.level, &log.message, Some(40));
+            }
+            emit_ios_log(
+                window,
+                build_id,
+                "success",
+                &format!(
+                    "已按 HBuilderX Pod 示例工程目录结构准备 SDK 支持目录: {}",
+                    support.path.display()
+                ),
+                Some(40),
+            );
+        }
         apply_ios_pod_capabilities(&project_file, manifest_info)?;
         let pod = integrate_ios_pods(IosPodContext {
             workspace: &workspace,

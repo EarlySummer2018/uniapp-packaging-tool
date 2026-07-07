@@ -10,9 +10,15 @@ HBuilderX 5.13+ 的 iOS 离线 SDK 根目录内置 `uniapp.podspec`。官方推�
 
 ```ruby
 platform :ios, '13.0'
+# 启用 uni-AD 或其他需要三方 CocoaPods 仓库的模块时，按官方示例配置 source。
+# source 'https://github.com/CocoaPods/Specs.git'
+# source 'https://github.com/volcengine/volcengine-specs.git'
+
 project 'HBuilder-Hello.xcodeproj'
+use_frameworks! :linkage => :static
 
 require_relative 'scripts/uniapp_module_config'
+require_relative 'scripts/uniapp_uts_plugins' if File.exist?(File.join(__dir__, 'scripts', 'uniapp_uts_plugins.rb'))
 require_relative 'uniapp_config' if File.exist?(File.join(__dir__, 'uniapp_config.rb'))
 
 uniapp_subspecs = [
@@ -24,14 +30,31 @@ uniapp_subspecs = [
   'UniAd-GDT',
 ]
 
+uniapp_plist_values = defined?(UNIAPP_PLIST_VALUES) ? UNIAPP_PLIST_VALUES : {}
+uts_plugin_values = defined?(UNIAPP_UTS_PLUGIN_VALUES) ? UNIAPP_UTS_PLUGIN_VALUES : {}
+uts_plugins = if defined?(UniAppUTSPlugins)
+  UniAppUTSPlugins.prepare!(
+    File.join(__dir__, 'UTSPlugins'),
+    sdk_path: File.expand_path('..', __dir__),
+    values: uts_plugin_values
+  )
+else
+  []
+end
+uniapp_subspecs << 'UTS' if uts_plugins.any? && !uniapp_subspecs.include?('UTS')
+
 target 'HBuilder' do
   pod 'uniapp', :path => '..', :subspecs => uniapp_subspecs
+  uts_plugins.each do |plugin|
+    pod plugin[:pod_name], :path => plugin[:pod_path]
+  end
 end
 
 post_install do |_installer|
   UniAppModuleConfig.apply(
     uniapp_subspecs,
-    plist_values: defined?(UNIAPP_PLIST_VALUES) ? UNIAPP_PLIST_VALUES : {}
+    plist_values: uniapp_plist_values,
+    uts_plugins: uts_plugins
   )
 end
 ```
@@ -46,7 +69,7 @@ pod install --no-repo-update
 
 ## 业务参数配置
 
-官方示例工程支持通过 `uniapp_config.rb` 集中配置部分 appid、appkey、URL Scheme、Universal Links 等参数；`pod install` 时脚本会按已启用的 `uniapp_subspecs` 写入对应的 `Info.plist` 和部分 `feature.plist` 配置。
+官方示例工程支持通过 `uniapp_config.rb` 集中配置部分 appid、appkey、URL Scheme、Universal Links 等参数；`pod install` 时脚本会按已启用的 `uniapp_subspecs` 和 `uts_plugins` 写入对应的 `Info.plist`、部分 `feature.plist`、UTS 插件配置和 entitlements 配置。
 
 ```ruby
 UNIAPP_PLIST_VALUES = {
