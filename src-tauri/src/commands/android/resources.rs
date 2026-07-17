@@ -42,7 +42,7 @@ pub fn update_dcloud_control(workspace: &Path, app_id: &str) -> Result<(), Strin
 pub fn copy_sdk_assets(
     sdk_assets: &Path,
     workspace: &Path,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     let src = sdk_assets.join("data");
     let dst = workspace

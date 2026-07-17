@@ -120,7 +120,16 @@ fn configured_sdk_infos(config: &GlobalSdkConfig) -> Vec<SdkInfo> {
 
 fn configured_sdk_info(name: &str, path: &str, platform: SdkPlatform) -> SdkInfo {
     let configured = !path.trim().is_empty();
-    let exists = configured && Path::new(path).exists();
+    let configured_path = Path::new(path);
+    let is_valid = configured
+        && match &platform {
+            SdkPlatform::Android => normalize_global_sdk_path("android", configured_path).is_ok(),
+            SdkPlatform::Ios => normalize_global_sdk_path("ios", configured_path).is_ok(),
+            SdkPlatform::Harmony => {
+                crate::commands::harmony::sdk_layout::resolve_harmony_template_root(configured_path)
+                    .is_ok()
+            }
+        };
     SdkInfo {
         name: name.to_string(),
         version: if configured {
@@ -131,7 +140,7 @@ fn configured_sdk_info(name: &str, path: &str, platform: SdkPlatform) -> SdkInfo
         path: path.to_string(),
         platform,
         is_installed: configured,
-        is_valid: exists,
+        is_valid,
     }
 }
 
@@ -244,7 +253,7 @@ pub fn normalize_global_sdk_path(platform: &str, path: &Path) -> Result<PathBuf,
             Ok(crate::commands::android::sdk_layout::resolve_android_sdk_layout(path)?.root)
         }
         "ios" => crate::commands::ios::sdk_layout::resolve_ios_sdk_root(path),
-        "harmony" => Ok(canonicalize_or_self(path)),
+        "harmony" => crate::commands::harmony::sdk_layout::resolve_harmony_template_root(path),
         _ => Err(format!("不支持的 SDK 类型: {}", platform)),
     }
 }
@@ -358,6 +367,29 @@ mod tests {
         let normalized = normalize_global_sdk_path("ios", &project).unwrap();
 
         assert_eq!(normalized, root.canonicalize().unwrap());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn configured_sdk_info_rejects_existing_but_incomplete_sdk_directories() {
+        let root = unique_temp_dir("unipack-incomplete-sdk");
+        std::fs::create_dir_all(&root).unwrap();
+
+        let android = configured_sdk_info(
+            "Android 离线SDK",
+            root.to_string_lossy().as_ref(),
+            SdkPlatform::Android,
+        );
+        let ios = configured_sdk_info(
+            "iOS 离线SDK",
+            root.to_string_lossy().as_ref(),
+            SdkPlatform::Ios,
+        );
+
+        assert!(android.is_installed);
+        assert!(!android.is_valid);
+        assert!(ios.is_installed);
+        assert!(!ios.is_valid);
         let _ = std::fs::remove_dir_all(root);
     }
 }

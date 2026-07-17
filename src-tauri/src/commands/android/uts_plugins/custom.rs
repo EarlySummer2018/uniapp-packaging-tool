@@ -22,7 +22,7 @@ pub fn process_custom_uts_plugins_uniapp(
     extra_deps: &mut BTreeSet<String>,
     plugin_includes: &mut BTreeSet<String>,
     plugin_project_deps: &mut BTreeSet<String>,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     let custom_root = workspace.join("uts-modules");
     crate::utils::fs::ensure_directory(&custom_root).map_err(|e| e.to_string())?;
@@ -121,7 +121,7 @@ fn copy_uts_plugin_resources(
     plugin: &UtsCustomPlugin,
     module_dir: &Path,
     main_libs: &Path,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
     unpacked_aar_names: &[String],
 ) -> Result<(), String> {
     let main = module_dir.join("src/main");
@@ -201,7 +201,7 @@ fn copy_uts_plugin_resources(
 fn copy_uts_plugin_source_files(
     plugin: &UtsCustomPlugin,
     module_dir: &Path,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     let src = module_dir.join("src");
     if !src.is_dir() {

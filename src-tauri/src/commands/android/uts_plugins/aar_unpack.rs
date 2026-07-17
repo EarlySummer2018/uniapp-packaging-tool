@@ -54,7 +54,7 @@ pub fn unpack_nonstandard_aar(
     aar_path: &Path,
     module_dir: &Path,
     main_libs: &Path,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<UnpackedAarInfo, String> {
     let mut extra_jars = Vec::new();
     let original_name = aar_path

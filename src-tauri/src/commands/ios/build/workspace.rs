@@ -1,9 +1,10 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::super::icons::generate_app_icons;
 use super::super::signing::{
-    import_p12_certificate, install_mobileprovision, MobileProvisionInfo,
-    MobileProvisionValidationMode,
+    import_p12_certificate, import_p12_certificate_explicit, install_mobileprovision,
+    MobileProvisionInfo, MobileProvisionValidationMode,
 };
 use super::config::{
     effective_app_name, effective_app_version, effective_app_version_code,
@@ -59,6 +60,16 @@ pub(super) struct IosWorkspace {
     pub(super) profile: MobileProvisionInfo,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct IosHeadlessRuntime {
+    pub(crate) project_config: crate::commands::project::ProjectConfig,
+    pub(crate) sdk_root: PathBuf,
+    pub(crate) workspace: PathBuf,
+    pub(crate) certificate_password: String,
+    pub(crate) keychain: PathBuf,
+    pub(crate) keychain_password: String,
+}
+
 impl IosWorkspace {
     pub(super) fn archive_destination_args(&self) -> Vec<String> {
         if let Some(workspace_file) = &self.workspace_file {
@@ -85,9 +96,53 @@ pub(super) async fn configure_ios_workspace(
     packaging_mode: IosPackagingMode,
 ) -> Result<IosWorkspace, String> {
     let config = crate::commands::project::load_project_config_sync(project_id)?;
+    let sdk_config = crate::commands::sdk::load_global_sdk_config_sync()?;
+    let sdk_root = PathBuf::from(&sdk_config.dcloud_ios_sdk_path);
+    let workspace = crate::utils::fs::get_project_config_dir(project_id)
+        .join("workspace")
+        .join(safe_file_name(build_id));
+    configure_ios_workspace_explicit(
+        resource_path,
+        build_id,
+        supplied_manifest_info,
+        Arc::new(window.clone()),
+        signing_validation_mode,
+        packaging_mode,
+        IosHeadlessRuntime {
+            project_config: config,
+            sdk_root,
+            workspace,
+            certificate_password: String::new(),
+            keychain: PathBuf::new(),
+            keychain_password: String::new(),
+        },
+        false,
+    )
+    .await
+}
+
+pub(crate) async fn configure_ios_workspace_explicit(
+    resource_path: &str,
+    build_id: &str,
+    supplied_manifest_info: Option<&crate::commands::resource::UniappManifestInfo>,
+    sink: crate::utils::process::SharedBuildEventSink,
+    signing_validation_mode: MobileProvisionValidationMode,
+    packaging_mode: IosPackagingMode,
+    mut runtime: IosHeadlessRuntime,
+    headless: bool,
+) -> Result<IosWorkspace, String> {
+    let window = sink.as_ref();
+    if headless {
+        runtime.project_config.local_path.clear();
+    }
+    let config = runtime.project_config;
     let manifest_info = resolve_ios_manifest_info(&config, supplied_manifest_info)?;
     let manifest_info = manifest_info.as_ref();
-    let sdk_config = crate::commands::sdk::load_global_sdk_config_sync()?;
+    let sdk_config = crate::commands::sdk::GlobalSdkConfig {
+        dcloud_android_sdk_path: String::new(),
+        dcloud_ios_sdk_path: runtime.sdk_root.to_string_lossy().to_string(),
+        harmony_template_path: String::new(),
+    };
     validate_ios_config(&config, &sdk_config)?;
 
     let resource_dir = PathBuf::from(resource_path);
@@ -145,15 +200,11 @@ pub(super) async fn configure_ios_workspace(
         }
     }
 
-    let sdk_root = crate::commands::sdk::resolve_ios_sdk_root(&PathBuf::from(
-        &sdk_config.dcloud_ios_sdk_path,
-    ))?;
+    let sdk_root = crate::commands::sdk::resolve_ios_sdk_root(&runtime.sdk_root)?;
     let sdk_project = crate::commands::sdk::resolve_ios_sdk_project(&sdk_root)?;
     emit_version_warning_if_needed(window, build_id, &scan, &sdk_project);
 
-    let workspace = crate::utils::fs::get_project_config_dir(project_id)
-        .join("workspace")
-        .join(safe_file_name(build_id));
+    let workspace = runtime.workspace;
     if workspace.exists() {
         std::fs::remove_dir_all(&workspace)
             .map_err(|e| format!("清理旧 iOS workspace 失败 {}: {}", workspace.display(), e))?;
@@ -516,7 +567,7 @@ pub(super) async fn configure_ios_workspace(
             sdk_root: &sdk_root,
             manifest_info,
             scan: &scan,
-            window,
+            sink: sink.clone(),
             build_id,
         })
         .await?;
@@ -583,7 +634,24 @@ pub(super) async fn configure_ios_workspace(
         }
     }
     let profile = install_mobileprovision(&config, signing_validation_mode)?;
-    import_p12_certificate(&config)?;
+    let certificate_result = if headless {
+        import_p12_certificate_explicit(
+            &config,
+            &runtime.certificate_password,
+            Some(&runtime.keychain),
+            Some(&runtime.keychain_password),
+        )
+    } else {
+        import_p12_certificate(&config)
+    };
+    if let Err(error) = certificate_result {
+        if headless {
+            if let Some(path) = profile.installed_path() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        return Err(error);
+    }
     emit_ios_log(window, build_id, "success", "iOS 工程配置完成", Some(55));
 
     let scheme = find_scheme_name(&project_file).unwrap_or_else(|| {

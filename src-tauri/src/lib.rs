@@ -1,9 +1,21 @@
 mod commands;
 mod utils;
 
+/// Minimal public surface consumed by the GitHub Actions runner binary.
+/// Keeping this explicit avoids compiling a second copy of the full command tree.
+pub mod cloud_runner {
+    pub use crate::commands::android::build_pipeline::{AndroidHeadlessRuntime, BuildContext};
+    pub use crate::commands::android::sdk_layout::resolve_android_sdk_layout;
+    pub use crate::commands::android::types::AndroidBuildEnvironment;
+    pub use crate::commands::ios::build::{build_ios_ipa_headless, IosPackagingMode};
+    pub use crate::commands::ios::sdk_layout::{resolve_ios_sdk_project, resolve_ios_sdk_root};
+    pub use crate::commands::project::ProjectConfig;
+    pub use crate::utils::process::{JsonLineBuildEventSink, SharedBuildEventSink};
+}
+
 use commands::{
     android, harmony, ios,
-    shared::{build_history, cloud_build, files, project, sdk, settings},
+    shared::{build_history, cloud_build, files, project, sdk, sdk_cache, settings},
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -68,6 +80,9 @@ pub fn run() {
             cloud_build::get_github_cloud_build_secret_status,
             cloud_build::test_github_cloud_build_config,
             cloud_build::run_github_cloud_build,
+            sdk_cache::get_github_sdk_cache_status,
+            sdk_cache::inspect_local_sdk_cache,
+            sdk_cache::delete_github_sdk_cache,
             crate::commands::shared::module::parsing::parse_project_modules,
             crate::commands::shared::module::properties::save_module_config,
             crate::commands::shared::module::parsing::get_module_template,

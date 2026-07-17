@@ -4,7 +4,6 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use tauri::Window;
 
 /// 处理内置 UTS 模块：扫描 builtin_modules，复制 AAR，收集线上依赖
 pub fn process_builtin_uts_modules(
@@ -12,7 +11,7 @@ pub fn process_builtin_uts_modules(
     sdk_libs: &Path,
     libs_dst: &Path,
     extra_deps: &mut BTreeSet<String>,
-    window: &Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     // 复制 UTS 插件运行时基础 AAR
     crate::commands::android::artifacts::copy_optional_aar(

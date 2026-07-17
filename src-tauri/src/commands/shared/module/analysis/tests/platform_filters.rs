@@ -938,8 +938,9 @@ fn ios_module_config_lists_media_contact_auth_and_video_fields() {
     }));
     assert!(module("camera").fields.iter().any(|field| {
         field.key == "privacy.NSPhotoLibraryAddUsageDescription"
-            && !field.required
-            && field.value.is_none()
+            && field.required
+            && field.value.as_deref() == Some("用于将图片或视频保存到系统相册")
+            && field.value_source.as_deref() == Some("default")
     }));
     assert!(module("contacts").fields.iter().any(|field| {
         field.key == "privacy.NSContactsUsageDescription"

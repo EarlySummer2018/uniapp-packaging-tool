@@ -1,9 +1,7 @@
 use std::path::Path;
 
-use tauri::Emitter;
-
 pub(super) fn emit_ios_log(
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
     build_id: &str,
     level: &str,
     message: &str,
@@ -16,11 +14,22 @@ pub(super) fn emit_ios_log(
         message: message.to_string(),
         progress,
     };
-    let _ = window.emit("build-log", event);
+    window.send(
+        "build-log",
+        serde_json::to_value(event).unwrap_or_else(|_| {
+            serde_json::json!({
+                "buildId": build_id,
+                "platform": "ios",
+                "level": level,
+                "message": message,
+                "progress": progress,
+            })
+        }),
+    );
 }
 
 pub(super) fn emit_version_warning_if_needed(
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
     build_id: &str,
     scan: &crate::commands::shared::resource_scan::ResourceScanResult,
     sdk_project: &Path,

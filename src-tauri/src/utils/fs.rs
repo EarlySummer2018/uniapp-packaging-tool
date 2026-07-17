@@ -211,8 +211,12 @@ pub fn unzip_file(zip_path: &Path, dest_dir: &Path) -> Result<()> {
     let mut archive = zip::ZipArchive::new(file)?;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let out_path = dest_dir.join(file.name());
-        if file.name().ends_with('/') {
+        let enclosed = file
+            .enclosed_name()
+            .ok_or_else(|| anyhow::anyhow!("ZIP 包含不安全路径: {}", file.name()))?
+            .to_path_buf();
+        let out_path = dest_dir.join(enclosed);
+        if file.is_dir() {
             ensure_directory(&out_path)?;
         } else {
             if let Some(p) = out_path.parent() {
@@ -281,4 +285,29 @@ pub fn get_legacy_project_file(project_id: &str) -> std::path::PathBuf {
         .join("unipack-tool")
         .join("projects")
         .join(format!("{}.json", project_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unzip_file;
+    use std::io::Write;
+
+    #[test]
+    fn unzip_rejects_parent_directory_entries() {
+        let root = std::env::temp_dir().join(format!("unipack-unzip-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let zip_path = root.join("artifact.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file("../escaped.apk", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"not-an-apk").unwrap();
+        zip.finish().unwrap();
+
+        let destination = root.join("output");
+        let error = unzip_file(&zip_path, &destination).unwrap_err();
+        assert!(error.to_string().contains("不安全路径"));
+        assert!(!root.join("escaped.apk").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

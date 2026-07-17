@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 pub fn copy_required_aars(
     sdk_libs: &Path,
     libs_dst: &Path,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     for requirement in crate::commands::android::sdk_layout::ANDROID_REQUIRED_AARS {
         let src = crate::commands::android::sdk_layout::resolve_android_required_aar(
@@ -37,7 +37,7 @@ pub fn copy_optional_aar(
     sdk_libs: &Path,
     libs_dst: &Path,
     aar_name: &str,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     let src = sdk_libs.join(aar_name);
     if src.exists() {
@@ -58,7 +58,7 @@ pub fn copy_optional_aar(
 pub fn inject_huawei_agconnect_json(
     module_config: &Option<std::collections::HashMap<String, String>>,
     workspace: &std::path::Path,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     let Some(config) = module_config else {
         return Ok(());
@@ -122,7 +122,7 @@ pub(crate) fn apply_android_manifest_modules_internal(
     workspace: &Path,
     extra_repos: &mut BTreeSet<String>,
     extra_deps: &mut BTreeSet<String>,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     let supported = modules
         .iter()
@@ -260,7 +260,7 @@ fn copy_android_module_artifacts(
     artifact_patterns: &[String],
     sdk_libs: &Path,
     libs_dst: &Path,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<usize, String> {
     let mut copied_count = 0usize;
     for pattern in artifact_patterns {
@@ -548,7 +548,10 @@ fn android_entry_mentions_any(text: &str, markers: &[&str]) -> bool {
     })
 }
 
-fn remove_conflicting_amap_sdk_aars(libs_dst: &Path, window: &tauri::Window) -> Result<(), String> {
+fn remove_conflicting_amap_sdk_aars(
+    libs_dst: &Path,
+    window: &dyn crate::utils::process::BuildEventSink,
+) -> Result<(), String> {
     if !libs_dst.is_dir() {
         return Ok(());
     }

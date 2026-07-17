@@ -1,10 +1,8 @@
 import { h, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { NButton, NRadio, NRadioGroup, NSpace, NText } from 'naive-ui'
-import type { BuildArtifact, BuildExecutionMode, NonIosPlatform, Platform, UniappManifestInfo } from './types'
+import type { BuildArtifact, BuildStartSelection, IosPackagingMode, NonIosPlatform, Platform, UniappManifestInfo } from './types'
 import { generateProjectCommand, generateProjectKind, platformProjectName } from './moduleKeys'
-
-type IosPackagingMode = 'autoMigration' | 'localPod'
 
 function iosPackagingModeLabel(mode: IosPackagingMode) {
   return mode === 'autoMigration' ? '自动迁移打包' : '本地 Pod 打包'
@@ -68,9 +66,15 @@ export function createBuildCenterActions(ctx: any) {
     return !!ctx.scanResult.value && ctx.singleSelectedPlatform.value === platform && !ctx.isBuildLocked.value
   }
 
-  async function startBuild() {
+  async function startBuild(selection: BuildStartSelection, expectedPlatforms: Platform[]) {
     if (!ctx.scanResult.value || ctx.selectedPlatforms.value.length === 0 || ctx.isBuildLocked.value) {
       if (ctx.isBuildLocked.value) ctx.message.warning('已有构建任务进行中，请等待完成后再开始新的构建')
+      return
+    }
+    const selectedPlatforms = [...ctx.selectedPlatforms.value] as Platform[]
+    if (selectedPlatforms.length !== expectedPlatforms.length
+      || selectedPlatforms.some((platform, index) => platform !== expectedPlatforms[index])) {
+      ctx.message.warning('平台选择已变化，请重新选择本次打包方式')
       return
     }
     const runProjectId = ctx.projectId.value
@@ -89,8 +93,11 @@ export function createBuildCenterActions(ctx: any) {
 
     let iosPackagingMode: IosPackagingMode | null = null
     if (ctx.selectedNeedsIosConfig.value) {
-      iosPackagingMode = await chooseIosPackagingMode('开始打包')
-      if (!iosPackagingMode) return
+      iosPackagingMode = selection.iosPackagingMode || null
+      if (!iosPackagingMode) {
+        ctx.message.error('请选择 iOS 集成方式')
+        return
+      }
     }
     const buildManifestInfo = ctx.selectedManifestInfoForBuild(manifestInfo)
     const androidModuleConfig = ctx.buildAndroidModuleConfigPayload()
@@ -99,10 +106,10 @@ export function createBuildCenterActions(ctx: any) {
 
     let lastBuildId: string | null = null
     const buildIds: string[] = []
-    for (const platform of ctx.selectedPlatforms.value as Platform[]) {
-      const executionMode = ctx.resolveBuildExecutionMode(platform) as BuildExecutionMode
-      if (executionMode === 'auto') {
-        ctx.message.error(`${platform} 打包方式无法自动选择，请检查本地环境或 GitHub 云端打包配置`)
+    for (const platform of selectedPlatforms) {
+      const executionMode = platform === 'harmony' ? 'local' : selection.executionModes[platform]
+      if (!executionMode) {
+        ctx.message.error(`请选择 ${platform} 的打包方式`)
         return
       }
       const buildId = executionMode === 'github'

@@ -23,6 +23,13 @@ impl MobileProvisionInfo {
         }
     }
 
+    pub(crate) fn installed_path(&self) -> Option<PathBuf> {
+        dirs::home_dir().map(|home| {
+            home.join("Library/MobileDevice/Provisioning Profiles")
+                .join(format!("{}.mobileprovision", self.uuid))
+        })
+    }
+
     fn bundle_pattern(&self) -> Option<String> {
         let app_id = self.application_identifier.trim();
         if app_id.is_empty() {
@@ -94,15 +101,56 @@ pub(super) fn import_p12_certificate(
     let password = crate::utils::keychain::get_password(&password_key)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "Keychain 中缺少 iOS P12 证书密码".to_string())?;
-    let output = std::process::Command::new("security")
+    import_p12_certificate_explicit(config, &password, None, None)
+}
+
+pub(crate) fn import_p12_certificate_explicit(
+    config: &crate::commands::project::ProjectConfig,
+    password: &str,
+    keychain: Option<&Path>,
+    keychain_password: Option<&str>,
+) -> Result<(), String> {
+    if config.ios.certificate.trim().is_empty() {
+        return Ok(());
+    }
+    let cert = PathBuf::from(&config.ios.certificate);
+    if !cert.exists() {
+        return Err(format!("P12 证书不存在: {}", cert.display()));
+    }
+    let mut command = std::process::Command::new("security");
+    command
         .arg("import")
         .arg(&cert)
         .arg("-P")
         .arg(password)
-        .arg("-A")
+        .arg("-A");
+    if let Some(keychain) = keychain {
+        command.arg("-k").arg(keychain);
+    }
+    let output = command
         .output()
         .map_err(|e| format!("执行 security import 失败: {}", e))?;
     if output.status.success() {
+        if let (Some(keychain), Some(keychain_password)) = (keychain, keychain_password) {
+            let partition = std::process::Command::new("security")
+                .args([
+                    "set-key-partition-list",
+                    "-S",
+                    "apple-tool:,apple:",
+                    "-s",
+                    "-k",
+                ])
+                .arg(keychain_password)
+                .arg(keychain)
+                .output()
+                .map_err(|e| format!("设置临时 Keychain partition list 失败: {}", e))?;
+            if !partition.status.success() {
+                return Err(format!(
+                    "设置临时 Keychain partition list 失败: {}",
+                    String::from_utf8_lossy(&partition.stderr).trim()
+                ));
+            }
+        }
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);

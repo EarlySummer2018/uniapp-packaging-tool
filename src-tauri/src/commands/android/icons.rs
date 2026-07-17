@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 pub fn generate_icons(
     android_icons: Option<&crate::commands::shared::resource::AndroidIconsConfig>,
     workspace: &Path,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     let res_dir = workspace
         .join(crate::commands::android::project_mod::MODULE_NAME)
@@ -108,7 +108,7 @@ fn set_android_launcher_icon_reference(workspace: &Path) -> Result<(), String> {
 pub fn apply_push_small_icon(
     push_icons: Option<&crate::commands::shared::resource::PushIconsConfig>,
     workspace: &Path,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     let Some(config) = push_icons else {
         return Ok(());
@@ -274,7 +274,7 @@ pub fn clean_drawable_files(res_dir: &Path, file_names: &[&str]) -> Result<(), S
 pub fn apply_android_splashscreen(
     splashscreen: Option<&crate::commands::resource::SplashscreenConfig>,
     workspace: &Path,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     let res_dir = workspace
         .join(crate::commands::android::project_mod::MODULE_NAME)

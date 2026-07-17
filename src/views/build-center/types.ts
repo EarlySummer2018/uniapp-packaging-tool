@@ -202,7 +202,31 @@ export interface BuildArtifact {
   cloudRunUrl?: string | null
 }
 
-export type BuildExecutionMode = 'auto' | 'local' | 'github'
+export type BuildExecutionSource = 'local' | 'github'
+export type CloudBuildPlatform = Extract<Platform, 'android' | 'ios'>
+export type IosPackagingMode = 'autoMigration' | 'localPod'
+
+export interface BuildStartSelection {
+  executionModes: Partial<Record<Platform, BuildExecutionSource>>
+  iosPackagingMode?: IosPackagingMode
+}
+
+export interface BuildModeAvailability {
+  enabled: boolean
+  reason: string
+}
+
+export interface BuildExecutionAvailability {
+  local: BuildModeAvailability
+  github?: BuildModeAvailability
+}
+
+export interface LocalSdkCacheInspection {
+  platform: CloudBuildPlatform
+  fingerprint: string
+  sizeBytes: number
+  cacheHit: boolean
+}
 
 export interface BuildRecord {
   id: string

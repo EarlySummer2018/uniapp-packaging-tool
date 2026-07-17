@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use tauri::Manager;
-
 use super::logging::emit_ios_log;
 use super::pod_config::write_ios_pod_config;
 use super::pod_subspecs::{resolve_ios_pod_subspecs, IosPodSubspecs};
@@ -21,7 +19,7 @@ pub(super) struct IosPodContext<'a> {
     pub(super) sdk_root: &'a Path,
     pub(super) manifest_info: Option<&'a crate::commands::resource::UniappManifestInfo>,
     pub(super) scan: &'a ResourceScanResult,
-    pub(super) window: &'a tauri::Window,
+    pub(super) sink: crate::utils::process::SharedBuildEventSink,
     pub(super) build_id: &'a str,
 }
 
@@ -34,7 +32,7 @@ pub(super) async fn integrate_ios_pods(
     let copied_uts_count = copy_ios_uts_plugins_for_pod(ctx.project_root, &ctx.scan.uts)?;
     if copied_uts_count > 0 {
         emit_ios_log(
-            ctx.window,
+            ctx.sink.as_ref(),
             ctx.build_id,
             "success",
             &format!(
@@ -47,7 +45,7 @@ pub(super) async fn integrate_ios_pods(
     let uts_pod_count = ios_uts_plugin_pod_dependency_count(ctx.scan);
     if uts_pod_count > 0 {
         emit_ios_log(
-            ctx.window,
+            ctx.sink.as_ref(),
             ctx.build_id,
             "info",
             &format!(
@@ -64,10 +62,10 @@ pub(super) async fn integrate_ios_pods(
     log_pod_selection(&ctx, &subspecs);
     log_manual_pod_followups(&ctx);
 
-    run_pod_install(ctx.project_root, ctx.window, ctx.build_id).await?;
+    run_pod_install(ctx.project_root, ctx.sink.clone(), ctx.build_id).await?;
     let workspace_file = find_xcworkspace(ctx.project_root, ctx.project_file)?;
     emit_ios_log(
-        ctx.window,
+        ctx.sink.as_ref(),
         ctx.build_id,
         "success",
         &format!("CocoaPods 已生成 workspace: {}", workspace_file.display()),
@@ -160,14 +158,14 @@ pub(super) fn render_ios_podfile(
 
 fn log_pod_selection(ctx: &IosPodContext<'_>, subspecs: &IosPodSubspecs) {
     emit_ios_log(
-        ctx.window,
+        ctx.sink.as_ref(),
         ctx.build_id,
         "info",
         &format!("iOS 本地 Pod subspec: {}", subspecs.values.join("、")),
         Some(32),
     );
     for warning in &subspecs.warnings {
-        emit_ios_log(ctx.window, ctx.build_id, "warn", warning, Some(33));
+        emit_ios_log(ctx.sink.as_ref(), ctx.build_id, "warn", warning, Some(33));
     }
 }
 
@@ -178,33 +176,33 @@ fn log_manual_pod_followups(ctx: &IosPodContext<'_>) {
         "如启用 Firebase 统计或 FCM，请确认 GoogleService-Info.plist 已按官方文档放入工程",
         "如启用 UniAd-WM，请按 uni-AD 官方文档手工确认微信相关参数",
     ] {
-        emit_ios_log(ctx.window, ctx.build_id, "info", message, Some(34));
+        emit_ios_log(ctx.sink.as_ref(), ctx.build_id, "info", message, Some(34));
     }
 }
 
 async fn run_pod_install(
     project_root: &Path,
-    window: &tauri::Window,
+    sink: crate::utils::process::SharedBuildEventSink,
     build_id: &str,
 ) -> Result<(), String> {
     emit_ios_log(
-        window,
+        sink.as_ref(),
         build_id,
         "info",
         "执行 pod install --no-repo-update",
         Some(40),
     );
-    let output = crate::utils::process::run_command_streaming_with_env_tagged(
+    let output = crate::utils::process::run_command_streaming_with_env_sink(
         "pod",
         &["install".into(), "--no-repo-update".into()],
         &project_root.to_string_lossy(),
         &[],
-        window.app_handle().clone(),
+        sink,
         "build-log",
-        crate::utils::process::StreamLogMeta {
+        Some(crate::utils::process::StreamLogMeta {
             build_id: build_id.to_string(),
             platform: "ios".to_string(),
-        },
+        }),
     )
     .await
     .map_err(|e| {

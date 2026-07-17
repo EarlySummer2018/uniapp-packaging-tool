@@ -4,18 +4,19 @@ import {
   NTabs, NTabPane, NCard, NButton, NIcon, NSpace, NTag,
   NText, useMessage, NSpin,
   NAlert, NTable,
-  NModal, NFormItem, NInput, NCheckbox, NSelect
+  NModal, NFormItem, NInput, NCheckbox, NSelect, useDialog
 } from 'naive-ui'
 import {
   RefreshOutline, FolderOpenOutline, CheckmarkCircleOutline,
   CloseCircleOutline, AlertCircleOutline, LogoAndroid, LogoApple,
-  SettingsOutline, CubeOutline
+  SettingsOutline, CubeOutline, TrashOutline
 } from '@vicons/ionicons5'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { openPath, openUrl } from '@tauri-apps/plugin-opener'
 
 const message = useMessage()
+const dialog = useDialog()
 
 interface EnvItem {
   name: string
@@ -59,18 +60,20 @@ interface GlobalSdkItem {
   download_url: string
 }
 
-type BuildExecutionMode = 'auto' | 'local' | 'github'
-
 interface GithubCloudBuildConfig {
   owner: string
   repo: string
   ref: string
   workflowFile: string
-  androidDefaultMode: BuildExecutionMode
-  iosDefaultMode: BuildExecutionMode
-  androidSdkUrl: string
-  iosSdkUrl: string
   hasToken?: boolean
+}
+
+interface GithubSdkCacheEntry {
+  platform: 'android' | 'ios'
+  fingerprint: string
+  compressedSizeBytes: number
+  uploadedAt: string
+  matchesCurrentLocalSdk: boolean
 }
 
 const activeTab = ref('dcloud-sdk')
@@ -79,16 +82,16 @@ const globalSdkLoading = ref(false)
 const cloudBuildLoading = ref(false)
 const cloudBuildSaving = ref(false)
 const cloudBuildTesting = ref(false)
+const sdkCacheLoading = ref(false)
+const sdkCacheDeletingKey = ref('')
+const sdkCacheError = ref('')
+const sdkCacheEntries = ref<GithubSdkCacheEntry[]>([])
 const githubTokenInput = ref('')
 const cloudBuildConfig = ref<GithubCloudBuildConfig>({
   owner: '',
   repo: '',
   ref: 'main',
   workflowFile: 'cloud-build.yml',
-  androidDefaultMode: 'auto',
-  iosDefaultMode: 'auto',
-  androidSdkUrl: '',
-  iosSdkUrl: '',
   hasToken: false,
 })
 
@@ -99,12 +102,7 @@ const globalSdkConfig = ref<GlobalSdkConfig>({
 })
 const envGroups = ref<EnvGroup[]>([])
 const recentBuilds = ref<BuildRecordSummary[]>([])
-
-const buildModeOptions = [
-  { label: '自动选择', value: 'auto' },
-  { label: '本地打包', value: 'local' },
-  { label: 'GitHub 云端打包', value: 'github' },
-]
+const cloudCachePlatforms: Array<'android' | 'ios'> = ['android', 'ios']
 
 const globalSdkItems = computed<GlobalSdkItem[]>(() => [
   {
@@ -142,7 +140,7 @@ onMounted(() => {
   loadGlobalSdkConfig()
   loadEnvReport()
   loadRecentBuilds()
-  loadGithubCloudBuildConfig()
+  void loadGithubCloudBuildConfig().then(() => loadGithubSdkCacheStatus())
 })
 
 async function loadGlobalSdkConfig() {
@@ -296,6 +294,80 @@ async function loadGithubCloudBuildConfig() {
   }
 }
 
+async function loadGithubSdkCacheStatus(showSuccess = false) {
+  sdkCacheLoading.value = true
+  sdkCacheError.value = ''
+  try {
+    sdkCacheEntries.value = await invoke<GithubSdkCacheEntry[]>('get_github_sdk_cache_status', {
+      platform: null,
+    })
+    if (showSuccess) message.success('SDK 缓存状态已重新校验')
+  } catch (e: any) {
+    sdkCacheEntries.value = []
+    sdkCacheError.value = String(e)
+  } finally {
+    sdkCacheLoading.value = false
+  }
+}
+
+function sdkCacheEntriesFor(platform: 'android' | 'ios') {
+  return sdkCacheEntries.value.filter(entry => entry.platform === platform).slice(0, 2)
+}
+
+function cacheEntryKey(entry: GithubSdkCacheEntry) {
+  return `${entry.platform}:${entry.fingerprint}`
+}
+
+function shortFingerprint(fingerprint: string) {
+  return fingerprint.length > 16 ? `${fingerprint.slice(0, 12)}…${fingerprint.slice(-4)}` : fingerprint
+}
+
+function formatBytes(size: number) {
+  if (!Number.isFinite(size) || size <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const unitIndex = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1)
+  const value = size / 1024 ** unitIndex
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
+}
+
+function formatUploadedAt(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value || '-'
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function confirmDeleteGithubSdkCache(entry: GithubSdkCacheEntry) {
+  const platformLabel = entry.platform === 'android' ? 'Android' : 'iOS'
+  dialog.warning({
+    title: `删除 ${platformLabel} SDK 缓存`,
+    content: `将删除指纹 ${shortFingerprint(entry.fingerprint)} 对应的云端缓存。下次选择 GitHub 打包时需要重新上传此 SDK。`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    async onPositiveClick() {
+      const key = cacheEntryKey(entry)
+      sdkCacheDeletingKey.value = key
+      try {
+        await invoke('delete_github_sdk_cache', {
+          platform: entry.platform,
+          fingerprint: entry.fingerprint,
+        })
+        await loadGithubSdkCacheStatus()
+        message.success(`${platformLabel} SDK 缓存已删除`)
+      } catch (e: any) {
+        message.error(String(e))
+      } finally {
+        sdkCacheDeletingKey.value = ''
+      }
+    },
+  })
+}
+
 async function saveGithubCloudBuildConfig() {
   cloudBuildSaving.value = true
   try {
@@ -304,10 +376,6 @@ async function saveGithubCloudBuildConfig() {
       repo: cloudBuildConfig.value.repo,
       ref: cloudBuildConfig.value.ref,
       workflowFile: cloudBuildConfig.value.workflowFile,
-      androidDefaultMode: cloudBuildConfig.value.androidDefaultMode,
-      iosDefaultMode: cloudBuildConfig.value.iosDefaultMode,
-      androidSdkUrl: cloudBuildConfig.value.androidSdkUrl,
-      iosSdkUrl: cloudBuildConfig.value.iosSdkUrl,
     }
     await invoke('save_github_cloud_build_config', { config })
     if (githubTokenInput.value.trim()) {
@@ -315,6 +383,7 @@ async function saveGithubCloudBuildConfig() {
       githubTokenInput.value = ''
     }
     await loadGithubCloudBuildConfig()
+    await loadGithubSdkCacheStatus()
     message.success('GitHub 云端打包配置已保存')
   } catch (e: any) {
     message.error(String(e))
@@ -327,6 +396,7 @@ async function clearGithubToken() {
   try {
     await invoke('save_github_cloud_build_secret', { token: '' })
     await loadGithubCloudBuildConfig()
+    await loadGithubSdkCacheStatus()
     message.success('GitHub Token 已清除')
   } catch (e: any) {
     message.error(String(e))
@@ -351,6 +421,7 @@ function refreshAll() {
   loadGlobalSdkConfig()
   loadEnvReport()
   loadRecentBuilds()
+  if (activeTab.value === 'github-cloud') void loadGithubSdkCacheStatus()
   message.success('已刷新')
 }
 
@@ -666,7 +737,7 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
             </template>
 
             <n-alert type="info" class="cloud-build-alert">
-              云端打包会上传临时构建包到私有 GitHub Release，并触发指定 workflow。请使用私有仓库和具备 Actions / Contents 权限的 Token。
+              云端打包使用“DCloud 离线SDK”页中配置的本地 SDK。首次使用会将 SDK 缓存到私有 GitHub Release，后续按指纹复用。请使用私有仓库和具备 Actions / Contents 权限的 Token。
             </n-alert>
 
             <n-space vertical :size="16">
@@ -685,21 +756,6 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
                 </n-form-item>
               </div>
 
-              <div class="cloud-build-grid">
-                <n-form-item label="Android 默认方式">
-                  <n-select v-model:value="cloudBuildConfig.androidDefaultMode" :options="buildModeOptions" />
-                </n-form-item>
-                <n-form-item label="iOS 默认方式">
-                  <n-select v-model:value="cloudBuildConfig.iosDefaultMode" :options="buildModeOptions" />
-                </n-form-item>
-              </div>
-
-              <n-form-item label="Android 离线 SDK 下载 URL">
-                <n-input v-model:value="cloudBuildConfig.androidSdkUrl" placeholder="https://.../dcloud-android-sdk.zip" />
-              </n-form-item>
-              <n-form-item label="iOS 离线 SDK 下载 URL">
-                <n-input v-model:value="cloudBuildConfig.iosSdkUrl" placeholder="https://.../dcloud-ios-sdk.zip" />
-              </n-form-item>
               <n-form-item label="GitHub Token">
                 <n-input
                   v-model:value="githubTokenInput"
@@ -708,6 +764,80 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
                   :placeholder="cloudBuildConfig.hasToken ? '已保存，留空不变' : '请输入 fine-grained PAT'"
                 />
               </n-form-item>
+
+              <div class="sdk-cache-section">
+                <div class="sdk-cache-header">
+                  <div>
+                    <n-text strong>SDK 缓存状态</n-text>
+                    <n-text depth="3" class="sdk-cache-subtitle">每个平台保留最近两个完整缓存版本</n-text>
+                  </div>
+                  <n-button
+                    size="small"
+                    secondary
+                    :loading="sdkCacheLoading"
+                    :disabled="!!sdkCacheDeletingKey"
+                    @click="loadGithubSdkCacheStatus(true)"
+                  >
+                    <template #icon><n-icon><RefreshOutline /></n-icon></template>
+                    重新校验
+                  </n-button>
+                </div>
+
+                <n-alert v-if="sdkCacheError" type="warning" :show-icon="true">
+                  暂时无法读取云端缓存：{{ sdkCacheError }}
+                </n-alert>
+
+                <n-spin :show="sdkCacheLoading">
+                  <div class="sdk-cache-platforms">
+                    <div v-for="platform in cloudCachePlatforms" :key="platform" class="sdk-cache-platform">
+                      <div class="sdk-cache-platform-title">
+                        <n-space align="center" :size="8">
+                          <n-icon :size="18"><component :is="platform === 'android' ? LogoAndroid : LogoApple" /></n-icon>
+                          <n-text strong>{{ platform === 'android' ? 'Android' : 'iOS' }}</n-text>
+                        </n-space>
+                        <n-tag size="small" :type="sdkCacheEntriesFor(platform).length ? 'success' : 'default'" round>
+                          {{ sdkCacheEntriesFor(platform).length ? `${sdkCacheEntriesFor(platform).length} 个版本` : '暂无缓存' }}
+                        </n-tag>
+                      </div>
+
+                      <div v-if="sdkCacheEntriesFor(platform).length" class="sdk-cache-list">
+                        <div
+                          v-for="entry in sdkCacheEntriesFor(platform)"
+                          :key="cacheEntryKey(entry)"
+                          class="sdk-cache-entry"
+                        >
+                          <div class="sdk-cache-entry-main">
+                            <n-space align="center" :size="6">
+                              <n-text code>{{ shortFingerprint(entry.fingerprint) }}</n-text>
+                              <n-tag v-if="entry.matchesCurrentLocalSdk" size="small" type="success" :bordered="false">
+                                当前 SDK
+                              </n-tag>
+                            </n-space>
+                            <n-text depth="3" class="sdk-cache-meta">
+                              {{ formatBytes(entry.compressedSizeBytes) }} · {{ formatUploadedAt(entry.uploadedAt) }}
+                            </n-text>
+                          </div>
+                          <n-button
+                            quaternary
+                            circle
+                            type="error"
+                            size="small"
+                            :aria-label="`删除 ${platform === 'android' ? 'Android' : 'iOS'} SDK 缓存`"
+                            :loading="sdkCacheDeletingKey === cacheEntryKey(entry)"
+                            :disabled="!!sdkCacheDeletingKey && sdkCacheDeletingKey !== cacheEntryKey(entry)"
+                            @click="confirmDeleteGithubSdkCache(entry)"
+                          >
+                            <template #icon><n-icon><TrashOutline /></n-icon></template>
+                          </n-button>
+                        </div>
+                      </div>
+                      <n-text v-else depth="3" class="sdk-cache-empty">
+                        首次选择 GitHub 打包时会上传本地离线 SDK。
+                      </n-text>
+                    </div>
+                  </div>
+                </n-spin>
+              </div>
             </n-space>
 
             <template #action>
@@ -845,6 +975,60 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.sdk-cache-section {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.sdk-cache-header,
+.sdk-cache-platform-title,
+.sdk-cache-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sdk-cache-subtitle,
+.sdk-cache-meta,
+.sdk-cache-empty {
+  display: block;
+  margin-top: 4px;
+}
+
+.sdk-cache-platforms {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sdk-cache-platform {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.sdk-cache-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.sdk-cache-entry {
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--surface-color);
+}
+
+.sdk-cache-entry-main {
+  min-width: 0;
+}
+
 .env-summary-card {
   margin-top: 16px;
 }
@@ -858,7 +1042,8 @@ function openGlobalSdkConfig(platform: 'android' | 'ios' | 'harmony', currentPat
 }
 
 @media (max-width: 720px) {
-  .cloud-build-grid {
+  .cloud-build-grid,
+  .sdk-cache-platforms {
     grid-template-columns: 1fr;
   }
 }

@@ -17,7 +17,7 @@ pub fn copy_module_activity_sources(
     sdk_src_dir: &Path,
     workspace: &Path,
     package_name: &str,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     use crate::commands::android::types::emit_log;
 
@@ -406,7 +406,7 @@ pub fn apply_android_manifest_modules(
     workspace: &Path,
     extra_repos: &mut BTreeSet<String>,
     extra_deps: &mut BTreeSet<String>,
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
 ) -> Result<(), String> {
     super::artifacts::apply_android_manifest_modules_internal(
         modules,
@@ -439,7 +439,7 @@ pub fn render_android_module_manifest_patches(
 
 /// 发送模块配置报告日志
 pub fn emit_android_module_config_report(
-    window: &tauri::Window,
+    window: &dyn crate::utils::process::BuildEventSink,
     report: &crate::commands::module::AndroidModuleConfigReport,
 ) {
     use crate::commands::android::types::emit_log;

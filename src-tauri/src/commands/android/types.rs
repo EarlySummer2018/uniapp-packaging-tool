@@ -1,7 +1,6 @@
 //! Android 构建类型定义
 
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AndroidBuildOptions {
@@ -78,22 +77,27 @@ pub fn timestamp() -> String {
     chrono::Local::now().format(format_pattern).to_string()
 }
 
-pub fn emit_log(window: &tauri::Window, level: &str, message: &str, progress: Option<u8>) {
-    emit_log_with_build_id(window, None, "android", level, message, progress);
+pub fn emit_log(
+    sink: &dyn crate::utils::process::BuildEventSink,
+    level: &str,
+    message: &str,
+    progress: Option<u8>,
+) {
+    emit_log_with_build_id(sink, None, "android", level, message, progress);
 }
 
 pub fn emit_log_for_build(
-    window: &tauri::Window,
+    sink: &dyn crate::utils::process::BuildEventSink,
     build_id: &str,
     level: &str,
     message: &str,
     progress: Option<u8>,
 ) {
-    emit_log_with_build_id(window, Some(build_id), "android", level, message, progress);
+    emit_log_with_build_id(sink, Some(build_id), "android", level, message, progress);
 }
 
 pub fn emit_log_with_build_id(
-    window: &tauri::Window,
+    sink: &dyn crate::utils::process::BuildEventSink,
     build_id: Option<&str>,
     platform: &str,
     level: &str,
@@ -107,7 +111,17 @@ pub fn emit_log_with_build_id(
         message: message.to_string(),
         progress,
     };
-    let _ = window.emit("build-log", event);
+    sink.send(
+        "build-log",
+        serde_json::to_value(event).unwrap_or_else(|_| {
+            serde_json::json!({
+                "platform": platform,
+                "level": level,
+                "message": message,
+                "progress": progress,
+            })
+        }),
+    );
 }
 
 /// 非 AAR 解包后的信息，用于生成正确的 build.gradle 依赖声明

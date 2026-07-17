@@ -2,8 +2,103 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
+use std::sync::Arc;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, BufReader};
+
+/// Destination for build events.  The native build core uses this interface so
+/// it can run both inside Tauri and in the headless GitHub Actions runner.
+pub trait BuildEventSink: Send + Sync {
+    fn send(&self, channel: &str, payload: serde_json::Value);
+}
+
+impl BuildEventSink for tauri::Window {
+    fn send(&self, channel: &str, payload: serde_json::Value) {
+        let _ = self.emit(channel, payload);
+    }
+}
+
+impl BuildEventSink for tauri::AppHandle {
+    fn send(&self, channel: &str, payload: serde_json::Value) {
+        let _ = self.emit(channel, payload);
+    }
+}
+
+/// Cloneable sink used by async command readers and headless build runtimes.
+pub type SharedBuildEventSink = Arc<dyn BuildEventSink>;
+
+#[derive(Debug, Default)]
+pub struct JsonLineBuildEventSink {
+    secrets: Vec<String>,
+}
+
+impl JsonLineBuildEventSink {
+    pub fn new(secrets: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            secrets: secrets
+                .into_iter()
+                .filter(|secret| !secret.is_empty())
+                .collect(),
+        }
+    }
+
+    fn redacted_event(&self, channel: &str, mut payload: serde_json::Value) -> serde_json::Value {
+        redact_json_secrets(&mut payload);
+        redact_json_values(&mut payload, &self.secrets);
+        serde_json::json!({ "channel": channel, "event": payload })
+    }
+}
+
+impl BuildEventSink for JsonLineBuildEventSink {
+    fn send(&self, channel: &str, payload: serde_json::Value) {
+        println!("{}", self.redacted_event(channel, payload));
+    }
+}
+
+fn redact_json_values(value: &mut serde_json::Value, secrets: &[String]) {
+    match value {
+        serde_json::Value::String(text) => {
+            for secret in secrets {
+                *text = text.replace(secret, "***");
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                redact_json_values(value, secrets);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for value in map.values_mut() {
+                redact_json_values(value, secrets);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Keep secrets out of CI logs even when a subprocess happens to echo its
+/// command line or environment-derived configuration.
+pub fn redact_json_secrets(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                let lower = key.to_ascii_lowercase();
+                if lower.contains("password") || lower.contains("token") || lower.contains("secret")
+                {
+                    *value = serde_json::Value::String("***".to_string());
+                } else {
+                    redact_json_secrets(value);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                redact_json_secrets(value);
+            }
+        }
+        _ => {}
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandOutput {
@@ -112,6 +207,27 @@ async fn run_command_streaming_with_env_internal(
     channel: &str,
     meta: Option<StreamLogMeta>,
 ) -> Result<CommandOutput> {
+    run_command_streaming_with_env_sink(
+        program,
+        args,
+        cwd,
+        env_vars,
+        Arc::new(app_handle),
+        channel,
+        meta,
+    )
+    .await
+}
+
+pub async fn run_command_streaming_with_env_sink(
+    program: &str,
+    args: &[String],
+    cwd: &str,
+    env_vars: &[(String, String)],
+    sink: SharedBuildEventSink,
+    channel: &str,
+    meta: Option<StreamLogMeta>,
+) -> Result<CommandOutput> {
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args)
         .stdout(Stdio::piped())
@@ -131,7 +247,7 @@ async fn run_command_streaming_with_env_internal(
         .take()
         .ok_or_else(|| anyhow::anyhow!("Failed to capture stderr"))?;
 
-    let app_clone = app_handle.clone();
+    let sink_clone = sink.clone();
     let channel_stdout = channel.to_string();
     let stdout_meta = meta.clone();
     let stdout_handle = tokio::spawn(async move {
@@ -149,13 +265,11 @@ async fn run_command_streaming_with_env_internal(
             } else {
                 serde_json::json!({ "type": "stdout", "line": line })
             };
-            let _ = app_clone
-                .emit(&channel_stdout, payload)
-                .map_err(|e| eprintln!("emit error: {}", e));
+            sink_clone.send(&channel_stdout, payload);
         }
     });
 
-    let app_clone2 = app_handle.clone();
+    let sink_clone2 = sink.clone();
     let channel_stderr = channel.to_string();
     let stderr_meta = meta.clone();
     let stderr_handle = tokio::spawn(async move {
@@ -174,9 +288,7 @@ async fn run_command_streaming_with_env_internal(
             } else {
                 serde_json::json!({ "type": "stderr", "line": line })
             };
-            let _ = app_clone2
-                .emit(&channel_stderr, payload)
-                .map_err(|e| eprintln!("emit error: {}", e));
+            sink_clone2.send(&channel_stderr, payload);
         }
     });
 
@@ -268,7 +380,130 @@ fn stderr_line_level(line: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::stderr_line_level;
+    use super::{
+        run_command_streaming_with_env_sink, stderr_line_level, BuildEventSink,
+        JsonLineBuildEventSink, SharedBuildEventSink, StreamLogMeta,
+    };
+
+    #[cfg(unix)]
+    use std::path::{Path, PathBuf};
+    #[cfg(unix)]
+    use std::sync::{Arc, Mutex};
+
+    #[cfg(unix)]
+    struct RecordingJsonLineSink {
+        formatter: JsonLineBuildEventSink,
+        events: Mutex<Vec<serde_json::Value>>,
+    }
+
+    #[cfg(unix)]
+    impl RecordingJsonLineSink {
+        fn new(secrets: impl IntoIterator<Item = String>) -> Self {
+            Self {
+                formatter: JsonLineBuildEventSink::new(secrets),
+                events: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn events(&self) -> Vec<serde_json::Value> {
+            self.events.lock().unwrap().clone()
+        }
+    }
+
+    #[cfg(unix)]
+    impl BuildEventSink for RecordingJsonLineSink {
+        fn send(&self, channel: &str, payload: serde_json::Value) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(self.formatter.redacted_event(channel, payload));
+        }
+    }
+
+    #[cfg(unix)]
+    fn write_executable_script(root: &Path, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::create_dir_all(root).unwrap();
+        let path = root.join(name);
+        std::fs::write(&path, body).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        path
+    }
+
+    #[test]
+    fn structured_logs_redact_secret_fields_and_values() {
+        let sink = JsonLineBuildEventSink::new(["value-secret".to_string()]);
+        let event = sink.redacted_event(
+            "build-log",
+            serde_json::json!({
+                "password": "field-secret",
+                "line": "gradle echoed value-secret",
+            }),
+        );
+        assert_eq!(event["channel"], "build-log");
+        assert_eq!(event["event"]["password"], "***");
+        assert_eq!(event["event"]["line"], "gradle echoed ***");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn headless_process_streams_tagged_redacted_logs_with_explicit_env() {
+        let root =
+            std::env::temp_dir().join(format!("unipack-headless-process-{}", uuid::Uuid::new_v4()));
+        let script = write_executable_script(
+            &root,
+            "fake-build-tool",
+            r#"#!/bin/sh
+set -eu
+printf 'cwd=%s env=%s secret=%s\n' "$PWD" "$UNIPACK_TEST_ENV" 'runner-secret'
+printf 'warning: fake stderr runner-secret\n' >&2
+"#,
+        );
+        let sink = Arc::new(RecordingJsonLineSink::new(["runner-secret".to_string()]));
+        let shared_sink: SharedBuildEventSink = sink.clone();
+
+        let output = run_command_streaming_with_env_sink(
+            &script.to_string_lossy(),
+            &["assembleRelease".to_string()],
+            &root.to_string_lossy(),
+            &[("UNIPACK_TEST_ENV".to_string(), "explicit-value".to_string())],
+            shared_sink,
+            "build-log",
+            Some(StreamLogMeta {
+                build_id: "headless-smoke".to_string(),
+                platform: "android".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert!(output.success);
+        let events = sink.events();
+        let stdout = events
+            .iter()
+            .find(|event| event["event"]["type"] == "stdout")
+            .expect("stdout event");
+        assert_eq!(stdout["channel"], "build-log");
+        assert_eq!(stdout["event"]["buildId"], "headless-smoke");
+        assert_eq!(stdout["event"]["platform"], "android");
+        assert_eq!(stdout["event"]["level"], "info");
+        let stdout_line = stdout["event"]["line"].as_str().unwrap();
+        assert!(stdout_line.contains("env=explicit-value"));
+        assert!(stdout_line.contains("secret=***"));
+        assert!(!stdout_line.contains("runner-secret"));
+
+        let stderr = events
+            .iter()
+            .find(|event| event["event"]["type"] == "stderr")
+            .expect("stderr event");
+        assert_eq!(stderr["event"]["level"], "warn");
+        assert_eq!(stderr["event"]["line"], "warning: fake stderr ***");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn xcode_run_destination_noise_is_warning() {

@@ -25,6 +25,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "vitest run",
     "typecheck": "vue-tsc --noEmit",
     "preview": "vite preview",
     "ci:cloud-build": "cargo run --manifest-path src-tauri/Cargo.toml --bin unipack-cloud-build --",
@@ -46,8 +47,11 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
     "@vitejs/plugin-vue": "^5.2.4",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^25.0.1",
     "typescript": "~5.6.2",
     "vite": "^5.4.21",
+    "vitest": "^2.1.9",
     "vue-tsc": "^2.2.12"
   }
 }

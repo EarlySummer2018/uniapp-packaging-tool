@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use tauri::{Manager, Window};
+use std::sync::Arc;
 
 use crate::commands::android::artifacts::{copy_required_aars, inject_huawei_agconnect_json};
 use crate::commands::android::environment::{
@@ -79,6 +79,21 @@ pub struct BuildContext {
     pub manifest_patches: Option<AndroidManifestPatches>,
     pub manifest_patch_groups: Vec<project_mod::ManifestPatchGroup>,
     pub manifest_placeholders: String,
+
+    // Headless builds receive signing material explicitly and never consult
+    // the runner user's keychain.
+    pub signing_passwords: Option<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AndroidHeadlessRuntime {
+    pub project_config: crate::commands::project::ProjectConfig,
+    pub sdk_root: PathBuf,
+    pub environment: AndroidBuildEnvironment,
+    pub workspace: PathBuf,
+    pub output_dir: PathBuf,
+    pub store_password: String,
+    pub key_password: String,
 }
 
 fn push_small_icon_manifest_entry() -> &'static str {
@@ -208,7 +223,7 @@ impl BuildContext {
         build_id: Option<String>,
         manifest_info: Option<crate::commands::resource::UniappManifestInfo>,
         module_config: Option<HashMap<String, String>>,
-        window: &Window,
+        window: &dyn crate::utils::process::BuildEventSink,
         resolve_env: bool,
     ) -> Result<Self, String> {
         let build_id = build_id
@@ -319,11 +334,139 @@ impl BuildContext {
             manifest_patches: None,
             manifest_patch_groups: Vec::new(),
             manifest_placeholders: String::new(),
+            signing_passwords: None,
+        })
+    }
+
+    /// Creates a build context from payload-owned configuration.  No global
+    /// project/SDK config, Keychain entry, or configured Gradle binary is read.
+    pub fn new_headless(
+        project_id: String,
+        resource_path: String,
+        build_id: String,
+        manifest_info: Option<crate::commands::resource::UniappManifestInfo>,
+        module_config: Option<HashMap<String, String>>,
+        mut runtime: AndroidHeadlessRuntime,
+        sink: &dyn crate::utils::process::BuildEventSink,
+    ) -> Result<Self, String> {
+        emit_log_for_build(
+            sink,
+            &build_id,
+            "info",
+            "开始 Android headless APK 构建流程",
+            Some(2),
+        );
+        runtime.project_config.local_path.clear();
+        runtime.project_config.output_dir = runtime.output_dir.to_string_lossy().to_string();
+        let sdk_config = crate::commands::sdk::GlobalSdkConfig {
+            dcloud_android_sdk_path: runtime.sdk_root.to_string_lossy().to_string(),
+            dcloud_ios_sdk_path: String::new(),
+            harmony_template_path: String::new(),
+        };
+        validate_android_config(&runtime.project_config, &sdk_config)?;
+        let resource_dir = PathBuf::from(&resource_path);
+        if !resource_dir.is_dir() {
+            return Err(format!("资源路径不存在: {}", resource_path));
+        }
+        let scan = crate::commands::shared::resource_scan::scan_imported_resource(
+            &resource_dir,
+            &resource_dir,
+            false,
+        )?;
+        let app_resource_dir = PathBuf::from(&scan.app_resource_path);
+        emit_log_for_build(
+            sink,
+            &build_id,
+            "info",
+            &format!("检测到 UniApp AppId: {}", scan.app_id),
+            Some(5),
+        );
+
+        if runtime.workspace.exists() {
+            std::fs::remove_dir_all(&runtime.workspace).map_err(|e| {
+                format!(
+                    "清理 Android headless 工作区失败 {}: {}",
+                    runtime.workspace.display(),
+                    e
+                )
+            })?;
+        }
+        let sdk_layout = crate::commands::sdk::resolve_android_sdk_layout(&runtime.sdk_root)?;
+        crate::utils::fs::copy_recursive(&sdk_layout.integrate_project_dir, &runtime.workspace)
+            .map_err(|e| format!("复制 HBuilder-Integrate-AS 到工作区失败: {}", e))?;
+        crate::utils::fs::ensure_writable_tree(&runtime.workspace)
+            .map_err(|e| format!("设置工作区写权限失败: {}", e))?;
+        clean_copied_gradle_outputs(&runtime.workspace)?;
+
+        let gradlew = runtime.workspace.join(if cfg!(windows) {
+            "gradlew.bat"
+        } else {
+            "gradlew"
+        });
+        if !gradlew.is_file() {
+            return Err(format!(
+                "DCloud Android SDK 模板缺少 Gradle Wrapper: {}",
+                gradlew.display()
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&gradlew)
+                .map_err(|e| e.to_string())?
+                .permissions();
+            permissions.set_mode(permissions.mode() | 0o700);
+            std::fs::set_permissions(&gradlew, permissions).map_err(|e| e.to_string())?;
+        }
+        runtime.environment.gradle_bin = gradlew;
+        emit_log_for_build(
+            sink,
+            &build_id,
+            "success",
+            "已从 SDK 复制 HBuilder-Integrate-AS 到 headless 工作区",
+            Some(10),
+        );
+
+        let sdk_libs = sdk_layout.libs_dir.clone();
+        let libs_dst = runtime
+            .workspace
+            .join(project_mod::MODULE_NAME)
+            .join("libs");
+        Ok(Self {
+            project_id,
+            resource_path,
+            build_id,
+            manifest_info,
+            module_config,
+            config: runtime.project_config,
+            sdk_config,
+            android_env: Some(runtime.environment),
+            scan,
+            app_resource_dir,
+            workspace: runtime.workspace,
+            sdk_layout,
+            sdk_libs,
+            libs_dst,
+            manifest_modules: Vec::new(),
+            merged_module_config: None,
+            module_config_report: None,
+            manifest_value: None,
+            extra_deps: BTreeSet::new(),
+            extra_repos: BTreeSet::new(),
+            plugin_project_deps: BTreeSet::new(),
+            plugin_includes: BTreeSet::new(),
+            manifest_patches: None,
+            manifest_patch_groups: Vec::new(),
+            manifest_placeholders: String::new(),
+            signing_passwords: Some((runtime.store_password, runtime.key_password)),
         })
     }
 
     /// Step 1: 注入基础 AAR
-    pub fn inject_base_aars(&self, window: &Window) -> Result<(), String> {
+    pub fn inject_base_aars(
+        &self,
+        window: &dyn crate::utils::process::BuildEventSink,
+    ) -> Result<(), String> {
         crate::utils::fs::ensure_directory(&self.libs_dst).map_err(|e| e.to_string())?;
         copy_required_aars(&self.sdk_libs, &self.libs_dst, window)?;
         emit_log_for_build(
@@ -337,7 +480,10 @@ impl BuildContext {
     }
 
     /// Step 2: 解析模块配置 + 处理 UTS 插件
-    pub fn process_modules_and_uts(&mut self, window: &Window) -> Result<(), String> {
+    pub fn process_modules_and_uts(
+        &mut self,
+        window: &dyn crate::utils::process::BuildEventSink,
+    ) -> Result<(), String> {
         self.manifest_modules = self
             .manifest_info
             .as_ref()
@@ -436,7 +582,10 @@ impl BuildContext {
     }
 
     /// Step 3: 注入 SDK assets + 应用 Manifest 模块 + 华为推送
-    pub fn apply_manifest_modules(&mut self, window: &Window) -> Result<(), String> {
+    pub fn apply_manifest_modules(
+        &mut self,
+        window: &dyn crate::utils::process::BuildEventSink,
+    ) -> Result<(), String> {
         copy_sdk_assets(&self.sdk_layout.assets_dir, &self.workspace, window)?;
         apply_android_manifest_modules(
             self.manifest_modules.as_slice(),
@@ -459,7 +608,10 @@ impl BuildContext {
     }
 
     /// Step 4: 渲染 Manifest 补丁 + Placeholder
-    pub fn render_patches(&mut self, _window: &Window) -> Result<(), String> {
+    pub fn render_patches(
+        &mut self,
+        _window: &dyn crate::utils::process::BuildEventSink,
+    ) -> Result<(), String> {
         let (mut manifest_patches, mut manifest_patch_groups) =
             render_android_module_manifest_patches_for_manifest_impl(
                 self.module_config_report.as_ref(),
@@ -506,13 +658,15 @@ impl BuildContext {
     /// build_apk 用 false
     pub fn apply_modifications(
         &self,
-        window: &Window,
+        window: &dyn crate::utils::process::BuildEventSink,
         tolerant_passwords: bool,
     ) -> Result<(), String> {
         let store_key = format!("{}-android-store-password", self.config.id);
         let key_key = format!("{}-android-key-password", self.config.id);
 
-        let store_password = if tolerant_passwords {
+        let store_password = if let Some((store_password, _)) = &self.signing_passwords {
+            store_password.clone()
+        } else if tolerant_passwords {
             match crate::utils::keychain::get_password(&store_key) {
                 Ok(Some(pwd)) => pwd,
                 Ok(None) => String::new(),
@@ -524,7 +678,9 @@ impl BuildContext {
                 .ok_or_else(|| "Keychain 中缺少 Android Store 密码".to_string())?
         };
 
-        let key_password = if tolerant_passwords {
+        let key_password = if let Some((_, key_password)) = &self.signing_passwords {
+            key_password.clone()
+        } else if tolerant_passwords {
             match crate::utils::keychain::get_password(&key_key) {
                 Ok(Some(pwd)) => pwd,
                 Ok(None) => String::new(),
@@ -683,7 +839,10 @@ impl BuildContext {
     }
 
     /// Step 6: 导入资源（uniapp assets / dcloud_control / icons / splashscreen）
-    pub fn import_resources(&self, window: &Window) -> Result<(), String> {
+    pub fn import_resources(
+        &self,
+        window: &dyn crate::utils::process::BuildEventSink,
+    ) -> Result<(), String> {
         import_uniapp_assets(&self.app_resource_dir, &self.workspace, &self.scan.app_id)?;
         emit_log_for_build(
             window,
@@ -741,7 +900,10 @@ impl BuildContext {
     }
 
     /// Step 7: 复制模块 Activity 源文件 + 最终校验
-    pub fn finalize(&self, window: &Window) -> Result<(), String> {
+    pub fn finalize(
+        &self,
+        window: &dyn crate::utils::process::BuildEventSink,
+    ) -> Result<(), String> {
         // 复制模块 Activity Java 源文件（如微信 WXEntryActivity.java）
         copy_module_activity_sources(
             self.manifest_modules.as_slice(),
@@ -772,31 +934,39 @@ impl BuildContext {
     /// Step 8 (仅 build_apk): 执行 Gradle + 收集 APK
     pub async fn execute_gradle_and_collect(
         self,
-        window: &Window,
+        window: &tauri::Window,
+    ) -> Result<super::types::BuildArtifact, String> {
+        self.execute_gradle_and_collect_with_sink(Arc::new(window.clone()))
+            .await
+    }
+
+    pub async fn execute_gradle_and_collect_with_sink(
+        self,
+        sink: crate::utils::process::SharedBuildEventSink,
     ) -> Result<super::types::BuildArtifact, String> {
         let android_env = self
             .android_env
+            .clone()
             .expect("android_env must be set for build_apk mode");
 
         emit_log_for_build(
-            window,
+            sink.as_ref(),
             &self.build_id,
             "info",
             "执行 Gradle assembleRelease",
             Some(70),
         );
-        let app_handle = window.app_handle().clone();
-        let output = crate::utils::process::run_command_streaming_with_env_tagged(
+        let output = crate::utils::process::run_command_streaming_with_env_sink(
             &android_env.gradle_bin.to_string_lossy(),
             &["assembleRelease".to_string()],
             &self.workspace.to_string_lossy(),
             &android_process_env(&android_env),
-            app_handle,
+            sink.clone(),
             "build-log",
-            crate::utils::process::StreamLogMeta {
+            Some(crate::utils::process::StreamLogMeta {
                 build_id: self.build_id.clone(),
                 platform: "android".to_string(),
-            },
+            }),
         )
         .await
         .map_err(|e| format!("执行 Gradle 失败: {}", e))?;
@@ -818,7 +988,7 @@ impl BuildContext {
             .map(|m| m.len())
             .unwrap_or_default();
         emit_log_for_build(
-            window,
+            sink.as_ref(),
             &self.build_id,
             "success",
             &format!("Android 打包完成: {}", dest.display()),
@@ -848,6 +1018,22 @@ impl BuildContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    use std::sync::Mutex;
+
+    #[cfg(unix)]
+    #[derive(Default)]
+    struct RecordingSink {
+        events: Mutex<Vec<serde_json::Value>>,
+    }
+
+    #[cfg(unix)]
+    impl crate::utils::process::BuildEventSink for RecordingSink {
+        fn send(&self, _channel: &str, payload: serde_json::Value) {
+            self.events.lock().unwrap().push(payload);
+        }
+    }
 
     #[test]
     fn push_small_icon_requires_push_module_and_icon_config() {
@@ -1082,5 +1268,139 @@ mod tests {
             .exists());
 
         let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fake_gradlew_build_runs_headless_with_explicit_android_environment() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("unipack-fake-gradlew-{}", uuid::Uuid::new_v4()));
+        let workspace = root.join("workspace");
+        let output_dir = root.join("cloud-output");
+        let java_home = root.join("jdk-17");
+        let android_home = root.join("android-sdk");
+        let gradle_user_home = root.join("gradle-home");
+        for path in [
+            &workspace,
+            &output_dir,
+            &java_home,
+            &android_home,
+            &gradle_user_home,
+        ] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+
+        let gradlew = workspace.join("gradlew");
+        std::fs::write(
+            &gradlew,
+            format!(
+                r#"#!/bin/sh
+set -eu
+printf 'args=%s\n' "$*"
+printf 'java=%s\n' "$JAVA_HOME"
+printf 'android=%s\n' "$ANDROID_HOME"
+printf 'android-root=%s\n' "$ANDROID_SDK_ROOT"
+printf 'gradle-home=%s\n' "$GRADLE_USER_HOME"
+mkdir -p '{module}/build/outputs/apk/release'
+printf 'fake apk' > '{module}/build/outputs/apk/release/app-release.apk'
+"#,
+                module = project_mod::MODULE_NAME
+            ),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&gradlew).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&gradlew, permissions).unwrap();
+
+        let mut config = crate::commands::project::ProjectConfig::default();
+        config.output_dir = output_dir.to_string_lossy().to_string();
+        config.app.version = "9.9.9".to_string();
+        let sdk_layout = crate::commands::android::sdk_layout::AndroidSdkLayout {
+            root: root.join("sdk"),
+            integrate_project_dir: root.join("sdk/HBuilder-Integrate-AS"),
+            libs_dir: root.join("sdk/SDK/libs"),
+            assets_dir: root.join("sdk/SDK/assets"),
+            src_dir: root.join("sdk/SDK/src"),
+        };
+        let context = BuildContext {
+            project_id: "headless-project".to_string(),
+            resource_path: root.join("resource").to_string_lossy().to_string(),
+            build_id: "android-headless-smoke".to_string(),
+            manifest_info: None,
+            module_config: None,
+            config,
+            sdk_config: crate::commands::sdk::GlobalSdkConfig {
+                dcloud_android_sdk_path: root.join("sdk").to_string_lossy().to_string(),
+                dcloud_ios_sdk_path: String::new(),
+                harmony_template_path: String::new(),
+            },
+            android_env: Some(AndroidBuildEnvironment {
+                gradle_bin: gradlew,
+                java_home: java_home.clone(),
+                android_home: android_home.clone(),
+                gradle_user_home: gradle_user_home.clone(),
+            }),
+            scan: crate::commands::shared::resource_scan::ResourceScanResult {
+                app_id: "__UNI__HEADLESS".to_string(),
+                app_name: None,
+                version_name: None,
+                version_code: None,
+                hbuilderx_version: None,
+                source_path: String::new(),
+                imported_path: String::new(),
+                app_resource_path: String::new(),
+                is_zip: false,
+                manifest_path: None,
+                splashscreen: None,
+                detected_modules: Vec::new(),
+                uts: Default::default(),
+                warnings: Vec::new(),
+            },
+            app_resource_dir: root.join("resource"),
+            workspace: workspace.clone(),
+            sdk_layout,
+            sdk_libs: root.join("sdk/SDK/libs"),
+            libs_dst: workspace.join(project_mod::MODULE_NAME).join("libs"),
+            manifest_modules: Vec::new(),
+            merged_module_config: None,
+            module_config_report: None,
+            manifest_value: None,
+            extra_deps: BTreeSet::new(),
+            extra_repos: BTreeSet::new(),
+            plugin_project_deps: BTreeSet::new(),
+            plugin_includes: BTreeSet::new(),
+            manifest_patches: None,
+            manifest_patch_groups: Vec::new(),
+            manifest_placeholders: String::new(),
+            signing_passwords: Some(("store-secret".to_string(), "key-secret".to_string())),
+        };
+        let sink = Arc::new(RecordingSink::default());
+        let shared_sink: crate::utils::process::SharedBuildEventSink = sink.clone();
+
+        let artifact = context
+            .execute_gradle_and_collect_with_sink(shared_sink)
+            .await
+            .unwrap();
+
+        assert_eq!(artifact.platform, "android");
+        assert_eq!(artifact.build_id, "android-headless-smoke");
+        assert!(artifact.file_name.ends_with("-v9.9.9.apk"));
+        assert_eq!(std::fs::read(&artifact.path).unwrap(), b"fake apk");
+        let lines = sink
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| event["line"].as_str().map(ToString::to_string))
+            .collect::<Vec<_>>();
+        assert!(lines.contains(&"args=assembleRelease".to_string()));
+        assert!(lines.contains(&format!("java={}", java_home.display())));
+        assert!(lines.contains(&format!("android={}", android_home.display())));
+        assert!(lines.contains(&format!("android-root={}", android_home.display())));
+        assert!(lines.contains(&format!("gradle-home={}", gradle_user_home.display())));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

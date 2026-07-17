@@ -16,7 +16,10 @@ import type {
   AndroidModuleConfigModule,
   AndroidModuleConfigReport,
   BuildArtifact,
-  BuildExecutionMode,
+  BuildExecutionAvailability,
+  BuildExecutionSource,
+  BuildStartSelection,
+  CloudBuildPlatform,
   DetectedModule,
   HarmonyModuleConfigField,
   HarmonyModuleConfigModule,
@@ -25,6 +28,7 @@ import type {
   IosModuleConfigModule,
   IosModuleConfigReport,
   IosPrivacyDescriptionItem,
+  LocalSdkCacheInspection,
   Platform,
   ResourceScanResult,
   UniappManifestInfo
@@ -47,11 +51,14 @@ interface GithubCloudBuildConfig {
   repo: string
   ref: string
   workflowFile: string
-  androidDefaultMode: BuildExecutionMode
-  iosDefaultMode: BuildExecutionMode
-  androidSdkUrl: string
-  iosSdkUrl: string
   hasToken?: boolean
+}
+
+interface SdkInfo {
+  platform: Platform
+  path: string
+  is_installed: boolean
+  is_valid: boolean
 }
 
 export function useBuildCenterController() {
@@ -80,11 +87,13 @@ const harmonyModuleConfigLoading = ref(false)
 const cloudBuildConfig = ref<GithubCloudBuildConfig | null>(null)
 const cloudBuildHasToken = ref(false)
 const envReport = ref<any | null>(null)
-const buildExecutionModes = ref<Record<Platform, BuildExecutionMode>>({
-  android: 'auto',
-  ios: 'auto',
-  harmony: 'local'
-})
+const sdkInfos = ref<SdkInfo[]>([])
+const buildExecutionModalVisible = ref(false)
+const buildExecutionContextLoading = ref(false)
+const buildExecutionPlatformSnapshot = ref<Platform[]>([])
+let buildExecutionModalRevision = 0
+const cloudSdkInspections = ref<Partial<Record<Platform, LocalSdkCacheInspection>>>({})
+const cloudSdkInspectionErrors = ref<Partial<Record<CloudBuildPlatform, string>>>({})
 const selectedManifestModuleKeys = ref<Set<string>>(new Set())
 const manifestModuleSelectionTouched = ref(false)
 const activeAndroidConfigModuleKey = ref<string | null>(null)
@@ -115,6 +124,11 @@ const iosLocalBuildReady = computed(() => {
   const report = envReport.value
   if (!report) return navigator.platform.toLowerCase().includes('mac')
   return !!report.ios?.available
+})
+const harmonyLocalBuildReady = computed(() => {
+  const report = envReport.value
+  if (!report) return true
+  return !!report.harmony?.available
 })
 const isBuildLocked = computed(() => buildStore.hasActiveBuilds)
 const activeProjectBuild = computed(() => buildStore.getActiveBuildForProject(projectId.value))
@@ -265,29 +279,31 @@ const iosModuleSummaryLabel = computed(() => {
   if (!iosConfigurableModules.value.length) return '无 iOS 模块配置'
   return `${iosConfigurableModules.value.length} 个模块需配置`
 })
-const buildExecutionModeOptions = computed<Record<Platform, Array<{ label: string; value: BuildExecutionMode; disabled?: boolean }>>>(() => ({
-  android: [
-    { label: '自动选择', value: 'auto' },
-    { label: '本地打包', value: 'local', disabled: !androidLocalBuildReady.value },
-    { label: 'GitHub 云端打包', value: 'github', disabled: !githubCloudBuildReady.value }
-  ],
-  ios: [
-    { label: '自动选择', value: 'auto' },
-    { label: '本地打包', value: 'local', disabled: !iosLocalBuildReady.value },
-    { label: 'GitHub 云端打包', value: 'github', disabled: !githubCloudBuildReady.value }
-  ],
-  harmony: [
-    { label: '本地打包', value: 'local' }
-  ]
-}))
-const buildExecutionModeHints = computed<Record<Platform, string>>(() => ({
-  android: buildExecutionModeHint('android'),
-  ios: buildExecutionModeHint('ios'),
-  harmony: 'HarmonyOS 暂仅支持本地打包'
-}))
+const buildExecutionAvailability = computed<Record<Platform, BuildExecutionAvailability>>(() => {
+  const result = {} as Record<Platform, BuildExecutionAvailability>
+  for (const platform of ['android', 'ios', 'harmony'] as Platform[]) {
+    const localIssue = localBuildIssue(platform)
+    const availability: BuildExecutionAvailability = {
+      local: {
+        enabled: !localIssue,
+        reason: localIssue || '本机环境与离线 SDK 已就绪',
+      },
+    }
+    if (platform !== 'harmony') {
+      const githubIssue = githubBuildIssue(platform)
+      availability.github = {
+        enabled: !githubIssue,
+        reason: githubIssue || (cloudSdkInspections.value[platform]?.cacheHit
+          ? '配置完整，当前 SDK 已命中云端缓存'
+          : '配置完整，当前 SDK 将在构建前上传'),
+      }
+    }
+    result[platform] = availability
+  }
+  return result
+})
 const canBuild = computed(() => {
   if (!scanResult.value || selectedPlatforms.value.length === 0 || isBuildLocked.value) return false
-  if (!selectedPlatforms.value.every(platform => platformBuildModeReady(platform))) return false
   if (selectedNeedsAndroidConfig.value && !androidModulesReady.value) return false
   if (selectedNeedsIosConfig.value && iosModuleConfigLoading.value) return false
   if (selectedNeedsIosConfig.value && iosModuleMissingRequired.value.length) return false
@@ -324,10 +340,6 @@ const buildDisabledReason = computed(() => {
   if (!scanResult.value) return '请先导入 UniApp 资源'
   if (!selectedPlatforms.value.length) return '请选择至少一个平台'
   if (isBuildLocked.value) return '正在构建中'
-  const buildModeIssue = selectedPlatforms.value
-    .map(platform => platformBuildModeIssue(platform))
-    .find(Boolean)
-  if (buildModeIssue) return buildModeIssue
   if (selectedNeedsIosConfig.value && iosMissingRequired.value.length) {
     return `还有 ${iosMissingRequired.value.length} 个 iOS 必填配置未填写`
   }
@@ -401,8 +413,11 @@ watch(iosConfigurableModules, modules => {
 onMounted(async () => {
   if (!projectsStore.projects.length) await projectsStore.loadProjects()
   projectsStore.setCurrentProject(projectId.value)
-  await loadBuildExecutionDefaults()
-  void loadBuildEnvironmentState()
+  void Promise.all([
+    loadGithubCloudBuildConfig(),
+    loadBuildEnvironmentState(),
+    loadSdkInfos(),
+  ])
   const activeBuild = buildStore.getActiveBuildForProject(projectId.value)
   if (activeBuild) currentBuildId.value = activeBuild.id
 })
@@ -473,23 +488,14 @@ function togglePlatform(platform: Platform) {
   else selectedPlatforms.value.push(platform)
 }
 
-function updateBuildExecutionMode(platform: Platform, mode: BuildExecutionMode) {
-  if (platform === 'harmony') {
-    buildExecutionModes.value.harmony = 'local'
-    return
-  }
-  buildExecutionModes.value[platform] = mode
-}
-
-async function loadBuildExecutionDefaults() {
+async function loadGithubCloudBuildConfig() {
   try {
     const result = await invoke<GithubCloudBuildConfig>('get_github_cloud_build_config')
     cloudBuildConfig.value = result
     cloudBuildHasToken.value = !!result.hasToken
-    buildExecutionModes.value.android = result.androidDefaultMode || 'auto'
-    buildExecutionModes.value.ios = result.iosDefaultMode || 'auto'
-    buildExecutionModes.value.harmony = 'local'
   } catch (error) {
+    cloudBuildConfig.value = null
+    cloudBuildHasToken.value = false
     console.warn('Failed to load GitHub cloud build config:', error)
   }
 }
@@ -502,44 +508,137 @@ async function loadBuildEnvironmentState() {
   }
 }
 
-function resolveBuildExecutionMode(platform: Platform): BuildExecutionMode {
-  if (platform === 'harmony') return 'local'
-  const selected = buildExecutionModes.value[platform]
-  if (selected !== 'auto') return selected
-  const localReady = platform === 'android' ? androidLocalBuildReady.value : iosLocalBuildReady.value
-  if (localReady) return 'local'
-  if (githubCloudBuildReady.value) return 'github'
-  return 'auto'
-}
-
-function platformBuildModeReady(platform: Platform) {
-  return !platformBuildModeIssue(platform)
-}
-
-function platformBuildModeIssue(platform: Platform) {
-  if (platform === 'harmony') return ''
-  const selected = buildExecutionModes.value[platform]
-  const localReady = platform === 'android' ? androidLocalBuildReady.value : iosLocalBuildReady.value
-  if (selected === 'local' && !localReady) return `${platformLabel(platform)} 本地打包环境未就绪`
-  if (selected === 'github' && !githubCloudBuildReady.value) return '请先在 SDK & 环境管理中完成 GitHub 云端打包配置'
-  if (selected === 'auto' && !localReady && !githubCloudBuildReady.value) {
-    return `${platformLabel(platform)} 本地环境未就绪，且 GitHub 云端打包未配置`
+async function loadSdkInfos() {
+  try {
+    sdkInfos.value = await invoke<SdkInfo[]>('list_sdks', { platform: null })
+  } catch (error) {
+    sdkInfos.value = []
+    console.warn('Failed to load DCloud SDK state:', error)
   }
+}
+
+function sdkInfoFor(platform: Platform) {
+  return sdkInfos.value.find(info => info.platform === platform)
+}
+
+function localBuildIssue(platform: Platform) {
+  const sdk = sdkInfoFor(platform)
+  if (!sdk?.is_valid) return `请先在 SDK & 环境管理中配置有效的 ${platformLabel(platform)} 离线 SDK`
+  const environmentReady = platform === 'android'
+    ? androidLocalBuildReady.value
+    : platform === 'ios'
+      ? iosLocalBuildReady.value
+      : harmonyLocalBuildReady.value
+  if (!environmentReady) return `${platformLabel(platform)} 本机打包环境未就绪`
   return ''
 }
 
-function buildExecutionModeHint(platform: Platform) {
-  if (platform === 'harmony') return 'HarmonyOS 暂仅支持本地打包'
-  const selected = buildExecutionModes.value[platform]
-  const resolved = resolveBuildExecutionMode(platform)
-  if (selected === 'auto') {
-    if (resolved === 'local') return '自动选择本地打包'
-    if (resolved === 'github') return '本地环境缺失，将使用 GitHub 云端打包'
-    return '等待本地环境或 GitHub 配置'
+function githubBuildIssue(platform: CloudBuildPlatform) {
+  if (!githubCloudBuildReady.value) return '请先在 SDK & 环境管理中完成 GitHub 配置并保存 Token'
+  const sdk = sdkInfoFor(platform)
+  if (!sdk?.is_valid) return `请先配置有效的 ${platformLabel(platform)} DCloud 离线 SDK`
+  if (buildExecutionContextLoading.value && !cloudSdkInspections.value[platform]) return '正在校验本地 SDK 与云端缓存'
+  if (cloudSdkInspectionErrors.value[platform]) return cloudSdkInspectionErrors.value[platform]!
+  if (!cloudSdkInspections.value[platform]) return '需要重新校验本地 SDK 与云端缓存'
+  return ''
+}
+
+async function inspectCloudSdk(platform: CloudBuildPlatform) {
+  try {
+    const inspection = await invoke<LocalSdkCacheInspection>('inspect_local_sdk_cache', { platform })
+    cloudSdkInspections.value = { ...cloudSdkInspections.value, [platform]: inspection }
+  } catch (error) {
+    cloudSdkInspectionErrors.value = { ...cloudSdkInspectionErrors.value, [platform]: String(error) }
   }
-  if (selected === 'github') return githubCloudBuildReady.value ? '将上传临时构建包并触发 GitHub Actions' : 'GitHub 云端打包配置未完成'
-  const localReady = platform === 'android' ? androidLocalBuildReady.value : iosLocalBuildReady.value
-  return localReady ? '将使用本机环境打包' : '本机打包环境未就绪'
+}
+
+async function refreshBuildExecutionContext(platforms: Platform[]) {
+  buildExecutionContextLoading.value = true
+  cloudSdkInspections.value = {}
+  cloudSdkInspectionErrors.value = {}
+  try {
+    await Promise.all([
+      loadGithubCloudBuildConfig(),
+      loadBuildEnvironmentState(),
+      loadSdkInfos(),
+    ])
+    if (!githubCloudBuildReady.value) return
+    const cloudPlatforms = platforms.filter((platform): platform is CloudBuildPlatform => platform !== 'harmony')
+    await Promise.all(cloudPlatforms
+      .filter(platform => sdkInfoFor(platform)?.is_valid)
+      .map(platform => inspectCloudSdk(platform)))
+  } finally {
+    buildExecutionContextLoading.value = false
+  }
+}
+
+async function openBuildExecutionModal() {
+  if (!canBuild.value) {
+    if (buildDisabledReason.value) message.warning(buildDisabledReason.value)
+    return
+  }
+  buildExecutionModalRevision += 1
+  buildExecutionPlatformSnapshot.value = [...selectedPlatforms.value]
+  buildExecutionModalVisible.value = true
+  await refreshBuildExecutionContext(buildExecutionPlatformSnapshot.value)
+}
+
+function updateBuildExecutionModalVisible(visible: boolean) {
+  if (!visible && buildExecutionModalVisible.value) buildExecutionModalRevision += 1
+  buildExecutionModalVisible.value = visible
+}
+
+function samePlatforms(left: Platform[], right: Platform[]) {
+  return left.length === right.length && left.every((platform, index) => platform === right[index])
+}
+
+function selectedExecutionIssue(selection: BuildStartSelection, platforms: Platform[]) {
+  for (const platform of platforms) {
+    const source: BuildExecutionSource | undefined = platform === 'harmony'
+      ? 'local'
+      : selection.executionModes[platform]
+    if (!source) return `请选择 ${platformLabel(platform)} 的打包方式`
+    const availability = buildExecutionAvailability.value[platform][source]
+    if (!availability?.enabled) return `${platformLabel(platform)} ${source === 'github' ? 'GitHub 云端' : '本地'}打包不可用：${availability?.reason || '状态未知'}`
+  }
+  if (platforms.includes('ios') && !selection.iosPackagingMode) return '请选择 iOS 集成方式'
+  return ''
+}
+
+async function confirmBuildExecution(selection: BuildStartSelection) {
+  if (isBuildLocked.value) {
+    message.warning('已有构建任务进行中，请等待完成后再开始新的构建')
+    return
+  }
+  const modalRevision = buildExecutionModalRevision
+  const snapshot = [...buildExecutionPlatformSnapshot.value]
+  if (!samePlatforms(snapshot, selectedPlatforms.value)) {
+    message.warning('平台选择已变化，请关闭弹窗后重新开始')
+    return
+  }
+  await refreshBuildExecutionContext(snapshot)
+  if (modalRevision !== buildExecutionModalRevision || !buildExecutionModalVisible.value) return
+  if (isBuildLocked.value) {
+    message.warning('已有构建任务进行中，请等待完成后再开始新的构建')
+    return
+  }
+  if (!samePlatforms(snapshot, selectedPlatforms.value)) {
+    message.warning('平台选择已变化，请关闭弹窗后重新开始')
+    return
+  }
+  const issue = selectedExecutionIssue(selection, snapshot)
+  if (issue) {
+    message.error(issue)
+    return
+  }
+  const normalizedSelection: BuildStartSelection = {
+    executionModes: { ...selection.executionModes },
+    iosPackagingMode: selection.iosPackagingMode,
+  }
+  if (snapshot.includes('harmony')) normalizedSelection.executionModes.harmony = 'local'
+  buildExecutionModalRevision += 1
+  buildExecutionModalVisible.value = false
+  await startBuild(normalizedSelection, snapshot)
 }
 
 function platformLabel(platform: Platform) {
@@ -558,7 +657,6 @@ const buildCenterActions = createBuildCenterActions({
   ensureAndroidModuleConfigReadyForBuild, ensureIosModuleConfigReadyForBuild, ensureHarmonyModuleConfigReadyForBuild,
   selectedManifestInfoForBuild, buildAndroidModuleConfigPayload, persistAndroidModuleConfigCache, persistIosModuleConfigCache,
   cleanupBuildTemporaryFiles, appendCleanupLines, appendManifestLog, appendFinalLog, createBuildRecord, finalizeBuildRecord,
-  resolveBuildExecutionMode,
   iosIconCount: () => iosIconCount.value, iosPrivacyDescriptionCount: () => iosPrivacyDescriptionCount.value
 })
 const { canGenerateNativeProject, canGenerateIosProject, generateAndroidProject, generateIosProject, generateHarmonyProject, startBuild } = buildCenterActions
@@ -1079,7 +1177,8 @@ function goBack() {
 
 return {
   currentProject, getProjectName, goBack, selectedPlatforms, importing, isBuildLocked, scanResult, insightAppId, insightVersionName, insightVersionCode, insightManifestPath, manifestReadWarning, chooseResource,
-  buildDisabledReason, canBuild, canGenerateAndroid, canGenerateIos, canGenerateHarmony, packageBuildLoading, androidGenerateLoading, iosGenerateLoading, harmonyGenerateLoading, singleSelectedPlatform, togglePlatform, buildExecutionModes, buildExecutionModeOptions, buildExecutionModeHints, updateBuildExecutionMode, generateAndroidProject, generateIosProject, generateHarmonyProject, startBuild,
+  buildDisabledReason, canBuild, canGenerateAndroid, canGenerateIos, canGenerateHarmony, packageBuildLoading, androidGenerateLoading, iosGenerateLoading, harmonyGenerateLoading, singleSelectedPlatform, togglePlatform, generateAndroidProject, generateIosProject, generateHarmonyProject,
+  buildExecutionModalVisible, buildExecutionContextLoading, buildExecutionPlatformSnapshot, buildExecutionAvailability, cloudSdkInspections, openBuildExecutionModal, updateBuildExecutionModalVisible, confirmBuildExecution,
   iosMissingRequired, iosIconCount, iosPrivacyDescriptionCount, iosPrivacyDescriptionItems, iosPrivacyDescriptionMissingCount, iosModuleSummaryLabel, iosConfigurableModules, selectedManifestModules, iosModuleConfigLoading, latestManifestInfo, iosModuleMissingRequired, activeIosConfigModuleKey, activeIosConfigModule, iosConfigModuleStatusType, iosConfigModuleStatusLabel, iosFieldValue, iosFieldStatusType, iosFieldStatusLabel, openIosPrivacyDescriptionDialog, openIosConfigModule, updateActiveIosField,
   androidModuleConfigLoading, androidConfigurableModules, androidMissingRequired, activeAndroidConfigModuleKey, activeAndroidConfigModule, androidConfigModuleStatusType, configModuleStatusLabel, androidFieldValue, fieldStatusType, fieldStatusLabel, formatFileSize, openAndroidConfigModule, updateActiveAndroidField, pickAndroidFileField, clearAndroidFileField,
   currentBuild, visibleArtifacts, currentGeneratedProjectPath, currentGeneratedProjectLabel, openGeneratedProject, iosPrivacyDialogVisible, updateIosPrivacyDescription

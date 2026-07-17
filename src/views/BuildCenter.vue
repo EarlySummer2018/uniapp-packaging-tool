@@ -2,6 +2,7 @@
 import { NButton, NGi, NGrid, NIcon, NSpace, NText } from 'naive-ui'
 import { ArrowBackOutline } from '@vicons/ionicons5'
 import AndroidModuleConfigPanel from './build-center/AndroidModuleConfigPanel.vue'
+import BuildExecutionModal from './build-center/BuildExecutionModal.vue'
 import BuildLogCard from './build-center/BuildLogCard.vue'
 import IosOfflineSdkPanel from './build-center/IosOfflineSdkPanel.vue'
 import IosPrivacyDescriptionModal from './build-center/IosPrivacyDescriptionModal.vue'
@@ -15,8 +16,9 @@ const {
   insightAppId, insightVersionName, insightVersionCode, insightManifestPath, manifestReadWarning, chooseResource,
   buildDisabledReason, canBuild, canGenerateAndroid, canGenerateIos, canGenerateHarmony, packageBuildLoading,
   androidGenerateLoading, iosGenerateLoading, harmonyGenerateLoading, singleSelectedPlatform, togglePlatform,
-  buildExecutionModes, buildExecutionModeOptions, buildExecutionModeHints, updateBuildExecutionMode,
-  generateAndroidProject, generateIosProject, generateHarmonyProject, startBuild, iosMissingRequired, iosIconCount,
+  generateAndroidProject, generateIosProject, generateHarmonyProject, iosMissingRequired, iosIconCount,
+  buildExecutionModalVisible, buildExecutionContextLoading, buildExecutionPlatformSnapshot, buildExecutionAvailability,
+  cloudSdkInspections, openBuildExecutionModal, updateBuildExecutionModalVisible, confirmBuildExecution,
   iosPrivacyDescriptionCount, iosPrivacyDescriptionItems, iosPrivacyDescriptionMissingCount, iosModuleSummaryLabel,
   iosConfigurableModules, selectedManifestModules, iosModuleConfigLoading, latestManifestInfo, iosModuleMissingRequired,
   activeIosConfigModuleKey, activeIosConfigModule, iosConfigModuleStatusType, iosConfigModuleStatusLabel, iosFieldValue,
@@ -71,15 +73,11 @@ const {
           :ios-generate-loading="iosGenerateLoading"
           :harmony-generate-loading="harmonyGenerateLoading"
           :single-selected-platform="singleSelectedPlatform"
-          :build-execution-modes="buildExecutionModes"
-          :build-execution-mode-options="buildExecutionModeOptions"
-          :build-execution-mode-hints="buildExecutionModeHints"
           @toggle-platform="togglePlatform"
-          @update-build-mode="updateBuildExecutionMode"
           @generate-android="generateAndroidProject"
           @generate-ios="generateIosProject"
           @generate-harmony="generateHarmonyProject"
-          @start-build="startBuild"
+          @start-build="openBuildExecutionModal"
         />
       </n-gi>
     </n-grid>
@@ -152,6 +150,16 @@ const {
       :missing-count="iosPrivacyDescriptionMissingCount"
       :is-build-locked="isBuildLocked"
       @update-item="updateIosPrivacyDescription"
+    />
+
+    <BuildExecutionModal
+      :show="buildExecutionModalVisible"
+      :platforms="buildExecutionPlatformSnapshot"
+      :loading="buildExecutionContextLoading"
+      :availability="buildExecutionAvailability"
+      :sdk-inspections="cloudSdkInspections"
+      @update:show="updateBuildExecutionModalVisible"
+      @confirm="confirmBuildExecution"
     />
   </div>
 </template>
